@@ -182,6 +182,13 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ─── Health check ──────────────────────────────────────────────────
+  if (req.method === 'GET' && req.url === '/api/health') {
+    res.writeHead(200)
+    res.end(JSON.stringify({ status: 'ok' }))
+    return
+  }
+
   // ─── LinkedIn profile lookup via Brave Search API ────────────────────
   if (req.method === 'POST' && req.url === '/api/lookup-linkedin') {
     try {
