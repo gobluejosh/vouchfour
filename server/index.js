@@ -569,6 +569,27 @@ Rules:
         })
       }
 
+      // Remove edges and cancel pending invites for connectors that were removed
+      const currentConnectorUrls = (connectors || [])
+        .map(c => c?.linkedin ? normalizeLinkedInUrl(c.linkedin) : null)
+        .filter(Boolean)
+      for (const [url, existing] of existingByUrl) {
+        if (!currentConnectorUrls.includes(url)) {
+          // Remove network edge
+          await client.query(
+            `DELETE FROM edges WHERE source_id = $1 AND target_id = $2 AND edge_type = 'network'`,
+            [submitterId, existing.id]
+          )
+          // Delete any pending invites from this submitter to the removed connector
+          await client.query(
+            `DELETE FROM vouch_invites
+             WHERE inviter_id = $1 AND invitee_id = $2 AND status = 'pending'`,
+            [submitterId, existing.id]
+          )
+          console.log(`[Network] Removed connector ${url} from ${user.name}'s network`)
+        }
+      }
+
       // Check if the talent page is ready (talent_ready email was previously sent)
       const readyRes = await client.query(
         `SELECT 1 FROM sent_emails WHERE recipient_id = $1 AND email_type = 'talent_ready' LIMIT 1`,
