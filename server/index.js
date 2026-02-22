@@ -841,6 +841,20 @@ Rules:
         WHERE id = $2
       `, [submissionId, invite.id])
 
+      // Remove vouch edges for people that were removed from the list
+      const currentVouchUrls = (recommendations || [])
+        .map(r => r?.linkedin ? normalizeLinkedInUrl(r.linkedin) : null)
+        .filter(Boolean)
+      for (const [url, existing] of existingByUrl) {
+        if (!currentVouchUrls.includes(url)) {
+          await client.query(
+            `DELETE FROM edges WHERE source_id = $1 AND target_id = $2 AND edge_type = 'vouch'`,
+            [voucherId, existing.id]
+          )
+          console.log(`[Vouch] Removed vouch for ${url} from ${invite.display_name}'s recommendations`)
+        }
+      }
+
       // For updates: create a new pending invite so they can update again later
       if (isUpdate) {
         const newToken = crypto.randomUUID()
