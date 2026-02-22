@@ -87,14 +87,15 @@ function TalentCard({ talent }) {
 
 function NetworkStatusCard({ networkStatus, slug }) {
   const { total, completed, connectors } = networkStatus;
+  const [expanded, setExpanded] = useState(false);
   return (
     <div style={{
       background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
       padding: "16px 18px", marginTop: 24,
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>
-          {completed} of {total} recommender{total !== 1 ? "s" : ""} ha{completed !== 1 ? "ve" : "s"} responded
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          Recommenders
         </div>
         <a
           href={`/network?edit=${slug}`}
@@ -106,11 +107,26 @@ function NetworkStatusCard({ networkStatus, slug }) {
           Edit
         </a>
       </div>
-      {connectors.map((c, i) => (
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+      >
+        <svg
+          width="12" height="12" viewBox="0 0 12 12" fill="none"
+          style={{ transition: "transform 0.2s", transform: expanded ? "rotate(90deg)" : "rotate(0deg)", flexShrink: 0 }}
+        >
+          <path d="M4 2L8 6L4 10" stroke={C.sub} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>
+          {completed} of {total} recommender{total !== 1 ? "s" : ""} ha{completed !== 1 ? "ve" : "s"} responded
+        </div>
+      </div>
+      {expanded && connectors.map((c, i) => (
         <div key={i} style={{
           display: "flex", alignItems: "center", gap: 10,
           padding: "8px 0",
-          borderTop: i > 0 ? `1px solid ${C.border}` : "none",
+          borderTop: `1px solid ${C.border}`,
+          ...(i === 0 ? { marginTop: 12 } : {}),
         }}>
           <Avatar name={c.name} size={30} />
           <div style={{ flex: 1, fontSize: 14, color: C.ink, fontFamily: FONT }}>{c.name}</div>
@@ -230,6 +246,8 @@ export default function TalentPage() {
   const [networkStatus, setNetworkStatus] = useState(null);
   const [myVouches, setMyVouches] = useState([]);
   const [vouchToken, setVouchToken] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [visibleCount, setVisibleCount] = useState(10);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -294,6 +312,19 @@ export default function TalentPage() {
       .finally(() => setLoading(false));
   }, [authState, slug]);
 
+  // Fetch user's roles once authenticated
+  useEffect(() => {
+    if (authState !== "authenticated" || !slug) return;
+
+    fetch(`/api/my-roles/${slug}`, { credentials: "include" })
+      .then(res => {
+        if (res.ok) return res.json();
+        return { roles: [] };
+      })
+      .then(data => setRoles(data.roles || []))
+      .catch(() => setRoles([]));
+  }, [authState, slug]);
+
   const firstName = user?.name?.split(" ")[0] || "";
 
   return (
@@ -339,7 +370,7 @@ export default function TalentPage() {
           {authState === "authenticated" && !loading && !error && (
             <>
               <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, marginBottom: 20, lineHeight: 1.3 }}>
-                Hi {firstName}, here's your custom talent network based on responses as of now from your trusted recommenders
+                {firstName}'s Custom Talent Network
               </div>
 
               {/* Empty state */}
@@ -361,9 +392,23 @@ export default function TalentPage() {
               {/* Talent list */}
               {talent.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {talent.map((t) => (
+                  {talent.slice(0, visibleCount).map((t) => (
                     <TalentCard key={t.id} talent={t} />
                   ))}
+                  {talent.length > visibleCount && (
+                    <a
+                      href="#"
+                      onClick={e => { e.preventDefault(); setVisibleCount(v => v + 10); }}
+                      style={{
+                        display: "block", textAlign: "center",
+                        fontSize: 14, color: C.accent, fontWeight: 600,
+                        fontFamily: FONT, textDecoration: "none",
+                        padding: "8px 0", marginTop: 4,
+                      }}
+                    >
+                      Show more ({talent.length - visibleCount} remaining)
+                    </a>
+                  )}
                 </div>
               )}
 
@@ -371,6 +416,111 @@ export default function TalentPage() {
               {networkStatus && networkStatus.connectors.length > 0 && (
                 <NetworkStatusCard networkStatus={networkStatus} slug={slug} />
               )}
+
+              {/* Role-specific searches */}
+              <div style={{
+                background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
+                padding: "16px 18px", marginTop: 24,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 14 }}>
+                  Role-specific searches
+                </div>
+
+                {/* CTA to create a new role search */}
+                <a
+                  href="/role"
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: "14px 16px", background: C.accentLight,
+                    borderRadius: 12, border: `1.5px solid ${C.chipBorder}`,
+                    textDecoration: "none", cursor: "pointer",
+                    marginBottom: roles.length > 0 ? 14 : 0,
+                  }}
+                >
+                  <div style={{
+                    width: 36, height: 36, borderRadius: "50%",
+                    background: C.accent, color: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    flexShrink: 0,
+                  }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <circle cx="12" cy="12" r="6" />
+                      <circle cx="12" cy="12" r="2" />
+                      <line x1="22" y1="2" x2="14.5" y2="9.5" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                      Get talent recommendations for a specific role
+                    </div>
+                    <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 2 }}>
+                      Ask selected recommenders to vouch for a targeted search
+                    </div>
+                  </div>
+                </a>
+
+                {/* Existing roles */}
+                {roles.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {roles.map(r => {
+                      const completed = Number(r.completed_count) || 0;
+                      const total = Number(r.total_invites) || 0;
+                      const talentCount = Number(r.talent_count) || 0;
+                      const noResponses = completed === 0;
+                      return (
+                        <a
+                          key={r.slug}
+                          href={`/role/${r.slug}`}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 12,
+                            padding: "12px 14px", background: "#FAFAF9",
+                            borderRadius: 10, border: `1px solid ${C.border}`,
+                            textDecoration: "none", cursor: "pointer",
+                          }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                              {r.job_function}
+                            </div>
+                            <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 2 }}>
+                              {r.level}
+                            </div>
+                          </div>
+                          {noResponses ? (
+                            <div style={{
+                              fontSize: 11, fontWeight: 600, fontFamily: FONT,
+                              padding: "3px 10px", borderRadius: 6,
+                              color: C.warn, background: "#FFFBEB",
+                            }}>
+                              waiting on responses
+                            </div>
+                          ) : (
+                            <div style={{
+                              fontSize: 11, fontWeight: 600, fontFamily: FONT,
+                              padding: "3px 10px", borderRadius: 6,
+                              ...(completed === total
+                                ? { color: C.success, background: C.successLight }
+                                : { color: C.warn, background: "#FFFBEB" }),
+                            }}>
+                              {completed}/{total} responded
+                            </div>
+                          )}
+                          {talentCount > 0 && (
+                            <div style={{
+                              fontSize: 11, fontWeight: 600, color: C.accent,
+                              background: C.accentLight, padding: "3px 10px", borderRadius: 6,
+                              fontFamily: FONT,
+                            }}>
+                              {talentCount} vouches
+                            </div>
+                          )}
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               {/* Your vouches */}
               {myVouches.length > 0 && (

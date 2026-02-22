@@ -592,20 +592,30 @@ export default function App() {
 
   // Token-based invite flow
   const [token] = useState(() => new URLSearchParams(window.location.search).get('token'));
+  const [roleSlug] = useState(() => new URLSearchParams(window.location.search).get('role'));
   const [invitee, setInvitee] = useState(null);
+  const [role, setRole] = useState(null);
   const [isUpdate, setIsUpdate] = useState(false);
   const [tokenError, setTokenError] = useState(null);
   const [tokenLoading, setTokenLoading] = useState(!!token);
 
-  // Validate token on mount
+  // Validate token on mount — use role-invite endpoint if role param present
   useEffect(() => {
     if (!token) return;
     (async () => {
       try {
-        const res = await fetch(`/api/vouch-invite/${token}`);
+        const endpoint = roleSlug
+          ? `/api/role-invite/${token}`
+          : `/api/vouch-invite/${token}`;
+        const res = await fetch(endpoint);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Invalid invite');
         setInvitee(data);
+
+        // Store role context if present
+        if (data.role) {
+          setRole(data.role);
+        }
 
         // Pre-populate contacts if this is an update (re-vouch)
         if (data.isUpdate && data.existingVouches?.length > 0) {
@@ -633,11 +643,13 @@ export default function App() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const payload = {
-        token,
-        recommendations: contacts.filter(Boolean),
-      };
-      const res = await fetch('/api/submit-vouch', {
+      const recommendations = contacts.filter(Boolean);
+      const endpoint = roleSlug ? '/api/submit-role-vouch' : '/api/submit-vouch';
+      const payload = roleSlug
+        ? { token, roleSlug, recommendations }
+        : { token, recommendations };
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -752,8 +764,9 @@ export default function App() {
               Thanks, {vouchFirstName}!
             </div>
             <p style={{ fontSize: 15, color: C.sub, lineHeight: 1.6, marginBottom: 24 }}>
-              Your recommendations have been recorded. The people you've vouched for
-              will receive a note letting them know someone thinks highly of them.
+              {role
+                ? `Your recommendations for the ${role.jobFunction} role have been recorded. The people you've recommended will receive a note letting them know.`
+                : "Your recommendations have been recorded. The people you've vouched for will receive a note letting them know someone thinks highly of them."}
             </p>
 
             <div style={{
@@ -761,7 +774,7 @@ export default function App() {
               padding: "16px 18px", marginBottom: 28,
             }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                You vouched for
+                {role ? "You recommended" : "You vouched for"}
               </div>
               {submittedContacts.map((c, i) => (
                 <div key={i} style={{
@@ -784,30 +797,32 @@ export default function App() {
               ))}
             </div>
 
-            <div style={{
-              background: C.accentLight, borderRadius: 12, padding: "16px 18px",
-              border: `1px solid ${C.chipBorder}`,
-            }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-                Want to build your own talent network?
-              </div>
-              <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>
-                VouchFour aggregates recommendations from people you trust to build a
-                high performing talent network custom to you.
-              </p>
-              <a href={`/network?${new URLSearchParams({
-                ...(invitee?.name ? { name: invitee.name } : {}),
-                ...(invitee?.linkedin ? { linkedin: invitee.linkedin } : {}),
-                ...(invitee?.email ? { email: invitee.email } : {}),
-              }).toString()}`} style={{
-                display: "inline-block", padding: "10px 22px",
-                background: C.accent, color: "#fff", borderRadius: 10,
-                fontSize: 14, fontWeight: 600, textDecoration: "none",
-                fontFamily: FONT,
+            {!role && (
+              <div style={{
+                background: C.accentLight, borderRadius: 12, padding: "16px 18px",
+                border: `1px solid ${C.chipBorder}`,
               }}>
-                Build Your Network
-              </a>
-            </div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
+                  Want to build your own talent network?
+                </div>
+                <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>
+                  VouchFour aggregates recommendations from people you trust to build a
+                  high performing talent network custom to you.
+                </p>
+                <a href={`/network?${new URLSearchParams({
+                  ...(invitee?.name ? { name: invitee.name } : {}),
+                  ...(invitee?.linkedin ? { linkedin: invitee.linkedin } : {}),
+                  ...(invitee?.email ? { email: invitee.email } : {}),
+                }).toString()}`} style={{
+                  display: "inline-block", padding: "10px 22px",
+                  background: C.accent, color: "#fff", borderRadius: 10,
+                  fontSize: 14, fontWeight: 600, textDecoration: "none",
+                  fontFamily: FONT,
+                }}>
+                  Build Your Network
+                </a>
+              </div>
+            )}
 
             <p style={{
               marginTop: 40, fontSize: 11, color: "#78716C",
@@ -850,6 +865,31 @@ export default function App() {
               Welcome, <strong>{invitee.name}</strong>
             </div>
           )}
+
+          {/* Role context card */}
+          {role && (
+            <div style={{
+              background: "#FFFFFF", borderRadius: 12,
+              border: `1.5px solid ${C.border}`,
+              padding: "14px 16px", marginBottom: 14,
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                Role Search{role.creatorName ? ` for ${role.creatorName}` : ""}
+              </div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
+                {role.jobFunction}
+              </div>
+              <div style={{ fontSize: 13, color: C.sub, marginTop: 3 }}>
+                {role.level}
+              </div>
+              {role.specialSkills && (
+                <div style={{ fontSize: 12, color: C.sub, marginTop: 4, fontStyle: "italic" }}>
+                  {role.specialSkills}
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: 6 }}>
             {[0,1,2,3].map(i => (
               <div key={i} style={{
@@ -862,7 +902,9 @@ export default function App() {
           <p style={{ margin: "12px 0 0", fontSize: 17, color: C.ink, fontWeight: 600, lineHeight: 1.45, paddingLeft: 10 }}>
             {isUpdate
               ? "Update your VouchFour recommendations"
-              : "Who are 4 of the highest performers you've worked with in your career?"}
+              : role
+                ? `Who would you recommend for this ${role.jobFunction} role?`
+                : "Who are 4 of the highest performers you've worked with in your career?"}
           </p>
         </div>
         {[0, 1, 2, 3].map(i => {
@@ -981,7 +1023,9 @@ export default function App() {
           marginTop: 40, fontSize: 12, color: "#57534E",
           lineHeight: 1.5, textAlign: "left", padding: "0 12px",
         }}>
-          Each of the people you VouchFour will receive a flattering email indicating that you think of them highly. No one else will be able to see specifically who you VouchFour.
+          {role
+            ? "Each person you recommend will receive a flattering email indicating that you think highly of them. Your recommendations will help the requester find the right talent for this role."
+            : "Each of the people you VouchFour will receive a flattering email indicating that you think of them highly. No one else will be able to see specifically who you VouchFour."}
         </p>
 
         <p style={{

@@ -4,6 +4,8 @@ import VouchForm from './components/VouchForm'
 import NetworkForm from './components/NetworkForm'
 import TalentPage from './components/TalentPage'
 import AdminPage from './components/AdminPage'
+import RolePage from './components/RolePage'
+import RoleDetailPage from './components/RoleDetailPage'
 
 export default function App() {
   const [page, setPage] = useState(() => {
@@ -12,6 +14,8 @@ export default function App() {
     if (path === '/network') return 'network';
     if (path.startsWith('/talent/')) return 'talent';
     if (path === '/admin') return 'admin';
+    if (path === '/role') return 'role';
+    if (path.startsWith('/role/')) return 'roleDetail';
     return 'home';
   });
 
@@ -22,6 +26,8 @@ export default function App() {
       else if (path === '/network') setPage('network');
       else if (path.startsWith('/talent/')) setPage('talent');
       else if (path === '/admin') setPage('admin');
+      else if (path === '/role') setPage('role');
+      else if (path.startsWith('/role/')) setPage('roleDetail');
       else setPage('home');
     };
     window.addEventListener('popstate', handlePop);
@@ -32,5 +38,7 @@ export default function App() {
   if (page === 'network') return <NetworkForm />;
   if (page === 'talent') return <TalentPage />;
   if (page === 'admin') return <AdminPage />;
+  if (page === 'role') return <RolePage />;
+  if (page === 'roleDetail') return <RoleDetailPage />;
   return <HomePage />;
 }

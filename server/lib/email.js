@@ -194,3 +194,75 @@ export async function sendYouWereVouchedEmail(talentPerson, vouchToken, voucherN
   console.log(`[Email] Sent you_were_vouched to ${talentPerson.display_name} (${data?.id})`)
   return data?.id
 }
+
+// ─── Template 5: Role Network (sent to recommenders for role-specific vouch) ─
+
+export async function sendRoleNetworkEmail(connector, inviterFirstName, role, vouchToken) {
+  const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}&role=${role.slug}`
+  const firstName = connector.display_name.split(' ')[0]
+
+  const specialSkillsHtml = role.special_skills
+    ? `<div style="font-size:13px;color:#78716C;margin-top:4px;">Skills: ${role.special_skills}</div>`
+    : ''
+
+  const template = await loadTemplate('role_network')
+  const vars = {
+    firstName,
+    inviterFirstName,
+    jobFunction: role.job_function,
+    level: role.level,
+    specialSkillsHtml,
+    vouchUrl,
+  }
+
+  const subject = applyVariables(template.subject, vars)
+  const bodyHtml = applyVariables(template.body_html, vars)
+  const html = emailLayout(bodyHtml)
+
+  const recipient = await getRecipient(connector.email)
+
+  const { data, error } = await resend.emails.send({
+    from: FROM_ADDRESS,
+    to: [recipient],
+    subject,
+    html,
+  })
+
+  if (error) throw new Error(`Resend error: ${error.message}`)
+
+  console.log(`[Email] Sent role_network to ${connector.display_name} (${data?.id})`)
+  return data?.id
+}
+
+// ─── Template 6: Role Ready (sent to creator when role threshold met) ────────
+
+export async function sendRoleReadyEmail(person, role, loginToken) {
+  const roleUrl = `${BASE_URL}/role/${role.slug}?token=${loginToken}`
+  const firstName = person.display_name.split(' ')[0]
+
+  const template = await loadTemplate('role_ready')
+  const vars = {
+    firstName,
+    jobFunction: role.job_function,
+    level: role.level,
+    roleUrl,
+  }
+
+  const subject = applyVariables(template.subject, vars)
+  const bodyHtml = applyVariables(template.body_html, vars)
+  const html = emailLayout(bodyHtml)
+
+  const recipient = await getRecipient(person.email)
+
+  const { data, error } = await resend.emails.send({
+    from: FROM_ADDRESS,
+    to: [recipient],
+    subject,
+    html,
+  })
+
+  if (error) throw new Error(`Resend error: ${error.message}`)
+
+  console.log(`[Email] Sent role_ready to ${person.display_name} for role ${role.slug} (${data?.id})`)
+  return data?.id
+}

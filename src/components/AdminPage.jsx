@@ -21,6 +21,8 @@ const TEMPLATE_LABELS = {
   please_vouch: "Please Vouch",
   talent_ready: "Talent Ready",
   you_were_vouched: "You Were Vouched",
+  role_network: "Role Network",
+  role_ready: "Role Ready",
 };
 
 function adminFetch(url, secret, options = {}) {

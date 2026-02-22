@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import './lib/env.js'
 import http from 'node:http'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -7,10 +7,48 @@ import { fileURLToPath } from 'node:url'
 import { query, getClient } from './lib/db.js'
 import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations } from './lib/graph.js'
-import { sendPleaseVouchEmail, sendYouWereVouchedEmail, sendLoginLinkEmail } from './lib/email.js'
-import { checkAndNotifyReadiness } from './lib/readiness.js'
+import { sendPleaseVouchEmail, sendYouWereVouchedEmail, sendLoginLinkEmail, sendRoleNetworkEmail } from './lib/email.js'
+import { checkAndNotifyReadiness, checkRoleReadiness } from './lib/readiness.js'
 
 const PORT = process.env.PORT || 3001
+
+// ─── IP rate limiting (in-memory) ──────────────────────────────────
+const ipRequestCounts = new Map() // ip -> { count, resetAt }
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000 // 15 minutes
+const RATE_LIMIT_MAX = 10 // max email-triggering requests per window per IP
+
+function isRateLimited(req) {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress
+  const now = Date.now()
+  const entry = ipRequestCounts.get(ip)
+  if (!entry || now > entry.resetAt) {
+    ipRequestCounts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
+    return false
+  }
+  entry.count++
+  if (entry.count > RATE_LIMIT_MAX) return true
+  return false
+}
+
+// Clean up stale entries every 30 minutes
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, entry] of ipRequestCounts) {
+    if (now > entry.resetAt) ipRequestCounts.delete(ip)
+  }
+}, 30 * 60 * 1000)
+
+// ─── Per-recipient daily email cap ─────────────────────────────────
+const DAILY_EMAIL_CAP = 3 // max emails per recipient per day
+
+async function canEmailRecipient(recipientId) {
+  const result = await query(
+    `SELECT COUNT(*) AS cnt FROM sent_emails
+     WHERE recipient_id = $1 AND sent_at > NOW() - INTERVAL '24 hours'`,
+    [recipientId]
+  )
+  return Number(result.rows[0].cnt) < DAILY_EMAIL_CAP
+}
 
 // Static file serving for production
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -62,6 +100,15 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 const BRAVE_API_KEY = process.env.BRAVE_API_KEY
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 const ADMIN_SECRET = process.env.ADMIN_SECRET || ''
+
+function generateRoleSlug() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  let result = 'r_'
+  for (let i = 0; i < 5; i++) {
+    result += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return result
+}
 
 if (!ANTHROPIC_API_KEY || !BRAVE_API_KEY || !RESEND_API_KEY) {
   console.error('\n  ⚠  Missing required environment variables.')
@@ -379,6 +426,11 @@ Rules:
 
   // ─── Submit Network form ────────────────────────────────────────────
   if (req.method === 'POST' && req.url === '/api/submit-network') {
+    if (isRateLimited(req)) {
+      res.writeHead(429)
+      res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
+      return
+    }
     const client = await getClient()
     try {
       const body = await readBody(req)
@@ -521,12 +573,16 @@ Rules:
       const newCount = inviteTokens.filter(i => i.shouldEmail).length
       console.log(`[Network] Submitted for ${user.name}: ${inviteTokens.length} connectors (${newCount} new/changed, will email)`)
 
-      // Send vouch invite emails only to new or email-changed connectors (fire-and-forget)
+      // Send vouch invite emails only to new or email-changed connectors (fire-and-forget, sequential to avoid rate limits)
       const inviterFirstName = user.name.split(' ')[0]
-      for (const invite of inviteTokens) {
-        if (!invite.email || !invite.shouldEmail) continue
-        ;(async () => {
+      ;(async () => {
+        for (const invite of inviteTokens) {
+          if (!invite.email || !invite.shouldEmail) continue
           try {
+            if (!(await canEmailRecipient(invite.personId))) {
+              console.log(`[Email] Daily cap reached for ${invite.name}, skipping please_vouch`)
+              continue
+            }
             const resendId = await sendPleaseVouchEmail(
               { display_name: invite.name, email: invite.email },
               inviterFirstName,
@@ -540,8 +596,8 @@ Rules:
           } catch (err) {
             console.error(`[Email] Failed to send please_vouch to ${invite.name}:`, err.message)
           }
-        })()
-      }
+        }
+      })()
 
       res.writeHead(200)
       res.end(JSON.stringify({
@@ -648,6 +704,11 @@ Rules:
 
   // ─── Submit Vouch form (token-based) ───────────────────────────────
   if (req.method === 'POST' && req.url === '/api/submit-vouch') {
+    if (isRateLimited(req)) {
+      res.writeHead(429)
+      res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
+      return
+    }
     const client = await getClient()
     try {
       const body = await readBody(req)
@@ -791,17 +852,22 @@ Rules:
         console.error('[Readiness] Post-vouch check failed:', err.message)
       )
 
-      // Send "you were vouched" emails only to new or email-changed talent people
-      for (const talent of vouchedPeople) {
-        if (!talent.email || !talent.shouldEmail) continue
-        ;(async () => {
+      // Send "you were vouched" emails only to new or email-changed talent people (sequential to avoid rate limits)
+      ;(async () => {
+        for (const talent of vouchedPeople) {
+          if (!talent.email || !talent.shouldEmail) continue
           try {
             // Check if already sent (unique index also prevents, but skip the attempt)
             const already = await query(
               `SELECT 1 FROM sent_emails WHERE recipient_id = $1 AND email_type = 'you_were_vouched' LIMIT 1`,
               [talent.id]
             )
-            if (already.rows.length > 0) return
+            if (already.rows.length > 0) continue
+
+            if (!(await canEmailRecipient(talent.id))) {
+              console.log(`[Email] Daily cap reached for ${talent.display_name}, skipping you_were_vouched`)
+              continue
+            }
 
             // Create a vouch invite for this talent person so they can vouch for others
             const newToken = crypto.randomUUID()
@@ -820,8 +886,8 @@ Rules:
           } catch (err) {
             console.error(`[Email] Failed to send you_were_vouched to ${talent.display_name}:`, err.message)
           }
-        })()
-      }
+        }
+      })()
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {})
       console.error('[/api/submit-vouch error]', err)
@@ -866,12 +932,13 @@ Rules:
       // Get network status (connector response rates, deduplicated per person)
       const networkRes = await query(`
         SELECT DISTINCT ON (p.id)
+          p.id,
           p.display_name AS name,
           vi.status,
           vi.created_at
         FROM vouch_invites vi
         JOIN people p ON p.id = vi.invitee_id
-        WHERE vi.inviter_id = $1
+        WHERE vi.inviter_id = $1 AND vi.invitee_id != $1
         ORDER BY p.id, CASE WHEN vi.status = 'completed' THEN 0 ELSE 1 END, vi.created_at DESC
       `, [userId])
 
@@ -879,7 +946,7 @@ Rules:
       const networkStatus = {
         total: connectors.length,
         completed: connectors.filter(c => c.status === 'completed').length,
-        connectors: connectors.map(c => ({ name: c.name, status: c.status })),
+        connectors: connectors.map(c => ({ id: c.id, name: c.name, status: c.status })),
       }
 
       // Get the user's own vouches (people they recommended)
@@ -1125,6 +1192,12 @@ Rules:
 
   // ─── Request login (magic link) ──────────────────────────────────
   if (req.method === 'POST' && req.url === '/api/request-login') {
+    if (isRateLimited(req)) {
+      // Still return 200 to not reveal rate limiting to attackers
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true }))
+      return
+    }
     try {
       const body = await readBody(req)
       const { identifier } = body
@@ -1276,6 +1349,523 @@ Rules:
       }))
     } catch (err) {
       console.error('[/api/auth/session error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Create role-specific talent search (auth required) ─────────
+  if (req.method === 'POST' && req.url === '/api/create-role') {
+    if (isRateLimited(req)) {
+      res.writeHead(429)
+      res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
+      return
+    }
+    const client = await getClient()
+    try {
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        client.release()
+        return
+      }
+
+      const body = await readBody(req)
+      const { jobFunction, level, specialSkills, recommenderIds } = body
+
+      if (!jobFunction?.trim() || !level?.trim()) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'jobFunction and level are required' }))
+        client.release()
+        return
+      }
+
+      if (!Array.isArray(recommenderIds) || recommenderIds.length === 0) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'At least one recommender is required' }))
+        client.release()
+        return
+      }
+
+      await client.query('BEGIN')
+
+      // Generate unique role slug
+      let roleSlug
+      for (let i = 0; i < 10; i++) {
+        roleSlug = generateRoleSlug()
+        const exists = await client.query('SELECT 1 FROM roles WHERE slug = $1', [roleSlug])
+        if (exists.rows.length === 0) break
+      }
+
+      // Create role
+      const roleRes = await client.query(`
+        INSERT INTO roles (slug, creator_id, job_function, level, special_skills)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, slug
+      `, [roleSlug, session.id, jobFunction.trim(), level.trim(), specialSkills?.trim() || null])
+      const roleId = roleRes.rows[0].id
+
+      // Create submission record
+      await client.query(`
+        INSERT INTO submissions (submitter_id, form_type, submitted_at, raw_payload)
+        VALUES ($1, 'role_vouch', NOW(), $2)
+        RETURNING id
+      `, [session.id, JSON.stringify(body)])
+
+      // Create role_invites for each selected recommender
+      const invites = []
+      for (const recommId of recommenderIds) {
+        const token = crypto.randomUUID()
+        await client.query(`
+          INSERT INTO role_invites (token, role_id, inviter_id, invitee_id)
+          VALUES ($1, $2, $3, $4)
+        `, [token, roleId, session.id, recommId])
+
+        const recommRes = await client.query(
+          'SELECT id, display_name, email FROM people WHERE id = $1',
+          [recommId]
+        )
+        if (recommRes.rows[0]) {
+          invites.push({ ...recommRes.rows[0], token })
+        }
+      }
+
+      await client.query('COMMIT')
+
+      console.log(`[Role] Created role ${roleSlug} for ${session.display_name}: ${jobFunction} (${level}), ${invites.length} recommenders`)
+
+      // Fire-and-forget: send role_network emails sequentially to avoid rate limits
+      const role = { slug: roleSlug, job_function: jobFunction.trim(), level: level.trim(), special_skills: specialSkills?.trim() || null }
+      const inviterFirstName = session.display_name.split(' ')[0]
+      ;(async () => {
+        for (const invite of invites) {
+          if (!invite.email) continue
+          try {
+            if (!(await canEmailRecipient(invite.id))) {
+              console.log(`[Email] Daily cap reached for ${invite.display_name}, skipping role_network`)
+              continue
+            }
+            const resendId = await sendRoleNetworkEmail(invite, inviterFirstName, role, invite.token)
+            await query(
+              `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
+               VALUES ($1, 'role_network', $2, $3)`,
+              [invite.id, roleId, resendId]
+            )
+          } catch (err) {
+            console.error(`[Email] Failed to send role_network to ${invite.display_name}:`, err.message)
+          }
+        }
+      })()
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ roleSlug, ok: true }))
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {})
+      console.error('[/api/create-role error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    } finally {
+      client.release()
+    }
+    return
+  }
+
+  // ─── Validate role invite token ────────────────────────────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/role-invite/')) {
+    try {
+      const token = req.url.split('/api/role-invite/')[1]
+      if (!token) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Token is required' }))
+        return
+      }
+
+      const result = await query(`
+        SELECT ri.id, ri.status, ri.invitee_id, ri.role_id,
+               p.display_name, p.linkedin_url, p.email,
+               r.slug AS role_slug, r.job_function, r.level, r.special_skills,
+               creator.display_name AS creator_name
+        FROM role_invites ri
+        JOIN people p ON p.id = ri.invitee_id
+        JOIN roles r ON r.id = ri.role_id
+        JOIN people creator ON creator.id = r.creator_id
+        WHERE ri.token = $1
+      `, [token])
+
+      if (result.rows.length === 0) {
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Invalid or expired invite token' }))
+        return
+      }
+
+      const invite = result.rows[0]
+
+      // For completed invites, return existing role vouches for pre-population
+      if (invite.status === 'completed') {
+        const vouchesRes = await query(`
+          SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
+          FROM role_people rp
+          JOIN people p ON p.id = rp.person_id
+          WHERE rp.role_id = $1 AND rp.recommender_id = $2
+          ORDER BY rp.created_at
+        `, [invite.role_id, invite.invitee_id])
+
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          name: invite.display_name,
+          linkedin: invite.linkedin_url,
+          email: invite.email,
+          role: {
+            slug: invite.role_slug,
+            jobFunction: invite.job_function,
+            level: invite.level,
+            specialSkills: invite.special_skills,
+            creatorName: invite.creator_name,
+          },
+          isUpdate: true,
+          existingVouches: vouchesRes.rows,
+        }))
+        return
+      }
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        name: invite.display_name,
+        linkedin: invite.linkedin_url,
+        email: invite.email,
+        role: {
+          slug: invite.role_slug,
+          jobFunction: invite.job_function,
+          level: invite.level,
+          specialSkills: invite.special_skills,
+          creatorName: invite.creator_name,
+        },
+      }))
+    } catch (err) {
+      console.error('[/api/role-invite error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Get role detail (auth required, creator only) ─────────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/role/')) {
+    try {
+      const roleSlug = req.url.split('/api/role/')[1]
+      if (!roleSlug) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Role slug is required' }))
+        return
+      }
+
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        return
+      }
+
+      const roleRes = await query(
+        `SELECT id, slug, creator_id, job_function, level, special_skills, status, created_at
+         FROM roles WHERE slug = $1`,
+        [roleSlug]
+      )
+      if (roleRes.rows.length === 0) {
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Role not found' }))
+        return
+      }
+      const role = roleRes.rows[0]
+
+      if (role.creator_id !== session.id) {
+        res.writeHead(403)
+        res.end(JSON.stringify({ error: 'Access denied' }))
+        return
+      }
+
+      // Get role talent (1st degree only, from role_people)
+      const talentRes = await query(`
+        SELECT p.id, p.display_name, p.linkedin_url, p.email,
+               rp.recommender_id
+        FROM role_people rp
+        JOIN people p ON p.id = rp.person_id
+        WHERE rp.role_id = $1
+        ORDER BY p.display_name
+      `, [role.id])
+
+      // Aggregate: group by person, count recommendations
+      const talentMap = new Map()
+      for (const row of talentRes.rows) {
+        if (!talentMap.has(row.id)) {
+          talentMap.set(row.id, {
+            id: row.id,
+            display_name: row.display_name,
+            linkedin_url: row.linkedin_url,
+            email: row.email,
+            recommendation_count: 0,
+          })
+        }
+        talentMap.get(row.id).recommendation_count++
+      }
+      const talent = [...talentMap.values()].sort((a, b) =>
+        b.recommendation_count - a.recommendation_count || a.display_name.localeCompare(b.display_name)
+      )
+
+      // Get invite statuses
+      const inviteRes = await query(`
+        SELECT DISTINCT ON (p.id)
+          p.display_name AS name,
+          ri.status
+        FROM role_invites ri
+        JOIN people p ON p.id = ri.invitee_id
+        WHERE ri.role_id = $1
+        ORDER BY p.id, CASE WHEN ri.status = 'completed' THEN 0 ELSE 1 END, ri.created_at DESC
+      `, [role.id])
+
+      const inviteConnectors = inviteRes.rows
+      const inviteStatus = {
+        total: inviteConnectors.length,
+        completed: inviteConnectors.filter(c => c.status === 'completed').length,
+        connectors: inviteConnectors.map(c => ({ name: c.name, status: c.status })),
+      }
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        role: {
+          slug: role.slug,
+          jobFunction: role.job_function,
+          level: role.level,
+          specialSkills: role.special_skills,
+          status: role.status,
+          createdAt: role.created_at,
+        },
+        talent,
+        inviteStatus,
+      }))
+    } catch (err) {
+      console.error('[/api/role/:slug error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Submit role-specific vouch (token-based) ──────────────────────
+  if (req.method === 'POST' && req.url === '/api/submit-role-vouch') {
+    if (isRateLimited(req)) {
+      res.writeHead(429)
+      res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
+      return
+    }
+    const client = await getClient()
+    try {
+      const body = await readBody(req)
+      const { token, roleSlug, recommendations } = body
+
+      if (!token) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'token is required' }))
+        client.release()
+        return
+      }
+
+      // Look up role invite
+      const inviteRes = await query(`
+        SELECT ri.id, ri.role_id, ri.inviter_id, ri.invitee_id, ri.status,
+               p.display_name,
+               r.slug AS role_slug
+        FROM role_invites ri
+        JOIN people p ON p.id = ri.invitee_id
+        JOIN roles r ON r.id = ri.role_id
+        WHERE ri.token = $1
+      `, [token])
+
+      if (inviteRes.rows.length === 0) {
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Invalid invite token' }))
+        client.release()
+        return
+      }
+
+      const invite = inviteRes.rows[0]
+      const isUpdate = invite.status === 'completed'
+      const voucherId = invite.invitee_id
+      const roleId = invite.role_id
+
+      await client.query('BEGIN')
+
+      // Create submission record
+      const subRes = await client.query(`
+        INSERT INTO submissions (submitter_id, form_type, submitted_at, raw_payload)
+        VALUES ($1, 'role_vouch', NOW(), $2)
+        RETURNING id
+      `, [voucherId, JSON.stringify(body)])
+      const submissionId = subRes.rows[0].id
+
+      // Process each recommendation
+      const vouchedPeople = []
+
+      for (const r of (recommendations || [])) {
+        if (!r?.linkedin || !r?.name) continue
+        const talentUrl = normalizeLinkedInUrl(r.linkedin)
+        if (!talentUrl) continue
+
+        // Upsert talent person
+        const talentRes = await client.query(`
+          INSERT INTO people (linkedin_url, display_name, email)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (linkedin_url) DO UPDATE
+          SET display_name = CASE WHEN people.self_provided THEN people.display_name
+                                  ELSE COALESCE(NULLIF(EXCLUDED.display_name, ''), people.display_name) END,
+              email = CASE WHEN people.self_provided THEN people.email
+                           ELSE COALESCE(EXCLUDED.email, people.email) END,
+              updated_at = NOW()
+          RETURNING id
+        `, [talentUrl, r.name, r.email || null])
+        const talentId = talentRes.rows[0].id
+
+        // Insert into role_people (role-specific 1st degree talent)
+        await client.query(`
+          INSERT INTO role_people (role_id, person_id, recommender_id, submission_id)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (role_id, person_id, recommender_id) DO UPDATE
+          SET submission_id = EXCLUDED.submission_id
+        `, [roleId, talentId, voucherId, submissionId])
+
+        // ALSO insert into main graph edges (vouch type)
+        await client.query(`
+          INSERT INTO edges (source_id, target_id, edge_type, submission_id)
+          VALUES ($1, $2, 'vouch', $3)
+          ON CONFLICT (source_id, target_id, edge_type)
+          DO UPDATE SET submission_id = EXCLUDED.submission_id, created_at = NOW()
+        `, [voucherId, talentId, submissionId])
+
+        vouchedPeople.push({
+          id: talentId, display_name: r.name,
+          email: r.email || null, linkedin_url: talentUrl,
+        })
+      }
+
+      // Mark role invite as completed
+      await client.query(`
+        UPDATE role_invites SET status = 'completed'
+        WHERE id = $1
+      `, [invite.id])
+
+      // For updates: create a new pending role invite so they can update later
+      if (isUpdate) {
+        const newToken = crypto.randomUUID()
+        await client.query(
+          `INSERT INTO role_invites (token, role_id, inviter_id, invitee_id) VALUES ($1, $2, $3, $4)`,
+          [newToken, roleId, invite.inviter_id, voucherId]
+        )
+      }
+
+      await client.query('COMMIT')
+
+      console.log(`[RoleVouch] ${invite.display_name} ${isUpdate ? 'updated' : 'submitted'} role vouches for ${vouchedPeople.length} people (role: ${invite.role_slug})`)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true }))
+
+      // ── Post-commit async tasks (fire-and-forget) ──
+
+      checkRoleReadiness(roleId).catch(err =>
+        console.error('[RoleReadiness] Post-vouch check failed:', err.message)
+      )
+
+      checkAndNotifyReadiness(invite.inviter_id).catch(err =>
+        console.error('[Readiness] Post-role-vouch check failed:', err.message)
+      )
+
+      // Send "you were vouched" emails to new talent people (sequential to avoid rate limits)
+      ;(async () => {
+        for (const talent of vouchedPeople) {
+          if (!talent.email) continue
+          try {
+            const already = await query(
+              `SELECT 1 FROM sent_emails WHERE recipient_id = $1 AND email_type = 'you_were_vouched' LIMIT 1`,
+              [talent.id]
+            )
+            if (already.rows.length > 0) continue
+
+            if (!(await canEmailRecipient(talent.id))) {
+              console.log(`[Email] Daily cap reached for ${talent.display_name}, skipping you_were_vouched`)
+              continue
+            }
+
+            const newToken = crypto.randomUUID()
+            await query(
+              `INSERT INTO vouch_invites (token, inviter_id, invitee_id) VALUES ($1, $2, $3)`,
+              [newToken, voucherId, talent.id]
+            )
+
+            const resendId = await sendYouWereVouchedEmail(talent, newToken, invite.display_name)
+            await query(
+              `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
+               VALUES ($1, 'you_were_vouched', $2, $3)
+               ON CONFLICT DO NOTHING`,
+              [talent.id, invite.id, resendId]
+            )
+          } catch (err) {
+            console.error(`[Email] Failed to send you_were_vouched to ${talent.display_name}:`, err.message)
+          }
+        }
+      })()
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {})
+      console.error('[/api/submit-role-vouch error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    } finally {
+      client.release()
+    }
+    return
+  }
+
+  // ─── Get user's roles (auth required) ──────────────────────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/my-roles/')) {
+    try {
+      const slug = req.url.split('/api/my-roles/')[1]
+      if (!slug) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Slug is required' }))
+        return
+      }
+
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        return
+      }
+
+      const linkedinUrl = `https://linkedin.com/in/${slug.toLowerCase()}`
+      if (session.linkedin_url !== linkedinUrl) {
+        res.writeHead(403)
+        res.end(JSON.stringify({ error: 'Access denied' }))
+        return
+      }
+
+      const rolesRes = await query(`
+        SELECT r.slug, r.job_function, r.level, r.special_skills, r.status, r.created_at,
+               (SELECT COUNT(DISTINCT person_id) FROM role_people WHERE role_id = r.id) AS talent_count,
+               (SELECT COUNT(DISTINCT invitee_id) FILTER (WHERE status = 'completed')
+                FROM role_invites WHERE role_id = r.id) AS completed_count,
+               (SELECT COUNT(DISTINCT invitee_id)
+                FROM role_invites WHERE role_id = r.id) AS total_invites
+        FROM roles r
+        WHERE r.creator_id = $1
+        ORDER BY r.created_at DESC
+      `, [session.id])
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ roles: rolesRes.rows }))
+    } catch (err) {
+      console.error('[/api/my-roles error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }
