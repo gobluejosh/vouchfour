@@ -240,7 +240,7 @@ function SingleContactForm({ index, onComplete }) {
         }
 
         // Brave still empty — fall back to Claude (slow)
-        setEmailLoadingMsg("Digging deeper…");
+        setEmailLoadingMsg("Digging for email suggestion…");
         return fetchEmailSuggestions(trimmed, liConfirmed.url, liConfirmed.detail);
       })
       .then(result => {
