@@ -12,6 +12,8 @@ import { checkAndNotifyReadiness, checkRoleReadiness } from './lib/readiness.js'
 
 const PORT = process.env.PORT || 3001
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
 // ─── IP rate limiting (in-memory) ──────────────────────────────────
 const ipRequestCounts = new Map() // ip -> { count, resetAt }
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000 // 15 minutes
@@ -603,6 +605,7 @@ Rules:
           } catch (err) {
             console.error(`[Email] Failed to send please_vouch to ${invite.name}:`, err.message)
           }
+          await sleep(600)
         }
       })()
 
@@ -893,6 +896,7 @@ Rules:
           } catch (err) {
             console.error(`[Email] Failed to send you_were_vouched to ${talent.display_name}:`, err.message)
           }
+          await sleep(600)
         }
       })()
     } catch (err) {
@@ -1463,6 +1467,7 @@ Rules:
           } catch (err) {
             console.error(`[Email] Failed to send role_network to ${invite.display_name}:`, err.message)
           }
+          await sleep(600)
         }
       })()
 
@@ -1820,6 +1825,7 @@ Rules:
           } catch (err) {
             console.error(`[Email] Failed to send you_were_vouched to ${talent.display_name}:`, err.message)
           }
+          await sleep(600)
         }
       })()
     } catch (err) {
