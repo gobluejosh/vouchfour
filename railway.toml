@@ -1,6 +1,7 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm ci && npm run build"
+buildCommand = "npm ci --prefer-offline && npm run build"
+noCache = true
 
 [deploy]
 startCommand = "node server/index.js"
