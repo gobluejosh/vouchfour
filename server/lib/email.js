@@ -4,7 +4,7 @@ import { query } from './db.js'
 const resend = new Resend(process.env.RESEND_API_KEY)
 
 // Must be a verified domain in Resend, or use their sandbox sender
-const FROM_ADDRESS = 'VouchFour <onboarding@resend.dev>'
+const FROM_ADDRESS = 'VouchFour <noreply@vouchfour.us>'
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000'
 
