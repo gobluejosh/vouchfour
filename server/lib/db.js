@@ -1,7 +1,10 @@
 import pg from 'pg'
 
+const isProduction = !!process.env.RAILWAY_ENVIRONMENT
+
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/vouchfour',
+  ...(isProduction && { ssl: { rejectUnauthorized: false } }),
 })
 
 pool.on('error', (err) => {
