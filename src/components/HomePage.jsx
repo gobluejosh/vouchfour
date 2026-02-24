@@ -778,7 +778,7 @@ export default function HomePage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
               <StepRow
                 number="1"
-                title="Vouch for your top 4"
+                title="Vouch for your top 4 colleagues"
                 description="Pick a job function and name your 4 all-time best colleagues in that field."
               />
               <StepRow
