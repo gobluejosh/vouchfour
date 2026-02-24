@@ -253,7 +253,7 @@ function IdentityForm({ onComplete }) {
       position: "relative",
       border: `1.5px solid ${C.chipBorder}`,
       borderRadius: 16, padding: "20px 18px",
-      background: "#fff",
+      background: C.accentLight,
     }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
