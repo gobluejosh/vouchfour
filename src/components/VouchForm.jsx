@@ -90,7 +90,7 @@ function SuggestionChips({ items, onSelect, loading, show, type }) {
       ) : type === "linkedin" ? (
         items.length === 0 ? (
           <div style={{ padding: "10px 14px", fontSize: 13, color: C.sub, fontFamily: FONT }}>
-            No profiles found — try adding their company name.
+            No LinkedIn profile suggestions. Please enter it above.
           </div>
         ) : (
           items.map((item, i) => (
@@ -697,7 +697,7 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
         <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
-          <div style={{ padding: "0 20px", marginBottom: 16 }}>
+          <div style={{ padding: "0 4px", marginBottom: 16 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
             </a>
@@ -733,7 +733,7 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
         <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
-          <div style={{ padding: "0 20px", marginBottom: 24 }}>
+          <div style={{ padding: "0 4px", marginBottom: 24 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
             </a>
@@ -763,7 +763,7 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
         <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
-          <div style={{ padding: "0 20px", marginBottom: 32 }}>
+          <div style={{ padding: "0 4px", marginBottom: 32 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
             </a>

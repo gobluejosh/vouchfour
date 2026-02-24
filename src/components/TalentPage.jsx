@@ -346,7 +346,7 @@ export default function TalentPage() {
     <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
       <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
         {/* Header */}
-        <div style={{ padding: "0 20px", marginBottom: 24 }}>
+        <div style={{ padding: "0 4px", marginBottom: 24 }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>

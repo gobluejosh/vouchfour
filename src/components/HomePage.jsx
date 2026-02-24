@@ -81,7 +81,7 @@ function SuggestionChips({ items, onSelect, loading, show }) {
         </div>
       ) : items.length === 0 ? (
         <div style={{ padding: "10px 14px", fontSize: 13, color: C.sub, fontFamily: FONT }}>
-          No profiles found — try adding your company name.
+          No LinkedIn profile suggestions. Please enter it above.
         </div>
       ) : (
         items.map((item, i) => (
@@ -649,7 +649,7 @@ export default function HomePage() {
         background: "#F8F4E8", padding: "28px 16px 120px",
       }}>
         {/* Header */}
-        <div style={{ padding: "0 20px", marginBottom: 40 }}>
+        <div style={{ padding: "0 4px", marginBottom: 40 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <span style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5 }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
