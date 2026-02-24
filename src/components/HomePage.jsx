@@ -241,9 +241,9 @@ function IdentityForm({ onComplete }) {
   }
 
   function handleDone() {
-    if (!name.trim() || !linkedinInput.trim()) return;
+    if (!name.trim() || !linkedinInput.trim() || !emailInput.trim()) return;
     setStep("done");
-    onComplete({ name: name.trim(), linkedin: linkedinInput.trim(), email: emailInput.trim() || undefined });
+    onComplete({ name: name.trim(), linkedin: linkedinInput.trim(), email: emailInput.trim() });
   }
 
   const liShowSuggestions = step === "linkedin" && !liConfirmed && (liLoading || liSuggestions.length > 0 || liSearched);
@@ -429,7 +429,7 @@ function IdentityForm({ onComplete }) {
         {/* EMAIL */}
         {(step === "email" || step === "done") && (
           <div>
-            <label style={labelStyle}>Email address <span style={{ fontWeight: 400, color: C.sub }}>(optional)</span></label>
+            <label style={labelStyle}>Email address</label>
             <input
               ref={emailInputRef}
               value={emailInput}
@@ -444,9 +444,9 @@ function IdentityForm({ onComplete }) {
               <button
                 type="button"
                 onClick={handleDone}
-                disabled={!linkedinInput.trim()}
+                disabled={!linkedinInput.trim() || !emailInput.trim()}
                 style={{
-                  ...nextBtnStyle(!!linkedinInput.trim()),
+                  ...nextBtnStyle(!!linkedinInput.trim() && !!emailInput.trim()),
                   width: "100%",
                   marginTop: 14,
                   padding: "14px",
