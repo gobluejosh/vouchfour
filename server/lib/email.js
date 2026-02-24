@@ -113,12 +113,12 @@ export async function sendPleaseVouchEmail(connector, inviterFirstName, vouchTok
 
 // ─── Template 1: Talent Network Ready ─────────────────────────────────────────
 
-export async function sendTalentReadyEmail(person, slug, loginToken, jobFunctionName = '') {
+export async function sendTalentReadyEmail(person, slug, loginToken, jobFunctionName = '', practitionerLabel = '') {
   const talentUrl = `${BASE_URL}/talent/${slug}?token=${loginToken}`
   const firstName = person.display_name.split(' ')[0]
 
   const template = await loadTemplate('talent_ready')
-  const vars = { firstName, talentUrl, jobFunction: jobFunctionName }
+  const vars = { firstName, talentUrl, jobFunction: jobFunctionName, jobFunctionShort: practitionerLabel || jobFunctionName }
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)

@@ -538,12 +538,12 @@ export default function TalentPage() {
                   <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>
                     Which function should we work on next?
                   </p>
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     <select
                       value={selectedNextFn}
                       onChange={e => setSelectedNextFn(e.target.value)}
                       style={{
-                        flex: 1, padding: "10px 12px",
+                        flex: "1 1 200px", minWidth: 0, padding: "10px 12px",
                         fontSize: 14, fontFamily: FONT,
                         border: `1.5px solid ${C.border}`,
                         borderRadius: 10, color: selectedNextFn ? C.ink : C.sub,

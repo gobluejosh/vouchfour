@@ -96,12 +96,12 @@ INSERT INTO email_templates (template_key, subject, body_html, available_vars) V
     <p style="font-size:13px;color:#78716C;line-height:1.5;margin:0;">
       It only takes a couple minutes.
     </p>',
-    'firstName,inviterFirstName,jobFunction,jobFunctionShort,vouchUrl'
+    'firstName,inviterFirstName,inviterLastName,inviterFullName,jobFunction,jobFunctionShort,practitionerLabel,vouchUrl'
 ) ON CONFLICT (template_key) DO NOTHING;
 
 -- ─── Update talent_ready template available_vars to include jobFunction ─────
 UPDATE email_templates
-SET available_vars = 'firstName,talentUrl,jobFunction'
+SET available_vars = 'firstName,talentUrl,jobFunction,jobFunctionShort'
 WHERE template_key = 'talent_ready';
 
 -- ─── Update talent_ready template body to include job function ──────────────

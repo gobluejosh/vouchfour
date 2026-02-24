@@ -80,7 +80,9 @@ export async function checkAndNotifyReadiness(inviterId, jobFunctionId) {
       `SELECT name, practitioner_label FROM job_functions WHERE id = $1`,
       [jobFunctionId]
     )
-    const jobFunctionName = jfRes.rows[0]?.practitioner_label || jfRes.rows[0]?.name || ''
+    const jfRow = jfRes.rows[0]
+    const jobFunctionName = jfRow?.name || ''
+    const practitionerLabel = jfRow?.practitioner_label || jobFunctionName
 
     // 6. Generate login token
     const loginToken = crypto.randomUUID()
@@ -91,7 +93,7 @@ export async function checkAndNotifyReadiness(inviterId, jobFunctionId) {
 
     // 7. Send the email
     const slug = person.linkedin_url.split('/in/')[1]
-    const resendId = await sendTalentReadyEmail(person, slug, loginToken, jobFunctionName)
+    const resendId = await sendTalentReadyEmail(person, slug, loginToken, jobFunctionName, practitionerLabel)
 
     // 8. Update sent_emails with the resend ID
     await query(
