@@ -269,7 +269,7 @@ function IdentityForm({ onComplete }) {
 
         {/* NAME */}
         <div>
-          <label style={labelStyle}>Full name</label>
+          <label style={labelStyle}>What's your name?</label>
           <div style={{ display: "flex", gap: 8 }}>
             <input
               ref={nameInputRef}
