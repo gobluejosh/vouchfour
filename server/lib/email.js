@@ -113,12 +113,12 @@ export async function sendPleaseVouchEmail(connector, inviterFirstName, vouchTok
 
 // ─── Template 1: Talent Network Ready ─────────────────────────────────────────
 
-export async function sendTalentReadyEmail(person, slug, loginToken) {
+export async function sendTalentReadyEmail(person, slug, loginToken, jobFunctionName = '') {
   const talentUrl = `${BASE_URL}/talent/${slug}?token=${loginToken}`
   const firstName = person.display_name.split(' ')[0]
 
   const template = await loadTemplate('talent_ready')
-  const vars = { firstName, talentUrl }
+  const vars = { firstName, talentUrl, jobFunction: jobFunctionName }
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)
@@ -192,6 +192,47 @@ export async function sendYouWereVouchedEmail(talentPerson, vouchToken, voucherN
   if (error) throw new Error(`Resend error: ${error.message}`)
 
   console.log(`[Email] Sent you_were_vouched to ${talentPerson.display_name} (${data?.id})`)
+  return data?.id
+}
+
+// ─── Template 7: Vouch Invite (sent to vouchees in the new chain model) ──────
+
+export async function sendVouchInviteEmail(vouchee, inviterFullName, jobFunction, vouchToken) {
+  const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}`
+  const firstName = vouchee.display_name.split(' ')[0]
+  const inviterFirstName = inviterFullName.split(' ')[0]
+  const inviterLastName = inviterFullName.split(' ').slice(1).join(' ')
+
+  const practitionerLabel = jobFunction.practitionerLabel || jobFunction.name
+
+  const template = await loadTemplate('vouch_invite')
+  const vars = {
+    firstName,
+    inviterFirstName,
+    inviterLastName,
+    inviterFullName,
+    jobFunction: jobFunction.name,
+    jobFunctionShort: practitionerLabel,
+    practitionerLabel,
+    vouchUrl,
+  }
+
+  const subject = applyVariables(template.subject, vars)
+  const bodyHtml = applyVariables(template.body_html, vars)
+  const html = emailLayout(bodyHtml)
+
+  const recipient = await getRecipient(vouchee.email)
+
+  const { data, error } = await resend.emails.send({
+    from: FROM_ADDRESS,
+    to: [recipient],
+    subject,
+    html,
+  })
+
+  if (error) throw new Error(`Resend error: ${error.message}`)
+
+  console.log(`[Email] Sent vouch_invite to ${vouchee.display_name} for ${practitionerLabel} (${data?.id})`)
   return data?.id
 }
 

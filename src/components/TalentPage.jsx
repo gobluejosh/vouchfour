@@ -85,68 +85,86 @@ function TalentCard({ talent }) {
   );
 }
 
-function NetworkStatusCard({ networkStatus, slug }) {
-  const { total, completed, connectors } = networkStatus;
+function VouchStatusCard({ vouches, vouchToken, label }) {
   const [expanded, setExpanded] = useState(false);
+  const responded = vouches.filter(v => v.inviteStatus === "completed").length;
+
   return (
     <div style={{
       background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
-      padding: "16px 18px", marginTop: 24,
+      padding: "14px 18px", marginTop: 24,
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
-          Recommenders
-        </div>
-        <a
-          href={`/network?edit=${slug}`}
-          style={{
-            fontSize: 12, color: C.accent, fontWeight: 600,
-            textDecoration: "none", fontFamily: FONT,
-          }}
-        >
-          Edit
-        </a>
-      </div>
       <div
         onClick={() => setExpanded(e => !e)}
-        style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+        style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          cursor: "pointer", userSelect: "none",
+        }}
       >
-        <svg
-          width="12" height="12" viewBox="0 0 12 12" fill="none"
-          style={{ transition: "transform 0.2s", transform: expanded ? "rotate(90deg)" : "rotate(0deg)", flexShrink: 0 }}
-        >
-          <path d="M4 2L8 6L4 10" stroke={C.sub} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>
-          {completed} of {total} recommender{total !== 1 ? "s" : ""} ha{completed !== 1 ? "ve" : "s"} responded
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Your vouches{label ? ` — ${label}` : ""}
+          </div>
+          <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT }}>
+            {responded} of {vouches.length} responded
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {vouchToken && (
+            <a
+              href={`/vouch?token=${vouchToken}`}
+              onClick={e => e.stopPropagation()}
+              style={{
+                fontSize: 12, color: C.accent, fontWeight: 600,
+                textDecoration: "none", fontFamily: FONT,
+                background: C.accentLight, padding: "4px 12px", borderRadius: 6,
+                border: `1px solid ${C.chipBorder}`,
+              }}
+            >
+              Edit
+            </a>
+          )}
+          <svg
+            width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{
+              transition: "transform 0.2s",
+              transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+            }}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
         </div>
       </div>
-      {expanded && connectors.map((c, i) => (
-        <div key={i} style={{
-          display: "flex", alignItems: "center", gap: 10,
-          padding: "8px 0",
-          borderTop: `1px solid ${C.border}`,
-          ...(i === 0 ? { marginTop: 12 } : {}),
-        }}>
-          <Avatar name={c.name} size={30} />
-          <div style={{ flex: 1, fontSize: 14, color: C.ink, fontFamily: FONT }}>{c.name}</div>
-          {c.status === "completed" ? (
-            <div style={{
-              fontSize: 11, color: C.success, fontWeight: 600,
-              background: C.successLight, padding: "3px 8px", borderRadius: 6,
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+          {vouches.map((v, i) => (
+            <div key={i} style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "8px 0",
+              borderTop: i > 0 ? `1px solid ${C.border}` : "none",
             }}>
-              Responded
+              <Avatar name={v.name} size={30} />
+              <div style={{ flex: 1, fontSize: 14, color: C.ink, fontFamily: FONT }}>{v.name}</div>
+              {v.inviteStatus === "completed" ? (
+                <div style={{
+                  fontSize: 11, color: C.success, fontWeight: 600,
+                  background: C.successLight, padding: "3px 8px", borderRadius: 6,
+                }}>
+                  Responded
+                </div>
+              ) : (
+                <div style={{
+                  fontSize: 11, color: C.warn, fontWeight: 600,
+                  background: "#FFFBEB", padding: "3px 8px", borderRadius: 6,
+                }}>
+                  Pending
+                </div>
+              )}
             </div>
-          ) : (
-            <div style={{
-              fontSize: 11, color: C.warn, fontWeight: 600,
-              background: "#FFFBEB", padding: "3px 8px", borderRadius: 6,
-            }}>
-              Pending
-            </div>
-          )}
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
@@ -243,10 +261,14 @@ export default function TalentPage() {
   const [authState, setAuthState] = useState("checking"); // checking | unauthenticated | authenticated
   const [user, setUser] = useState(null);
   const [talent, setTalent] = useState([]);
-  const [networkStatus, setNetworkStatus] = useState(null);
-  const [myVouches, setMyVouches] = useState([]);
-  const [vouchToken, setVouchToken] = useState(null);
-  const [roles, setRoles] = useState([]);
+  const [myVouches, setMyVouches] = useState({}); // { engineering: [{name, linkedin, inviteStatus}], ... }
+  const [vouchTokens, setVouchTokens] = useState({}); // { engineering: "token", ... }
+  const [activeJobFunctions, setActiveJobFunctions] = useState([]); // functions user has vouched in
+  const [availableJobFunctions, setAvailableJobFunctions] = useState([]); // functions user hasn't vouched in
+  const [activeFunction, setActiveFunction] = useState(null); // slug or null for "All"
+
+  const [selectedNextFn, setSelectedNextFn] = useState(""); // id of function picked in CTA dropdown
+  const [startingVouch, setStartingVouch] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -263,14 +285,12 @@ export default function TalentPage() {
     const loginToken = params.get("token");
 
     if (loginToken) {
-      // Validate magic link token
       fetch(`/api/auth/validate?token=${loginToken}`, { credentials: "include" })
         .then(res => res.json())
         .then(data => {
           if (data.user) {
             setUser(data.user);
             setAuthState("authenticated");
-            // Clean URL (remove token param)
             window.history.replaceState({}, "", window.location.pathname);
           } else {
             setAuthState("unauthenticated");
@@ -278,7 +298,6 @@ export default function TalentPage() {
         })
         .catch(() => setAuthState("unauthenticated"));
     } else {
-      // Check existing session
       fetch("/api/auth/session", { credentials: "include" })
         .then(res => {
           if (res.ok) return res.json();
@@ -292,40 +311,36 @@ export default function TalentPage() {
     }
   }, [slug]);
 
-  // Fetch talent data once authenticated
+  // Fetch talent data once authenticated (re-fetches when activeFunction changes)
   useEffect(() => {
     if (authState !== "authenticated" || !slug) return;
 
     setLoading(true);
-    fetch(`/api/talent/${slug}`, { credentials: "include" })
+    const fnParam = activeFunction ? `?fn=${activeFunction}` : "";
+    fetch(`/api/talent/${slug}${fnParam}`, { credentials: "include" })
       .then(res => {
         if (!res.ok) throw new Error("Failed to load");
         return res.json();
       })
       .then(data => {
         setTalent(data.talent || []);
-        setNetworkStatus(data.networkStatus || null);
-        setMyVouches(data.myVouches || []);
-        setVouchToken(data.vouchToken || null);
+        setMyVouches(data.myVouches || {});
+        setVouchTokens(data.vouchTokens || {});
+        setActiveJobFunctions(data.activeJobFunctions || []);
+        setAvailableJobFunctions(data.availableJobFunctions || []);
+;
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, [authState, slug]);
-
-  // Fetch user's roles once authenticated
-  useEffect(() => {
-    if (authState !== "authenticated" || !slug) return;
-
-    fetch(`/api/my-roles/${slug}`, { credentials: "include" })
-      .then(res => {
-        if (res.ok) return res.json();
-        return { roles: [] };
-      })
-      .then(data => setRoles(data.roles || []))
-      .catch(() => setRoles([]));
-  }, [authState, slug]);
+  }, [authState, slug, activeFunction]);
 
   const firstName = user?.name?.split(" ")[0] || "";
+
+  // Get the vouch data for the currently-active function tab
+  const displayedFunctionSlug = activeFunction || (activeJobFunctions.length === 1 ? activeJobFunctions[0]?.slug : null);
+  const currentVouchData = displayedFunctionSlug ? myVouches[displayedFunctionSlug] : null;
+  const currentVouches = currentVouchData?.vouches || [];
+  const currentVouchToken = displayedFunctionSlug ? vouchTokens[displayedFunctionSlug] : null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
@@ -339,23 +354,31 @@ export default function TalentPage() {
 
         <div style={{ maxWidth: 480, margin: "0 auto" }}>
 
-          {/* Checking auth */}
+          {/* Checking auth — show heading + shimmers */}
           {authState === "checking" && (
-            <div style={{ textAlign: "center", paddingTop: 60 }}>
-              <div style={{ fontSize: 15, color: C.sub }}>Loading...</div>
-            </div>
+            <>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
+                  Your talent network.
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {[0, 1, 2, 3, 4].map(i => (
+                  <div key={i} style={{
+                    height: 62, borderRadius: 12,
+                    background: "linear-gradient(90deg, #f0ede9 25%, #e8e4df 50%, #f0ede9 75%)",
+                    backgroundSize: "200% 100%",
+                    animation: `shimmer 1.2s ${i * 0.15}s infinite`,
+                  }} />
+                ))}
+                <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+              </div>
+            </>
           )}
 
           {/* Unauthenticated — show login prompt */}
           {authState === "unauthenticated" && !error && (
             <LoginPrompt />
-          )}
-
-          {/* Authenticated — loading talent data */}
-          {authState === "authenticated" && loading && (
-            <div style={{ textAlign: "center", paddingTop: 60 }}>
-              <div style={{ fontSize: 15, color: C.sub }}>Loading your talent network...</div>
-            </div>
           )}
 
           {/* Error */}
@@ -367,14 +390,86 @@ export default function TalentPage() {
           )}
 
           {/* Authenticated — talent network */}
-          {authState === "authenticated" && !loading && !error && (
+          {authState === "authenticated" && !error && (
             <>
-              <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, marginBottom: 20, lineHeight: 1.3 }}>
-                {firstName}'s Custom Talent Network
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
+                  Your talent network, {firstName}.
+                </div>
               </div>
 
+              {/* Job function filter pills */}
+              {!loading && activeJobFunctions.length === 1 && (
+                <div style={{
+                  display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20,
+                }}>
+                  <button
+                    style={{
+                      padding: "6px 14px", borderRadius: 20,
+                      border: `1.5px solid ${C.accent}`,
+                      background: C.accentLight,
+                      color: C.accent,
+                      fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                      cursor: "default",
+                    }}
+                  >
+                    {activeJobFunctions[0].practitionerLabel || activeJobFunctions[0].name}
+                  </button>
+                </div>
+              )}
+              {!loading && activeJobFunctions.length >= 2 && (
+                <div style={{
+                  display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20,
+                }}>
+                  <button
+                    onClick={() => { setActiveFunction(null); setVisibleCount(10); }}
+                    style={{
+                      padding: "6px 14px", borderRadius: 20,
+                      border: `1.5px solid ${activeFunction === null ? C.accent : C.border}`,
+                      background: activeFunction === null ? C.accentLight : "#fff",
+                      color: activeFunction === null ? C.accent : C.sub,
+                      fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                      cursor: "pointer",
+                    }}
+                  >
+                    All
+                  </button>
+                  {activeJobFunctions.map(jf => (
+                    <button
+                      key={jf.slug}
+                      onClick={() => { setActiveFunction(jf.slug); setVisibleCount(10); }}
+                      style={{
+                        padding: "6px 14px", borderRadius: 20,
+                        border: `1.5px solid ${activeFunction === jf.slug ? C.accent : C.border}`,
+                        background: activeFunction === jf.slug ? C.accentLight : "#fff",
+                        color: activeFunction === jf.slug ? C.accent : C.sub,
+                        fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {jf.practitionerLabel || jf.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Shimmer placeholders while loading */}
+              {loading && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {[0, 1, 2, 3, 4].map(i => (
+                    <div key={i} style={{
+                      height: 62, borderRadius: 12,
+                      background: "linear-gradient(90deg, #f0ede9 25%, #e8e4df 50%, #f0ede9 75%)",
+                      backgroundSize: "200% 100%",
+                      animation: `shimmer 1.2s ${i * 0.15}s infinite`,
+                    }} />
+                  ))}
+                  <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+                </div>
+              )}
+
               {/* Empty state */}
-              {talent.length === 0 && (
+              {!loading && talent.length === 0 && (
                 <div style={{
                   background: C.accentLight, borderRadius: 12, padding: "16px 18px",
                   border: `1px solid ${C.chipBorder}`,
@@ -390,7 +485,7 @@ export default function TalentPage() {
               )}
 
               {/* Talent list */}
-              {talent.length > 0 && (
+              {!loading && talent.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {talent.slice(0, visibleCount).map((t) => (
                     <TalentCard key={t.id} talent={t} />
@@ -412,153 +507,111 @@ export default function TalentPage() {
                 </div>
               )}
 
-              {/* Network status — below talent list */}
-              {networkStatus && networkStatus.connectors.length > 0 && (
-                <NetworkStatusCard networkStatus={networkStatus} slug={slug} />
+              {/* Per-function vouch status (collapsed by default, hidden in "All" view) */}
+              {activeFunction !== null && currentVouches.length > 0 && (
+                <VouchStatusCard
+                  vouches={currentVouches}
+                  vouchToken={currentVouchToken}
+                  label={displayedFunctionSlug && activeJobFunctions.length > 1
+                    ? (activeJobFunctions.find(f => f.slug === displayedFunctionSlug)?.practitionerLabel || "")
+                    : ""}
+                />
+              )}
+              {/* Single-function user: show vouch status when there's only one function */}
+              {activeFunction === null && activeJobFunctions.length === 1 && currentVouches.length > 0 && (
+                <VouchStatusCard
+                  vouches={currentVouches}
+                  vouchToken={currentVouchToken}
+                  label=""
+                />
               )}
 
-              {/* Role-specific searches */}
-              <div style={{
-                background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
-                padding: "16px 18px", marginTop: 24,
-              }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 14 }}>
-                  Role-specific searches
-                </div>
-
-                {/* CTA to create a new role search */}
-                <a
-                  href="/role"
-                  style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    padding: "14px 16px", background: C.accentLight,
-                    borderRadius: 12, border: `1.5px solid ${C.chipBorder}`,
-                    textDecoration: "none", cursor: "pointer",
-                    marginBottom: roles.length > 0 ? 14 : 0,
-                  }}
-                >
-                  <div style={{
-                    width: 36, height: 36, borderRadius: "50%",
-                    background: C.accent, color: "#fff",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    flexShrink: 0,
-                  }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="10" />
-                      <circle cx="12" cy="12" r="6" />
-                      <circle cx="12" cy="12" r="2" />
-                      <line x1="22" y1="2" x2="14.5" y2="9.5" />
-                    </svg>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
-                      Get talent recommendations for a specific role
-                    </div>
-                    <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 2 }}>
-                      Ask selected recommenders to vouch for a targeted search
-                    </div>
-                  </div>
-                </a>
-
-                {/* Existing roles */}
-                {roles.length > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {roles.map(r => {
-                      const completed = Number(r.completed_count) || 0;
-                      const total = Number(r.total_invites) || 0;
-                      const talentCount = Number(r.talent_count) || 0;
-                      const noResponses = completed === 0;
-                      return (
-                        <a
-                          key={r.slug}
-                          href={`/role/${r.slug}`}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 12,
-                            padding: "12px 14px", background: "#FAFAF9",
-                            borderRadius: 10, border: `1px solid ${C.border}`,
-                            textDecoration: "none", cursor: "pointer",
-                          }}
-                        >
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
-                              {r.job_function}
-                            </div>
-                            <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 2 }}>
-                              {r.level}
-                            </div>
-                          </div>
-                          {noResponses ? (
-                            <div style={{
-                              fontSize: 11, fontWeight: 600, fontFamily: FONT,
-                              padding: "3px 10px", borderRadius: 6,
-                              color: C.warn, background: "#FFFBEB",
-                            }}>
-                              waiting on responses
-                            </div>
-                          ) : (
-                            <div style={{
-                              fontSize: 11, fontWeight: 600, fontFamily: FONT,
-                              padding: "3px 10px", borderRadius: 6,
-                              ...(completed === total
-                                ? { color: C.success, background: C.successLight }
-                                : { color: C.warn, background: "#FFFBEB" }),
-                            }}>
-                              {completed}/{total} responded
-                            </div>
-                          )}
-                          {talentCount > 0 && (
-                            <div style={{
-                              fontSize: 11, fontWeight: 600, color: C.accent,
-                              background: C.accentLight, padding: "3px 10px", borderRadius: 6,
-                              fontFamily: FONT,
-                            }}>
-                              {talentCount} vouches
-                            </div>
-                          )}
-                        </a>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Your vouches */}
-              {myVouches.length > 0 && (
+              {/* Keep building CTA */}
+              {availableJobFunctions.length > 0 && (
                 <div style={{
-                  background: C.accentLight, borderRadius: 14, border: `1.5px solid ${C.chipBorder}`,
+                  background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
                   padding: "16px 18px", marginTop: 24,
                 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.accent, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                      Your vouches
-                    </div>
-                    {vouchToken && (
-                      <a
-                        href={`/vouch?token=${vouchToken}`}
-                        style={{
-                          fontSize: 12, color: C.accent, fontWeight: 600,
-                          textDecoration: "none", fontFamily: FONT,
-                          background: "#fff", padding: "4px 12px", borderRadius: 6,
-                          border: `1px solid ${C.chipBorder}`,
-                        }}
-                      >
-                        Update
-                      </a>
-                    )}
+                  <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 4 }}>
+                    Keep building your network
                   </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
-                    {myVouches.map((v, i) => (
-                      <div key={i} style={{
-                        display: "inline-flex", alignItems: "center", gap: 8,
-                        padding: "6px 12px 6px 6px",
-                        background: "#fff", borderRadius: 20,
-                        border: `1px solid ${C.chipBorder}`,
-                      }}>
-                        <Avatar name={v.name} size={24} />
-                        <span style={{ fontSize: 13, fontWeight: 500, color: C.ink, fontFamily: FONT }}>{v.name}</span>
-                      </div>
-                    ))}
+                  <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>
+                    Which function should we work on next?
+                  </p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select
+                      value={selectedNextFn}
+                      onChange={e => setSelectedNextFn(e.target.value)}
+                      style={{
+                        flex: 1, padding: "10px 12px",
+                        fontSize: 14, fontFamily: FONT,
+                        border: `1.5px solid ${C.border}`,
+                        borderRadius: 10, color: selectedNextFn ? C.ink : C.sub,
+                        background: "#fff", cursor: "pointer",
+                        WebkitAppearance: "none", appearance: "none",
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                        backgroundRepeat: "no-repeat",
+                        backgroundPosition: "right 12px center",
+                        paddingRight: 32,
+                      }}
+                    >
+                      <option value="" disabled>Select a function</option>
+                      {availableJobFunctions.map(jf => (
+                        <option key={jf.id} value={jf.id}>
+                          {jf.practitionerLabel || jf.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={!selectedNextFn || startingVouch}
+                      onClick={async () => {
+                        if (!selectedNextFn || startingVouch) return;
+                        setStartingVouch(true);
+                        try {
+                          const res = await fetch("/api/start-vouch", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({ jobFunctionId: Number(selectedNextFn) }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || "Failed");
+                          window.location.href = `/vouch?token=${data.token}`;
+                        } catch (err) {
+                          console.error("[TalentPage] Start vouch error:", err);
+                          setStartingVouch(false);
+                        }
+                      }}
+                      style={{
+                        padding: "10px 20px",
+                        background: selectedNextFn && !startingVouch ? C.accent : "#D1D5DB",
+                        color: "#fff", border: "1.5px solid transparent", borderRadius: 10,
+                        fontSize: 14, fontWeight: 600, fontFamily: FONT,
+                        cursor: selectedNextFn && !startingVouch ? "pointer" : "not-allowed",
+                        whiteSpace: "nowrap", flexShrink: 0,
+                      }}
+                    >
+                      {startingVouch ? "..." : "Let's go"}
+                    </button>
                   </div>
+                </div>
+              )}
+
+              {/* If no available functions but also no active ones, show generic CTA */}
+              {availableJobFunctions.length === 0 && activeJobFunctions.length === 0 && (
+                <div style={{
+                  background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
+                  padding: "16px 18px", marginTop: 24,
+                  textAlign: "center",
+                }}>
+                  <a href="/start-vouch" style={{
+                    display: "inline-block", padding: "10px 22px",
+                    background: C.accent, color: "#fff", borderRadius: 10,
+                    fontSize: 14, fontWeight: 600, textDecoration: "none",
+                    fontFamily: FONT,
+                  }}>
+                    Start Vouching
+                  </a>
                 </div>
               )}
             </>

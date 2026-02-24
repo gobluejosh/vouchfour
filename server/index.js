@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { query, getClient } from './lib/db.js'
 import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations } from './lib/graph.js'
-import { sendPleaseVouchEmail, sendYouWereVouchedEmail, sendLoginLinkEmail, sendRoleNetworkEmail } from './lib/email.js'
-import { checkAndNotifyReadiness, checkRoleReadiness } from './lib/readiness.js'
+import { sendVouchInviteEmail, sendLoginLinkEmail } from './lib/email.js'
+import { checkAndNotifyReadiness } from './lib/readiness.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -103,15 +103,6 @@ const BRAVE_API_KEY = process.env.BRAVE_API_KEY
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 const ADMIN_SECRET = process.env.ADMIN_SECRET || ''
 
-function generateRoleSlug() {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  let result = 'r_'
-  for (let i = 0; i < 5; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)]
-  }
-  return result
-}
-
 if (!ANTHROPIC_API_KEY || !BRAVE_API_KEY || !RESEND_API_KEY) {
   console.error('\n  ⚠  Missing required environment variables.')
   console.error('  Run:  ANTHROPIC_API_KEY=sk-ant-... BRAVE_API_KEY=BSA... RESEND_API_KEY=re_... npm run server\n')
@@ -191,6 +182,192 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  // ─── Job functions list ──────────────────────────────────────────────
+  if (req.method === 'GET' && req.url === '/api/job-functions') {
+    try {
+      const result = await query(
+        'SELECT id, name, slug, practitioner_label, display_order FROM job_functions ORDER BY display_order'
+      )
+      res.writeHead(200)
+      res.end(JSON.stringify({ jobFunctions: result.rows }))
+    } catch (err) {
+      console.error('[/api/job-functions error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Identify user (upsert person by LinkedIn) ─────────────────────
+  if (req.method === 'POST' && req.url === '/api/identify') {
+    if (isRateLimited(req)) {
+      res.writeHead(429)
+      res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
+      return
+    }
+    try {
+      const body = await readBody(req)
+      const { name, email, linkedin } = body
+      if (!name?.trim() || !linkedin?.trim()) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Name and LinkedIn URL are required' }))
+        return
+      }
+      const normalizedLinkedin = normalizeLinkedInUrl(linkedin)
+      if (!normalizedLinkedin) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Please enter a valid LinkedIn URL' }))
+        return
+      }
+      // Find or create person by LinkedIn URL
+      const existingPerson = await query(
+        'SELECT id FROM people WHERE linkedin_url = $1',
+        [normalizedLinkedin]
+      )
+      let personId
+      if (existingPerson.rows.length > 0) {
+        personId = existingPerson.rows[0].id
+        await query(
+          `UPDATE people SET display_name = COALESCE(NULLIF($2, ''), display_name),
+           email = COALESCE(NULLIF($3, ''), email),
+           self_provided = TRUE WHERE id = $1`,
+          [personId, name.trim(), email?.trim()?.toLowerCase() || null]
+        )
+      } else {
+        const insertRes = await query(
+          'INSERT INTO people (display_name, email, linkedin_url, self_provided) VALUES ($1, $2, $3, TRUE) RETURNING id',
+          [name.trim(), email?.trim()?.toLowerCase() || null, normalizedLinkedin]
+        )
+        personId = insertRes.rows[0].id
+      }
+      res.writeHead(200)
+      res.end(JSON.stringify({ personId }))
+    } catch (err) {
+      console.error('[/api/identify error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Start vouch chain ────────────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/start-vouch') {
+    if (isRateLimited(req)) {
+      res.writeHead(429)
+      res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
+      return
+    }
+    try {
+      const body = await readBody(req)
+      const { jobFunctionId } = body
+
+      // Validate job function
+      const jfRes = await query('SELECT id, name, slug, practitioner_label FROM job_functions WHERE id = $1', [jobFunctionId])
+      if (jfRes.rows.length === 0) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Invalid job function' }))
+        return
+      }
+
+      // Determine the user — session, personId, or inline identity
+      let userId
+      const session = await validateSession(req)
+      if (session) {
+        userId = session.id
+      } else if (body.personId) {
+        // Person already identified via /api/identify
+        const personCheck = await query('SELECT id FROM people WHERE id = $1', [body.personId])
+        if (personCheck.rows.length === 0) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Invalid person ID' }))
+          return
+        }
+        userId = body.personId
+      } else {
+        // Inline identity (fallback)
+        const { name, email, linkedin } = body
+        if (!name?.trim() || !linkedin?.trim()) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Name and LinkedIn URL are required' }))
+          return
+        }
+        const normalizedLinkedin = normalizeLinkedInUrl(linkedin)
+        if (!normalizedLinkedin) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Please enter a valid LinkedIn URL' }))
+          return
+        }
+        const existingPerson = await query(
+          'SELECT id FROM people WHERE linkedin_url = $1',
+          [normalizedLinkedin]
+        )
+        if (existingPerson.rows.length > 0) {
+          userId = existingPerson.rows[0].id
+        } else {
+          const insertRes = await query(
+            'INSERT INTO people (display_name, email, linkedin_url) VALUES ($1, $2, $3) RETURNING id',
+            [name.trim(), email?.trim()?.toLowerCase() || null, normalizedLinkedin]
+          )
+          userId = insertRes.rows[0].id
+        }
+      }
+
+      // Check if user already has a self-vouch invite for this function
+      const existingRes = await query(`
+        SELECT token FROM vouch_invites
+        WHERE inviter_id = $1 AND invitee_id = $1
+          AND job_function_id = $2
+        ORDER BY created_at DESC LIMIT 1
+      `, [userId, jobFunctionId])
+
+      if (existingRes.rows.length > 0) {
+        res.writeHead(200)
+        res.end(JSON.stringify({ token: existingRes.rows[0].token }))
+        return
+      }
+
+      // Create self-referencing vouch invite
+      const token = crypto.randomUUID()
+      await query(`
+        INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id)
+        VALUES ($1, $2, $3, $4)
+      `, [token, userId, userId, jobFunctionId])
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ token }))
+    } catch (err) {
+      console.error('[/api/start-vouch error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── User's vouched functions (lightweight, for StartVouchPage) ────
+  if (req.method === 'GET' && req.url === '/api/my-vouch-functions') {
+    try {
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        return
+      }
+      const result = await query(`
+        SELECT DISTINCT jf.id, jf.slug, jf.name
+        FROM vouches v
+        JOIN job_functions jf ON jf.id = v.job_function_id
+        WHERE v.voucher_id = $1
+      `, [session.id])
+      res.writeHead(200)
+      res.end(JSON.stringify({ vouchedFunctions: result.rows.map(r => r.slug) }))
+    } catch (err) {
+      console.error('[/api/my-vouch-functions error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── LinkedIn profile lookup via Brave Search API ────────────────────
   if (req.method === 'POST' && req.url === '/api/lookup-linkedin') {
     try {
@@ -266,6 +443,25 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(400)
         res.end(JSON.stringify({ error: 'fullName is required', emails: [] }))
         return
+      }
+
+      // ── Step 0: Check if we already know this person's email ──────────
+      if (linkedinUrl) {
+        const normalizedUrl = normalizeLinkedInUrl(linkedinUrl)
+        if (normalizedUrl) {
+          const knownPerson = await query(
+            'SELECT email FROM people WHERE linkedin_url = $1 AND email IS NOT NULL AND email != \'\'',
+            [normalizedUrl]
+          )
+          if (knownPerson.rows.length > 0) {
+            console.log(`[Email] Found known email for ${fullName} in DB (${Date.now() - startTime}ms)`)
+            res.writeHead(200)
+            res.end(JSON.stringify({
+              emails: [{ email: knownPerson.rows[0].email, confidence: 100, source: 'known' }]
+            }))
+            return
+          }
+        }
       }
 
       // Extract company from detail (e.g. "CEO · Anuvi" → "Anuvi")
@@ -433,8 +629,9 @@ Rules:
     return
   }
 
-  // ─── Submit Network form ────────────────────────────────────────────
-  if (req.method === 'POST' && req.url === '/api/submit-network') {
+  // ─── [LEGACY] Submit Network form — preserved for reference ─────────
+  // This endpoint is disabled in the new model. Network forms are no longer used.
+  if (false && req.method === 'POST' && req.url === '/api/submit-network') {
     if (isRateLimited(req)) {
       res.writeHead(429)
       res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
@@ -658,9 +855,14 @@ Rules:
       }
 
       const result = await query(`
-        SELECT vi.id, vi.status, vi.invitee_id, p.display_name, p.linkedin_url, p.email
+        SELECT vi.id, vi.status, vi.invitee_id, vi.inviter_id, vi.job_function_id,
+               p.display_name, p.linkedin_url, p.email,
+               inviter.display_name AS inviter_name,
+               jf.id AS jf_id, jf.name AS jf_name, jf.slug AS jf_slug, jf.practitioner_label AS jf_practitioner_label
         FROM vouch_invites vi
         JOIN people p ON p.id = vi.invitee_id
+        JOIN people inviter ON inviter.id = vi.inviter_id
+        LEFT JOIN job_functions jf ON jf.id = vi.job_function_id
         WHERE vi.token = $1
       `, [token])
 
@@ -671,60 +873,93 @@ Rules:
       }
 
       const invite = result.rows[0]
+      const isSelfInvite = invite.inviter_id === invite.invitee_id
+      const hasJobFunction = !!invite.job_function_id
 
-      // For completed invites, return existing vouches so the form can pre-populate
-      if (invite.status === 'completed') {
-        const vouchesRes = await query(`
-          SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
-          FROM edges e
-          JOIN people p ON p.id = e.target_id
-          WHERE e.source_id = $1 AND e.edge_type = 'vouch'
-          ORDER BY e.created_at
-        `, [invite.invitee_id])
-
-        res.writeHead(200)
-        res.end(JSON.stringify({
-          name: invite.display_name,
-          linkedin: invite.linkedin_url,
-          email: invite.email,
-          isUpdate: true,
-          existingVouches: vouchesRes.rows,
-        }))
-        return
-      }
-
-      // Check if this person has vouched before (via a different invite)
-      const hasVouched = await query(
-        `SELECT 1 FROM vouch_invites WHERE invitee_id = $1 AND status = 'completed' LIMIT 1`,
-        [invite.invitee_id]
-      )
-      if (hasVouched.rows.length > 0) {
-        // They've vouched before — load their existing vouches for pre-population
-        const vouchesRes = await query(`
-          SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
-          FROM edges e
-          JOIN people p ON p.id = e.target_id
-          WHERE e.source_id = $1 AND e.edge_type = 'vouch'
-          ORDER BY e.created_at
-        `, [invite.invitee_id])
-
-        res.writeHead(200)
-        res.end(JSON.stringify({
-          name: invite.display_name,
-          linkedin: invite.linkedin_url,
-          email: invite.email,
-          isUpdate: true,
-          existingVouches: vouchesRes.rows,
-        }))
-        return
-      }
-
-      res.writeHead(200)
-      res.end(JSON.stringify({
+      // Build base response
+      const baseResponse = {
         name: invite.display_name,
         linkedin: invite.linkedin_url,
         email: invite.email,
-      }))
+        inviterName: isSelfInvite ? null : invite.inviter_name,
+        jobFunction: invite.jf_id ? {
+          id: invite.jf_id,
+          name: invite.jf_name,
+          slug: invite.jf_slug,
+          practitionerLabel: invite.jf_practitioner_label,
+        } : null,
+      }
+
+      // For completed invites or re-vouch, load existing vouches
+      if (invite.status === 'completed') {
+        let existingVouches
+        if (hasJobFunction) {
+          // New model: query from vouches table filtered by job function
+          const vouchesRes = await query(`
+            SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
+            FROM vouches v
+            JOIN people p ON p.id = v.vouchee_id
+            WHERE v.voucher_id = $1 AND v.job_function_id = $2
+            ORDER BY v.created_at
+          `, [invite.invitee_id, invite.job_function_id])
+          existingVouches = vouchesRes.rows
+        } else {
+          // Legacy model: query from edges table
+          const vouchesRes = await query(`
+            SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
+            FROM edges e
+            JOIN people p ON p.id = e.target_id
+            WHERE e.source_id = $1 AND e.edge_type = 'vouch'
+            ORDER BY e.created_at
+          `, [invite.invitee_id])
+          existingVouches = vouchesRes.rows
+        }
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ ...baseResponse, isUpdate: true, existingVouches }))
+        return
+      }
+
+      // Check if this person has vouched before in this function
+      if (hasJobFunction) {
+        const hasVouched = await query(
+          `SELECT 1 FROM vouches WHERE voucher_id = $1 AND job_function_id = $2 LIMIT 1`,
+          [invite.invitee_id, invite.job_function_id]
+        )
+        if (hasVouched.rows.length > 0) {
+          const vouchesRes = await query(`
+            SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
+            FROM vouches v
+            JOIN people p ON p.id = v.vouchee_id
+            WHERE v.voucher_id = $1 AND v.job_function_id = $2
+            ORDER BY v.created_at
+          `, [invite.invitee_id, invite.job_function_id])
+          res.writeHead(200)
+          res.end(JSON.stringify({ ...baseResponse, isUpdate: true, existingVouches: vouchesRes.rows }))
+          return
+        }
+      } else {
+        // Legacy: check edges
+        const hasVouched = await query(
+          `SELECT 1 FROM vouch_invites WHERE invitee_id = $1 AND status = 'completed' LIMIT 1`,
+          [invite.invitee_id]
+        )
+        if (hasVouched.rows.length > 0) {
+          const vouchesRes = await query(`
+            SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
+            FROM edges e
+            JOIN people p ON p.id = e.target_id
+            WHERE e.source_id = $1 AND e.edge_type = 'vouch'
+            ORDER BY e.created_at
+          `, [invite.invitee_id])
+          res.writeHead(200)
+          res.end(JSON.stringify({ ...baseResponse, isUpdate: true, existingVouches: vouchesRes.rows }))
+          return
+        }
+      }
+
+      res.writeHead(200)
+      res.end(JSON.stringify(baseResponse))
     } catch (err) {
       console.error('[/api/vouch-invite error]', err)
       res.writeHead(500)
@@ -754,9 +989,12 @@ Rules:
 
       // Look up invite (allow both pending and completed for updates)
       const inviteRes = await query(`
-        SELECT vi.id, vi.inviter_id, vi.invitee_id, vi.status, p.display_name
+        SELECT vi.id, vi.inviter_id, vi.invitee_id, vi.status, vi.job_function_id,
+               p.display_name,
+               jf.id AS jf_id, jf.name AS jf_name, jf.slug AS jf_slug, jf.practitioner_label AS jf_practitioner_label
         FROM vouch_invites vi
         JOIN people p ON p.id = vi.invitee_id
+        LEFT JOIN job_functions jf ON jf.id = vi.job_function_id
         WHERE vi.token = $1
       `, [token])
 
@@ -770,170 +1008,264 @@ Rules:
       const invite = inviteRes.rows[0]
       const isUpdate = invite.status === 'completed'
       const voucherId = invite.invitee_id
+      const jobFunctionId = invite.job_function_id
 
-      await client.query('BEGIN')
+      // ── NEW MODEL (has job_function_id) ──
+      if (jobFunctionId) {
+        await client.query('BEGIN')
 
-      // Snapshot existing vouches BEFORE processing (for email diffing)
-      const existingVouchesRes = await client.query(`
-        SELECT p.id, p.linkedin_url, p.email
-        FROM edges e
-        JOIN people p ON p.id = e.target_id
-        WHERE e.source_id = $1 AND e.edge_type = 'vouch'
-      `, [voucherId])
-      const existingByUrl = new Map()
-      for (const row of existingVouchesRes.rows) {
-        existingByUrl.set(row.linkedin_url, { id: row.id, email: row.email })
-      }
+        // Snapshot existing vouches for this function
+        const existingVouchesRes = await client.query(`
+          SELECT p.id, p.linkedin_url, p.email
+          FROM vouches v
+          JOIN people p ON p.id = v.vouchee_id
+          WHERE v.voucher_id = $1 AND v.job_function_id = $2
+        `, [voucherId, jobFunctionId])
+        const existingByUrl = new Map()
+        for (const row of existingVouchesRes.rows) {
+          existingByUrl.set(row.linkedin_url, { id: row.id, email: row.email })
+        }
 
-      // Create submission record
-      const subRes = await client.query(`
-        INSERT INTO submissions (submitter_id, form_type, submitted_at, raw_payload)
-        VALUES ($1, 'vouch', NOW(), $2)
-        RETURNING id
-      `, [voucherId, JSON.stringify(body)])
-      const submissionId = subRes.rows[0].id
-
-      // Process each recommendation
-      const vouchedPeople = []
-
-      for (const r of (recommendations || [])) {
-        if (!r?.linkedin || !r?.name) continue
-        const talentUrl = normalizeLinkedInUrl(r.linkedin)
-        if (!talentUrl) continue
-
-        // Check if this person existed before with the same email
-        const existing = existingByUrl.get(talentUrl)
-        const isNew = !existing
-        const emailChanged = existing && r.email && r.email !== existing.email
-
-        // Upsert talent person — only update if not self-provided
-        const talentRes = await client.query(`
-          INSERT INTO people (linkedin_url, display_name, email)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (linkedin_url) DO UPDATE
-          SET display_name = CASE WHEN people.self_provided THEN people.display_name
-                                  ELSE COALESCE(NULLIF(EXCLUDED.display_name, ''), people.display_name) END,
-              email = CASE WHEN people.self_provided THEN people.email
-                           ELSE COALESCE(EXCLUDED.email, people.email) END,
-              updated_at = NOW()
+        // Create submission record
+        const subRes = await client.query(`
+          INSERT INTO submissions (submitter_id, form_type, submitted_at, raw_payload, job_function_id)
+          VALUES ($1, 'vouch', NOW(), $2, $3)
           RETURNING id
-        `, [talentUrl, r.name, r.email || null])
-        const talentId = talentRes.rows[0].id
+        `, [voucherId, JSON.stringify(body), jobFunctionId])
+        const submissionId = subRes.rows[0].id
 
-        // Upsert vouch edge
+        // Process each recommendation
+        const vouchedPeople = []
+        for (const r of (recommendations || [])) {
+          if (!r?.linkedin || !r?.name) continue
+          const talentUrl = normalizeLinkedInUrl(r.linkedin)
+          if (!talentUrl) continue
+
+          const existing = existingByUrl.get(talentUrl)
+          const isNew = !existing
+
+          // Upsert talent person
+          const talentRes = await client.query(`
+            INSERT INTO people (linkedin_url, display_name, email)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (linkedin_url) DO UPDATE
+            SET display_name = CASE WHEN people.self_provided THEN people.display_name
+                                    ELSE COALESCE(NULLIF(EXCLUDED.display_name, ''), people.display_name) END,
+                email = CASE WHEN people.self_provided THEN people.email
+                             ELSE COALESCE(EXCLUDED.email, people.email) END,
+                updated_at = NOW()
+            RETURNING id
+          `, [talentUrl, r.name, r.email || null])
+          const talentId = talentRes.rows[0].id
+
+          // Insert into vouches table
+          await client.query(`
+            INSERT INTO vouches (voucher_id, vouchee_id, job_function_id, submission_id)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (voucher_id, vouchee_id, job_function_id)
+            DO UPDATE SET submission_id = EXCLUDED.submission_id, created_at = NOW()
+          `, [voucherId, talentId, jobFunctionId, submissionId])
+
+          vouchedPeople.push({
+            id: talentId, display_name: r.name,
+            email: r.email || null, linkedin_url: talentUrl,
+            isNew,
+          })
+        }
+
+        // Mark invite as completed
         await client.query(`
-          INSERT INTO edges (source_id, target_id, edge_type, submission_id)
-          VALUES ($1, $2, 'vouch', $3)
-          ON CONFLICT (source_id, target_id, edge_type)
-          DO UPDATE SET submission_id = EXCLUDED.submission_id, created_at = NOW()
-        `, [voucherId, talentId, submissionId])
+          UPDATE vouch_invites SET status = 'completed', submission_id = $1
+          WHERE id = $2
+        `, [submissionId, invite.id])
 
-        vouchedPeople.push({
-          id: talentId, display_name: r.name,
-          email: r.email || null, linkedin_url: talentUrl,
-          shouldEmail: isNew || emailChanged,
-        })
-      }
-
-      // Mark invite as completed (idempotent for updates)
-      await client.query(`
-        UPDATE vouch_invites SET status = 'completed', submission_id = $1
-        WHERE id = $2
-      `, [submissionId, invite.id])
-
-      // Remove vouch edges for people that were removed from the list
-      const currentVouchUrls = (recommendations || [])
-        .map(r => r?.linkedin ? normalizeLinkedInUrl(r.linkedin) : null)
-        .filter(Boolean)
-      for (const [url, existing] of existingByUrl) {
-        if (!currentVouchUrls.includes(url)) {
-          await client.query(
-            `DELETE FROM edges WHERE source_id = $1 AND target_id = $2 AND edge_type = 'vouch'`,
-            [voucherId, existing.id]
-          )
-          console.log(`[Vouch] Removed vouch for ${url} from ${invite.display_name}'s recommendations`)
-        }
-      }
-
-      // For updates: create a new pending invite so they can update again later
-      if (isUpdate) {
-        const newToken = crypto.randomUUID()
-        await client.query(
-          `INSERT INTO vouch_invites (token, inviter_id, invitee_id) VALUES ($1, $2, $3)`,
-          [newToken, invite.inviter_id, voucherId]
-        )
-      }
-
-      await client.query('COMMIT')
-
-      const newCount = vouchedPeople.filter(v => v.shouldEmail).length
-      console.log(`[Vouch] ${invite.display_name} ${isUpdate ? 'updated' : 'submitted'} vouches for ${vouchedPeople.length} people (${newCount} new/changed, will email)`)
-
-      // Check if the voucher has a talent page ready (for redirect)
-      let talentReady = false
-      let talentUrl = null
-      const personRes = await query(
-        `SELECT linkedin_url FROM people WHERE id = $1`, [voucherId]
-      )
-      if (personRes.rows[0]?.linkedin_url) {
-        const slug = personRes.rows[0].linkedin_url.split('/in/')[1]
-        const readyRes = await query(
-          `SELECT 1 FROM sent_emails WHERE recipient_id = $1 AND email_type = 'talent_ready' LIMIT 1`,
-          [voucherId]
-        )
-        if (readyRes.rows.length > 0) {
-          talentReady = true
-          talentUrl = `/talent/${slug}`
-        }
-      }
-
-      res.writeHead(200)
-      res.end(JSON.stringify({ ok: true, talentReady, talentUrl }))
-
-      // ── Post-commit async tasks (fire-and-forget) ──
-
-      // Check if inviter's talent network is ready
-      checkAndNotifyReadiness(invite.inviter_id).catch(err =>
-        console.error('[Readiness] Post-vouch check failed:', err.message)
-      )
-
-      // Send "you were vouched" emails only to new or email-changed talent people (sequential to avoid rate limits)
-      ;(async () => {
-        for (const talent of vouchedPeople) {
-          if (!talent.email || !talent.shouldEmail) continue
-          try {
-            // Check if already sent (unique index also prevents, but skip the attempt)
-            const already = await query(
-              `SELECT 1 FROM sent_emails WHERE recipient_id = $1 AND email_type = 'you_were_vouched' LIMIT 1`,
-              [talent.id]
-            )
-            if (already.rows.length > 0) continue
-
-            if (!(await canEmailRecipient(talent.id))) {
-              console.log(`[Email] Daily cap reached for ${talent.display_name}, skipping you_were_vouched`)
-              continue
+        // Handle removals: only remove vouches where vouchee hasn't responded yet
+        const currentVouchUrls = (recommendations || [])
+          .map(r => r?.linkedin ? normalizeLinkedInUrl(r.linkedin) : null)
+          .filter(Boolean)
+        for (const [url, existing] of existingByUrl) {
+          if (!currentVouchUrls.includes(url)) {
+            // Check if this person has responded (has a completed invite from this voucher)
+            const respondedRes = await client.query(`
+              SELECT 1 FROM vouch_invites
+              WHERE inviter_id = $1 AND invitee_id = $2 AND job_function_id = $3 AND status = 'completed'
+              LIMIT 1
+            `, [voucherId, existing.id, jobFunctionId])
+            if (respondedRes.rows.length === 0) {
+              await client.query(
+                `DELETE FROM vouches WHERE voucher_id = $1 AND vouchee_id = $2 AND job_function_id = $3`,
+                [voucherId, existing.id, jobFunctionId]
+              )
+              // Also delete pending invite
+              await client.query(
+                `DELETE FROM vouch_invites WHERE inviter_id = $1 AND invitee_id = $2 AND job_function_id = $3 AND status = 'pending'`,
+                [voucherId, existing.id, jobFunctionId]
+              )
+              console.log(`[Vouch] Removed vouch for ${url} from ${invite.display_name}'s ${invite.jf_name} recommendations`)
+            } else {
+              console.log(`[Vouch] Skipping removal of ${url} — already responded`)
             }
-
-            // Create a vouch invite for this talent person so they can vouch for others
-            const newToken = crypto.randomUUID()
-            await query(
-              `INSERT INTO vouch_invites (token, inviter_id, invitee_id) VALUES ($1, $2, $3)`,
-              [newToken, voucherId, talent.id]
-            )
-
-            const resendId = await sendYouWereVouchedEmail(talent, newToken, invite.display_name)
-            await query(
-              `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
-               VALUES ($1, 'you_were_vouched', $2, $3)
-               ON CONFLICT DO NOTHING`,
-              [talent.id, invite.id, resendId]
-            )
-          } catch (err) {
-            console.error(`[Email] Failed to send you_were_vouched to ${talent.display_name}:`, err.message)
           }
-          await sleep(600)
         }
-      })()
+
+        // Create new pending invite for future updates
+        if (isUpdate) {
+          const newToken = crypto.randomUUID()
+          await client.query(
+            `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
+            [newToken, invite.inviter_id, voucherId, jobFunctionId]
+          )
+        }
+
+        await client.query('COMMIT')
+
+        const newPeople = vouchedPeople.filter(v => v.isNew)
+        console.log(`[Vouch] ${invite.display_name} ${isUpdate ? 'updated' : 'submitted'} ${invite.jf_name} vouches for ${vouchedPeople.length} people (${newPeople.length} new)`)
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true, personId: voucherId }))
+
+        // ── Post-commit: chain propagation + readiness ──
+
+        // Determine chain depth to decide whether to propagate
+        const depthRes = await query(`
+          WITH RECURSIVE chain AS (
+            SELECT inviter_id, invitee_id, id AS invite_id, 0 AS depth
+            FROM vouch_invites WHERE id = $1
+            UNION ALL
+            SELECT vi.inviter_id, vi.invitee_id, vi.id, c.depth + 1
+            FROM chain c
+            JOIN vouch_invites vi ON vi.invitee_id = c.inviter_id
+              AND vi.id != c.invite_id
+              AND vi.job_function_id = $2
+              AND vi.status = 'completed'
+            WHERE c.depth < 5
+          )
+          SELECT MAX(depth) AS max_depth FROM chain
+          WHERE inviter_id = invitee_id
+        `, [invite.id, jobFunctionId])
+        const chainDepth = Number(depthRes.rows[0]?.max_depth ?? 0)
+        const shouldPropagate = chainDepth < 3
+
+        const jobFunction = { id: invite.jf_id, name: invite.jf_name, slug: invite.jf_slug, practitionerLabel: invite.jf_practitioner_label }
+        const inviterFullName = invite.display_name
+
+        // Send vouch_invite emails to new vouchees (chain propagation)
+        ;(async () => {
+          for (const talent of newPeople) {
+            if (!talent.email) continue
+            try {
+              if (!(await canEmailRecipient(talent.id))) {
+                console.log(`[Email] Daily cap reached for ${talent.display_name}, skipping vouch_invite`)
+                continue
+              }
+
+              if (shouldPropagate) {
+                // Create vouch invite for this person to continue the chain
+                const newToken = crypto.randomUUID()
+                await query(
+                  `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
+                  [newToken, voucherId, talent.id, jobFunctionId]
+                )
+
+                const resendId = await sendVouchInviteEmail(talent, inviterFullName, jobFunction, newToken)
+                await query(
+                  `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
+                   VALUES ($1, 'vouch_invite', $2, $3)`,
+                  [talent.id, invite.id, resendId]
+                )
+              } else {
+                console.log(`[Vouch] Chain depth ${chainDepth} >= 3, not propagating to ${talent.display_name}`)
+              }
+            } catch (err) {
+              console.error(`[Email] Failed to send vouch_invite to ${talent.display_name}:`, err.message)
+            }
+            await sleep(600)
+          }
+        })()
+
+        // Check readiness for all sponsors (people who vouched for this voucher)
+        const sponsorsRes = await query(`
+          SELECT DISTINCT voucher_id FROM vouches
+          WHERE vouchee_id = $1 AND job_function_id = $2
+        `, [voucherId, jobFunctionId])
+
+        for (const sponsor of sponsorsRes.rows) {
+          checkAndNotifyReadiness(sponsor.voucher_id, jobFunctionId).catch(err =>
+            console.error('[Readiness] Post-vouch check failed:', err.message)
+          )
+        }
+
+      } else {
+        // ── LEGACY MODEL (no job_function_id) ──
+        // Preserve existing behavior for old invites
+        await client.query('BEGIN')
+
+        const existingVouchesRes = await client.query(`
+          SELECT p.id, p.linkedin_url, p.email
+          FROM edges e
+          JOIN people p ON p.id = e.target_id
+          WHERE e.source_id = $1 AND e.edge_type = 'vouch'
+        `, [voucherId])
+        const existingByUrl = new Map()
+        for (const row of existingVouchesRes.rows) {
+          existingByUrl.set(row.linkedin_url, { id: row.id, email: row.email })
+        }
+
+        const subRes = await client.query(`
+          INSERT INTO submissions (submitter_id, form_type, submitted_at, raw_payload)
+          VALUES ($1, 'vouch', NOW(), $2)
+          RETURNING id
+        `, [voucherId, JSON.stringify(body)])
+        const submissionId = subRes.rows[0].id
+
+        const vouchedPeople = []
+        for (const r of (recommendations || [])) {
+          if (!r?.linkedin || !r?.name) continue
+          const talentUrl = normalizeLinkedInUrl(r.linkedin)
+          if (!talentUrl) continue
+
+          const talentRes = await client.query(`
+            INSERT INTO people (linkedin_url, display_name, email)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (linkedin_url) DO UPDATE
+            SET display_name = CASE WHEN people.self_provided THEN people.display_name
+                                    ELSE COALESCE(NULLIF(EXCLUDED.display_name, ''), people.display_name) END,
+                email = CASE WHEN people.self_provided THEN people.email
+                             ELSE COALESCE(EXCLUDED.email, people.email) END,
+                updated_at = NOW()
+            RETURNING id
+          `, [talentUrl, r.name, r.email || null])
+          const talentId = talentRes.rows[0].id
+
+          await client.query(`
+            INSERT INTO edges (source_id, target_id, edge_type, submission_id)
+            VALUES ($1, $2, 'vouch', $3)
+            ON CONFLICT (source_id, target_id, edge_type)
+            DO UPDATE SET submission_id = EXCLUDED.submission_id, created_at = NOW()
+          `, [voucherId, talentId, submissionId])
+
+          vouchedPeople.push({ id: talentId, display_name: r.name, email: r.email || null, linkedin_url: talentUrl })
+        }
+
+        await client.query(`
+          UPDATE vouch_invites SET status = 'completed', submission_id = $1 WHERE id = $2
+        `, [submissionId, invite.id])
+
+        if (isUpdate) {
+          const newToken = crypto.randomUUID()
+          await client.query(
+            `INSERT INTO vouch_invites (token, inviter_id, invitee_id) VALUES ($1, $2, $3)`,
+            [newToken, invite.inviter_id, voucherId]
+          )
+        }
+
+        await client.query('COMMIT')
+        console.log(`[Vouch/Legacy] ${invite.display_name} submitted vouches for ${vouchedPeople.length} people`)
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true }))
+      }
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {})
       console.error('[/api/submit-vouch error]', err)
@@ -948,7 +1280,11 @@ Rules:
   // ─── Get talent recommendations for a user (auth required) ────────
   if (req.method === 'GET' && req.url.startsWith('/api/talent/')) {
     try {
-      const slug = req.url.split('/api/talent/')[1]
+      const urlObj = new URL(req.url, `http://${req.headers.host}`)
+      const pathPart = urlObj.pathname.split('/api/talent/')[1]
+      const slug = pathPart?.toLowerCase()
+      const fnSlug = urlObj.searchParams.get('fn') || null
+
       if (!slug) {
         res.writeHead(400)
         res.end(JSON.stringify({ error: 'Slug is required' }))
@@ -963,7 +1299,7 @@ Rules:
         return
       }
 
-      const linkedinUrl = `https://linkedin.com/in/${slug.toLowerCase()}`
+      const linkedinUrl = `https://linkedin.com/in/${slug}`
 
       // Verify session user matches the slug
       if (session.linkedin_url !== linkedinUrl) {
@@ -973,64 +1309,116 @@ Rules:
       }
 
       const userId = session.id
-      const talent = await getTalentRecommendations(userId)
 
-      // Get network status (connector response rates, deduplicated per person)
-      const networkRes = await query(`
-        SELECT DISTINCT ON (p.id)
-          p.id,
-          p.display_name AS name,
-          vi.status,
-          vi.created_at
-        FROM vouch_invites vi
-        JOIN people p ON p.id = vi.invitee_id
-        WHERE vi.inviter_id = $1 AND vi.invitee_id != $1
-        ORDER BY p.id, CASE WHEN vi.status = 'completed' THEN 0 ELSE 1 END, vi.created_at DESC
-      `, [userId])
-
-      const connectors = networkRes.rows
-      const networkStatus = {
-        total: connectors.length,
-        completed: connectors.filter(c => c.status === 'completed').length,
-        connectors: connectors.map(c => ({ id: c.id, name: c.name, status: c.status })),
+      // Resolve job function filter
+      let jobFunctionId = null
+      if (fnSlug) {
+        const fnRes = await query('SELECT id FROM job_functions WHERE slug = $1', [fnSlug])
+        if (fnRes.rows.length > 0) jobFunctionId = fnRes.rows[0].id
       }
 
-      // Get the user's own vouches (people they recommended)
+      // Get talent recommendations from the new graph
+      const talent = await getTalentRecommendations(userId, jobFunctionId)
+
+      // Get user's vouches grouped by job function, with invite status per vouchee
       const vouchesRes = await query(`
-        SELECT p.display_name AS name, p.linkedin_url AS linkedin
-        FROM edges e
-        JOIN people p ON p.id = e.target_id
-        WHERE e.source_id = $1 AND e.edge_type = 'vouch'
-        ORDER BY e.created_at
+        SELECT v.job_function_id, jf.name AS jf_name, jf.slug AS jf_slug, jf.practitioner_label AS jf_practitioner_label,
+               p.id AS person_id, p.display_name AS name, p.linkedin_url AS linkedin,
+               CASE
+                 WHEN EXISTS (
+                   SELECT 1 FROM vouches v2
+                   WHERE v2.voucher_id = v.vouchee_id AND v2.job_function_id = v.job_function_id
+                 ) THEN 'completed'
+                 ELSE 'pending'
+               END AS invite_status
+        FROM vouches v
+        JOIN people p ON p.id = v.vouchee_id
+        JOIN job_functions jf ON jf.id = v.job_function_id
+        WHERE v.voucher_id = $1
+        ORDER BY jf.display_order, v.created_at
       `, [userId])
 
-      // Find or create a pending vouch invite so the user can update their vouches
-      let vouchToken = null
-      if (vouchesRes.rows.length > 0) {
-        // Look for an existing pending invite where this user is the invitee
-        const pendingRes = await query(
-          `SELECT token FROM vouch_invites WHERE invitee_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
-          [userId]
-        )
-        if (pendingRes.rows.length > 0) {
-          vouchToken = pendingRes.rows[0].token
-        } else {
-          // Create a self-referencing invite so they can re-vouch
-          vouchToken = crypto.randomUUID()
-          await query(
-            `INSERT INTO vouch_invites (token, inviter_id, invitee_id) VALUES ($1, $2, $3)`,
-            [vouchToken, userId, userId]
-          )
+      // Group vouches by job function
+      const myVouches = {}
+      for (const row of vouchesRes.rows) {
+        const key = row.jf_slug
+        if (!myVouches[key]) {
+          myVouches[key] = { name: row.jf_name, slug: row.jf_slug, id: row.job_function_id, practitionerLabel: row.jf_practitioner_label, vouches: [] }
+        }
+        myVouches[key].vouches.push({
+          personId: row.person_id,
+          name: row.name,
+          linkedin: row.linkedin,
+          inviteStatus: row.invite_status,
+        })
+      }
+
+      // Get distinct job functions the user has vouched in
+      const activeJobFunctions = Object.values(myVouches).map(fn => ({
+        id: fn.id, name: fn.name, slug: fn.slug, practitionerLabel: fn.practitionerLabel,
+      }))
+
+      // Get all job functions, marking which ones are available (not yet vouched in)
+      const allFnRes = await query('SELECT id, name, slug, practitioner_label FROM job_functions ORDER BY display_order')
+      const activeSlugs = new Set(activeJobFunctions.map(f => f.slug))
+      const availableJobFunctions = allFnRes.rows
+        .filter(f => !activeSlugs.has(f.slug))
+        .map(f => ({ id: f.id, name: f.name, slug: f.slug, practitionerLabel: f.practitioner_label }))
+
+      // Batch fetch pending vouch invite tokens for all active functions
+      const activeFnIds = activeJobFunctions.map(f => f.id)
+      const vouchTokens = {}
+      if (activeFnIds.length > 0) {
+        const tokensRes = await query(`
+          SELECT DISTINCT ON (job_function_id) job_function_id, token
+          FROM vouch_invites
+          WHERE invitee_id = $1 AND job_function_id = ANY($2) AND status = 'pending'
+          ORDER BY job_function_id, created_at DESC
+        `, [userId, activeFnIds])
+
+        const foundFnIds = new Set()
+        for (const row of tokensRes.rows) {
+          const fnSlugKey = activeJobFunctions.find(f => f.id === row.job_function_id)?.slug
+          if (fnSlugKey) {
+            vouchTokens[fnSlugKey] = row.token
+            foundFnIds.add(row.job_function_id)
+          }
+        }
+
+        // Create self-referencing invites for functions without pending tokens
+        for (const fnData of Object.values(myVouches)) {
+          if (!foundFnIds.has(fnData.id)) {
+            const newToken = crypto.randomUUID()
+            await query(
+              `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
+              [newToken, userId, userId, fnData.id]
+            )
+            vouchTokens[fnData.slug] = newToken
+          }
         }
       }
+
+      // Count distinct vouchers who have contributed to this user's network
+      const contributorsRes = await query(`
+        SELECT COUNT(DISTINCT voucher_id) AS count
+        FROM vouches
+        WHERE voucher_id != $1
+          AND vouchee_id IN (
+            SELECT vouchee_id FROM vouches WHERE voucher_id = $1
+          )
+          ${jobFunctionId ? 'AND job_function_id = $2' : ''}
+      `, jobFunctionId ? [userId, jobFunctionId] : [userId])
+      const contributorCount = Number(contributorsRes.rows[0]?.count || 0)
 
       res.writeHead(200)
       res.end(JSON.stringify({
         user: { name: session.display_name, linkedin: linkedinUrl },
         talent,
-        networkStatus,
-        myVouches: vouchesRes.rows,
-        vouchToken,
+        myVouches,
+        vouchTokens,
+        activeJobFunctions,
+        availableJobFunctions,
+        contributorCount,
       }))
     } catch (err) {
       console.error('[/api/talent error]', err)
@@ -1040,8 +1428,8 @@ Rules:
     return
   }
 
-  // ─── Get network data for editing (auth required) ──────────────────
-  if (req.method === 'GET' && req.url.startsWith('/api/network/')) {
+  // ─── [LEGACY] Get network data for editing — disabled ───────────────
+  if (false && req.method === 'GET' && req.url.startsWith('/api/network/')) {
     try {
       const slug = req.url.split('/api/network/')[1]
       if (!slug) {
@@ -1401,8 +1789,8 @@ Rules:
     return
   }
 
-  // ─── Create role-specific talent search (auth required) ─────────
-  if (req.method === 'POST' && req.url === '/api/create-role') {
+  // ─── [LEGACY] Create role-specific talent search — disabled ─────────
+  if (false && req.method === 'POST' && req.url === '/api/create-role') {
     if (isRateLimited(req)) {
       res.writeHead(429)
       res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
@@ -1519,8 +1907,8 @@ Rules:
     return
   }
 
-  // ─── Validate role invite token ────────────────────────────────────
-  if (req.method === 'GET' && req.url.startsWith('/api/role-invite/')) {
+  // ─── [LEGACY] Validate role invite token — disabled ─────────────────
+  if (false && req.method === 'GET' && req.url.startsWith('/api/role-invite/')) {
     try {
       const token = req.url.split('/api/role-invite/')[1]
       if (!token) {
@@ -1598,8 +1986,8 @@ Rules:
     return
   }
 
-  // ─── Get role detail (auth required, creator only) ─────────────────
-  if (req.method === 'GET' && req.url.startsWith('/api/role/')) {
+  // ─── [LEGACY] Get role detail — disabled ─────────────────────────────
+  if (false && req.method === 'GET' && req.url.startsWith('/api/role/')) {
     try {
       const roleSlug = req.url.split('/api/role/')[1]
       if (!roleSlug) {
@@ -1700,8 +2088,8 @@ Rules:
     return
   }
 
-  // ─── Submit role-specific vouch (token-based) ──────────────────────
-  if (req.method === 'POST' && req.url === '/api/submit-role-vouch') {
+  // ─── [LEGACY] Submit role-specific vouch — disabled ──────────────────
+  if (false && req.method === 'POST' && req.url === '/api/submit-role-vouch') {
     if (isRateLimited(req)) {
       res.writeHead(429)
       res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
@@ -1874,8 +2262,8 @@ Rules:
     return
   }
 
-  // ─── Get user's roles (auth required) ──────────────────────────────
-  if (req.method === 'GET' && req.url.startsWith('/api/my-roles/')) {
+  // ─── [LEGACY] Get user's roles — disabled ───────────────────────────
+  if (false && req.method === 'GET' && req.url.startsWith('/api/my-roles/')) {
     try {
       const slug = req.url.split('/api/my-roles/')[1]
       if (!slug) {

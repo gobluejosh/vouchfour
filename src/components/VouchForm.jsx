@@ -303,6 +303,14 @@ function SingleContactForm({ index, onComplete }) {
     setTimeout(() => emailInputRef.current?.focus(), 100);
   }
 
+  function handleManualLinkedin() {
+    if (!linkedinInput.trim()) return;
+    setLiConfirmed({ label: name.trim(), detail: linkedinInput.trim(), url: linkedinInput.trim() });
+    setLiSuggestions([]);
+    setStep("email");
+    setTimeout(() => emailInputRef.current?.focus(), 100);
+  }
+
   function handleRefineSearch() {
     if (!refineCompany.trim()) return;
     const searchId = ++liSearchId.current;
@@ -394,21 +402,30 @@ function SingleContactForm({ index, onComplete }) {
       {(step === "linkedin" || step === "email" || step === "done") && (
         <div>
           <label style={labelStyle}>LinkedIn profile</label>
-          <input
-            ref={liInputRef}
-            value={linkedinInput}
-            onChange={e => { setLinkedinInput(e.target.value); setLiConfirmed(null); }}
-            placeholder="Select below or paste a URL"
-            autoComplete="off"
-            style={{
-              ...inputStyle,
-              background: liConfirmed && !liFaded ? C.successLight : "#fff",
-              borderColor: liConfirmed && !liFaded ? "#86EFAC" : C.border,
-              color: liConfirmed ? (liFaded ? C.sub : C.success) : C.ink,
-              fontSize: liConfirmed ? 13 : 15,
-              transition: "background 0.8s ease, border-color 0.8s ease, color 0.8s ease",
-            }}
-          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              ref={liInputRef}
+              value={linkedinInput}
+              onChange={e => { setLinkedinInput(e.target.value); setLiConfirmed(null); }}
+              onKeyDown={e => e.key === "Enter" && linkedinInput.trim() && !liConfirmed && step === "linkedin" && handleManualLinkedin()}
+              placeholder="Select below or paste a URL"
+              autoComplete="off"
+              style={{
+                ...inputStyle,
+                flex: 1,
+                background: liConfirmed && !liFaded ? C.successLight : "#fff",
+                borderColor: liConfirmed && !liFaded ? "#86EFAC" : C.border,
+                color: liConfirmed ? (liFaded ? C.sub : C.success) : C.ink,
+                fontSize: liConfirmed ? 13 : 15,
+                transition: "background 0.8s ease, border-color 0.8s ease, color 0.8s ease",
+              }}
+            />
+            {step === "linkedin" && !liConfirmed && linkedinInput.trim() && (
+              <button type="button" onClick={handleManualLinkedin} style={nextBtnStyle(true)}>
+                Next →
+              </button>
+            )}
+          </div>
           {liConfirmed && (
             <div style={{
               marginTop: 5, fontSize: 12, fontFamily: FONT, fontWeight: 500,
@@ -592,30 +609,20 @@ export default function App() {
 
   // Token-based invite flow
   const [token] = useState(() => new URLSearchParams(window.location.search).get('token'));
-  const [roleSlug] = useState(() => new URLSearchParams(window.location.search).get('role'));
   const [invitee, setInvitee] = useState(null);
-  const [role, setRole] = useState(null);
   const [isUpdate, setIsUpdate] = useState(false);
   const [tokenError, setTokenError] = useState(null);
   const [tokenLoading, setTokenLoading] = useState(!!token);
 
-  // Validate token on mount — use role-invite endpoint if role param present
+  // Validate token on mount
   useEffect(() => {
     if (!token) return;
     (async () => {
       try {
-        const endpoint = roleSlug
-          ? `/api/role-invite/${token}`
-          : `/api/vouch-invite/${token}`;
-        const res = await fetch(endpoint);
+        const res = await fetch(`/api/vouch-invite/${token}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Invalid invite');
         setInvitee(data);
-
-        // Store role context if present
-        if (data.role) {
-          setRole(data.role);
-        }
 
         // Pre-populate contacts if this is an update (re-vouch)
         if (data.isUpdate && data.existingVouches?.length > 0) {
@@ -644,23 +651,21 @@ export default function App() {
     setSubmitError(null);
     try {
       const recommendations = contacts.filter(Boolean);
-      const endpoint = roleSlug ? '/api/submit-role-vouch' : '/api/submit-vouch';
-      const payload = roleSlug
-        ? { token, roleSlug, recommendations }
-        : { token, recommendations };
-
-      const res = await fetch(endpoint, {
+      const res = await fetch('/api/submit-vouch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ token, recommendations }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Submission failed');
 
-      // If this was an update and they have a talent page, redirect there
-      if (data.talentReady && data.talentUrl) {
-        window.location.href = data.talentUrl;
-        return;
+      // Store identity so StartVouchPage works for chained (non-authenticated) users
+      if (data.personId) {
+        sessionStorage.setItem("vouchfour_personId", String(data.personId));
+        sessionStorage.setItem("vouchfour_hasVouched", "true");
+      }
+      if (invitee?.name) {
+        sessionStorage.setItem("vouchfour_firstName", invitee.name.split(" ")[0]);
       }
 
       setSubmitted(true);
@@ -691,13 +696,31 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
         <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
-          <div style={{ padding: "0 20px", marginBottom: 24 }}>
+          <div style={{ padding: "0 20px", marginBottom: 16 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
             </a>
           </div>
-          <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center", paddingTop: 60 }}>
-            <div style={{ fontSize: 15, color: C.sub }}>Loading your invite...</div>
+          <div style={{ maxWidth: 480, margin: "0 auto" }}>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {[0,1,2,3].map(i => (
+                  <div key={i} style={{ height: 4, flex: 1, borderRadius: 2, background: C.border }} />
+                ))}
+              </div>
+              <div style={{ height: 20, width: "75%", borderRadius: 6, background: "linear-gradient(90deg, #f0ede9 25%, #e8e4df 50%, #f0ede9 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.2s infinite" }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {[0, 1, 2, 3].map(i => (
+                <div key={i} style={{
+                  height: 140, borderRadius: 16,
+                  background: "linear-gradient(90deg, #f0ede9 25%, #e8e4df 50%, #f0ede9 75%)",
+                  backgroundSize: "200% 100%",
+                  animation: `shimmer 1.2s ${i * 0.15}s infinite`,
+                }} />
+              ))}
+            </div>
+            <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
           </div>
         </div>
       </div>
@@ -724,32 +747,18 @@ export default function App() {
     );
   }
 
-  // If no token provided, show a message directing user to use their invite link
+  // If no token provided, redirect to start-vouch page
   if (!token) {
-    return (
-      <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
-          <div style={{ padding: "0 20px", marginBottom: 24 }}>
-            <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
-              Vouch<span style={{ color: C.accent }}>Four</span>
-            </a>
-          </div>
-          <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center", paddingTop: 40 }}>
-            <div style={{ fontSize: 17, fontWeight: 600, color: C.ink }}>Invite Required</div>
-            <div style={{ marginTop: 8, fontSize: 14, color: C.sub, lineHeight: 1.5 }}>
-              To vouch for talent, you need an invite link. Check your email for an invitation from someone in your network.
-            </div>
-            <a href="/" style={{ display: "inline-block", marginTop: 24, fontSize: 14, color: C.accent, textDecoration: "underline" }}>Go home</a>
-          </div>
-        </div>
-      </div>
-    );
+    window.location.href = '/start-vouch';
+    return null;
   }
 
   const vouchFirstName = invitee?.name?.split(" ")[0] || "";
   const submittedContacts = contacts.filter(Boolean);
 
   if (submitted) {
+    const jobFnShort = invitee?.jobFunction?.practitionerLabel || null;
+
     return (
       <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
         <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
@@ -761,20 +770,34 @@ export default function App() {
 
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div style={{ fontSize: 24, fontWeight: 700, color: C.ink, marginBottom: 12, lineHeight: 1.3 }}>
-              Thanks, {vouchFirstName}!
+              Your network is taking shape, {vouchFirstName}.
             </div>
-            <p style={{ fontSize: 15, color: C.sub, lineHeight: 1.6, marginBottom: 24 }}>
-              {role
-                ? `Your recommendations for the ${role.jobFunction} role have been recorded. The people you've recommended will receive a note letting them know.`
-                : "Your recommendations have been recorded. The people you've vouched for will receive a note letting them know someone thinks highly of them."}
+            <p style={{ fontSize: 15, color: C.sub, lineHeight: 1.6, marginBottom: 8 }}>
+              {jobFnShort
+                ? `You recommended ${submittedContacts.length} excellent ${jobFnShort}. They'll each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`
+                : `You recommended ${submittedContacts.length} excellent professional${submittedContacts.length !== 1 ? 's' : ''}. They'll each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`}
             </p>
+            <p style={{ fontSize: 15, color: C.sub, lineHeight: 1.6, marginBottom: 20 }}>
+              In the meantime, let's keep building your network by vouching for your best colleagues in a different function.
+            </p>
+
+            <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <a href="/start-vouch" style={{
+                display: "inline-block", padding: "14px 28px",
+                background: C.accent, color: "#fff", borderRadius: 10,
+                fontSize: 15, fontWeight: 600, textDecoration: "none",
+                fontFamily: FONT,
+              }}>
+                Keep building your network
+              </a>
+            </div>
 
             <div style={{
               background: C.card, borderRadius: 14, border: `1.5px solid ${C.border}`,
               padding: "16px 18px", marginBottom: 28,
             }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                {role ? "You recommended" : "You vouched for"}
+                You recommended
               </div>
               {submittedContacts.map((c, i) => (
                 <div key={i} style={{
@@ -796,33 +819,6 @@ export default function App() {
                 </div>
               ))}
             </div>
-
-            {!role && (
-              <div style={{
-                background: C.accentLight, borderRadius: 12, padding: "16px 18px",
-                border: `1px solid ${C.chipBorder}`,
-              }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-                  Want to build your own talent network?
-                </div>
-                <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>
-                  VouchFour aggregates recommendations from people you trust to build a
-                  high performing talent network custom to you.
-                </p>
-                <a href={`/network?${new URLSearchParams({
-                  ...(invitee?.name ? { name: invitee.name } : {}),
-                  ...(invitee?.linkedin ? { linkedin: invitee.linkedin } : {}),
-                  ...(invitee?.email ? { email: invitee.email } : {}),
-                }).toString()}`} style={{
-                  display: "inline-block", padding: "10px 22px",
-                  background: C.accent, color: "#fff", borderRadius: 10,
-                  fontSize: 14, fontWeight: 600, textDecoration: "none",
-                  fontFamily: FONT,
-                }}>
-                  Build Your Network
-                </a>
-              </div>
-            )}
 
             <p style={{
               marginTop: 40, fontSize: 11, color: "#78716C",
@@ -856,37 +852,16 @@ export default function App() {
 
        <div style={{ maxWidth: 480, margin: "0 auto" }}>
         <div style={{ marginBottom: 20 }}>
-          {invitee && (
-            <div style={{
-              padding: "10px 14px", marginBottom: 12,
-              background: C.accentLight, borderRadius: 10,
-              fontSize: 14, color: C.ink, fontFamily: FONT,
-            }}>
-              Welcome, <strong>{invitee.name}</strong>
-            </div>
-          )}
-
-          {/* Role context card */}
-          {role && (
+          {/* Job function context card — chain invites only */}
+          {invitee?.jobFunction && invitee.inviterName && !invitee.isSelfInvite && (
             <div style={{
               background: "#FFFFFF", borderRadius: 12,
               border: `1.5px solid ${C.border}`,
               padding: "14px 16px", marginBottom: 14,
             }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-                Role Search{role.creatorName ? ` for ${role.creatorName}` : ""}
-              </div>
               <div style={{ fontSize: 17, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
-                {role.jobFunction}
+                {invitee.inviterName} thinks you're one of the best {invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} they've ever worked with.
               </div>
-              <div style={{ fontSize: 13, color: C.sub, marginTop: 3 }}>
-                {role.level}
-              </div>
-              {role.specialSkills && (
-                <div style={{ fontSize: 12, color: C.sub, marginTop: 4, fontStyle: "italic" }}>
-                  {role.specialSkills}
-                </div>
-              )}
             </div>
           )}
 
@@ -901,9 +876,9 @@ export default function App() {
           </div>
           <p style={{ margin: "12px 0 0", fontSize: 17, color: C.ink, fontWeight: 600, lineHeight: 1.45, paddingLeft: 10 }}>
             {isUpdate
-              ? "Update your VouchFour recommendations"
-              : role
-                ? `Who would you recommend for this ${role.jobFunction} role?`
+              ? `Update your top 4${invitee?.jobFunction ? ` ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name}` : ""}`
+              : invitee?.jobFunction
+                ? `Who are 4 of the best ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} you've ever worked with?`
                 : "Who are 4 of the highest performers you've worked with in your career?"}
           </p>
         </div>
@@ -1023,9 +998,7 @@ export default function App() {
           marginTop: 40, fontSize: 12, color: "#57534E",
           lineHeight: 1.5, textAlign: "left", padding: "0 12px",
         }}>
-          {role
-            ? "Each person you recommend will receive a flattering email indicating that you think highly of them. Your recommendations will help the requester find the right talent for this role."
-            : "Each of the people you VouchFour will receive a flattering email indicating that you think of them highly. No one else will be able to see specifically who you VouchFour."}
+          Each person you recommend will receive an email letting them know you think highly of their work. They'll be invited to vouch for their own top 4, building a chain of trusted talent.
         </p>
 
         <p style={{

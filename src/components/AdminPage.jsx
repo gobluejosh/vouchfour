@@ -17,12 +17,13 @@ const C = {
 const FONT = "'Helvetica Neue', Arial, sans-serif";
 
 const TEMPLATE_LABELS = {
+  vouch_invite: "Vouch Invite",
   login_link: "Login Link",
-  please_vouch: "Please Vouch",
   talent_ready: "Talent Ready",
-  you_were_vouched: "You Were Vouched",
-  role_network: "Role Network",
-  role_ready: "Role Ready",
+  please_vouch: "Please Vouch (Legacy)",
+  you_were_vouched: "You Were Vouched (Legacy)",
+  role_network: "Role Network (Legacy)",
+  role_ready: "Role Ready (Legacy)",
 };
 
 function adminFetch(url, secret, options = {}) {
@@ -300,7 +301,7 @@ export default function AdminPage() {
       const templatesData = await templatesRes.json();
       setSettings(settingsData.settings || {});
       setCoefficients(coeffsData.coefficients || []);
-      setTemplates(templatesData.templates || []);
+      setTemplates((templatesData.templates || []).filter(t => TEMPLATE_LABELS[t.template_key]));
     } catch (err) {
       console.error("Failed to load admin data:", err);
     } finally {
@@ -504,8 +505,8 @@ export default function AdminPage() {
               {/* Readiness Thresholds */}
               <Section title="Readiness Thresholds">
                 <p style={{ fontSize: 12, color: C.sub, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
-                  A user's talent network becomes "ready" when enough recommenders have responded.
-                  The threshold is met when either condition is satisfied.
+                  A user's talent network becomes "ready" when enough of the people they vouched for
+                  have responded with their own vouches. The threshold is met when either condition is satisfied.
                 </p>
                 <InputRow
                   label="Minimum responses"
