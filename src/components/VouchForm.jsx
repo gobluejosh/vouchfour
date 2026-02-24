@@ -959,7 +959,7 @@ export default function App() {
           </div>
         )}
 
-        {canSubmit && activeIndex === -1 && (
+        {canSubmit && (
           <button
             onClick={handleSubmit}
             disabled={submitting}
@@ -973,25 +973,7 @@ export default function App() {
               boxShadow: "0 4px 16px rgba(37,99,235,0.25)",
             }}
           >
-            {submitting ? "Submitting..." : "Submit"}
-          </button>
-        )}
-
-        {canSubmit && activeIndex !== -1 && (
-          <button
-            onClick={handleSubmit}
-            disabled={submitting}
-            style={{
-              width: "100%", padding: "14px",
-              background: "none", color: submitting ? "#93C5FD" : "#1D4ED8",
-              border: "none", borderRadius: 12,
-              fontSize: 14, fontFamily: FONT, cursor: submitting ? "default" : "pointer", marginTop: 4,
-              textDecoration: "underline",
-              textDecorationColor: "#93C5FD",
-              textUnderlineOffset: 3,
-            }}
-          >
-            {submitting ? "Submitting..." : "Submit and skip the rest →"}
+            {submitting ? "Submitting..." : completedCount === 4 ? "Submit" : `Submit ${completedCount} of 4`}
           </button>
         )}
 
