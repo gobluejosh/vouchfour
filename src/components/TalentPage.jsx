@@ -335,6 +335,7 @@ export default function TalentPage() {
   }, [authState, slug, activeFunction]);
 
   const firstName = user?.name?.split(" ")[0] || "";
+  const fullName = user?.name || "";
 
   // Get the vouch data for the currently-active function tab
   const displayedFunctionSlug = activeFunction || (activeJobFunctions.length === 1 ? activeJobFunctions[0]?.slug : null);
@@ -359,7 +360,7 @@ export default function TalentPage() {
             <>
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
-                  Your talent network.
+                  {fullName ? `${fullName}'s Trusted Talent Network` : "Trusted Talent Network"}
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -394,7 +395,7 @@ export default function TalentPage() {
             <>
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
-                  Your talent network, {firstName}.
+                  {fullName}'s Trusted Talent Network
                 </div>
               </div>
 
