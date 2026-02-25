@@ -845,7 +845,7 @@ export default function App() {
 
       {/* Phone-width container */}
       <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
-        <div style={{ padding: "0 20px", marginBottom: 16 }}>
+        <div style={{ padding: "0 4px", marginBottom: 16 }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>
@@ -1000,7 +1000,7 @@ export default function App() {
             How your picks build your network
           </div>
           <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
-            Each person you pick will be invited to vouch for their 4 all-time best{invitee?.jobFunction?.name ? ` ${invitee.jobFunction.name}` : ""} colleagues. The talent you discover in your network comes from this chain, so pick people who are genuinely great at what they do and whose judgment you trust.
+            Each person you pick will be invited to vouch for their 4 all-time best{invitee?.jobFunction?.name ? ` ${invitee.jobFunction.name}` : ""} colleagues. The talent you will discover in your VouchFour network comes from this chain, so pick people who are genuinely great at what they do and whose judgment you trust.
           </div>
         </div>
 
