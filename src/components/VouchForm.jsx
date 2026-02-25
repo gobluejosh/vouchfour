@@ -856,12 +856,10 @@ export default function App() {
           {/* Job function context card — chain invites only */}
           {invitee?.jobFunction && invitee.inviterName && !invitee.isSelfInvite && (
             <div style={{
-              background: "#FFFFFF", borderRadius: 12,
-              border: `1.5px solid ${C.border}`,
-              padding: "14px 16px", marginBottom: 14,
+              padding: "0 4px", marginBottom: 14,
             }}>
-              <div style={{ fontSize: 17, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
-                {invitee.inviterName} thinks you're one of the best {invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} they've ever worked with.
+              <div style={{ fontSize: 15, color: C.sub, lineHeight: 1.45, fontFamily: FONT }}>
+                <span style={{ fontWeight: 600, color: C.ink }}>{invitee.inviterName}</span> thinks you're one of the best {invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} they've ever worked with.
               </div>
             </div>
           )}
@@ -1002,7 +1000,7 @@ export default function App() {
             How your picks build your network
           </div>
           <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
-            Each person you pick will be invited to vouch for their 4 all-time best{invitee?.jobFunction?.practitionerLabel ? ` ${invitee.jobFunction.practitionerLabel}` : ""} colleagues. The talent you discover in your network comes from this chain, so pick people who are genuinely great at what they do and whose judgment you trust.
+            Each person you pick will be invited to vouch for their 4 all-time best{invitee?.jobFunction?.name ? ` ${invitee.jobFunction.name}` : ""} colleagues. The talent you discover in your network comes from this chain, so pick people who are genuinely great at what they do and whose judgment you trust.
           </div>
         </div>
 
