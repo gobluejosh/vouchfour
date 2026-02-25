@@ -630,7 +630,7 @@ export default function App() {
           const prefilled = [null, null, null, null];
           data.existingVouches.forEach((v, i) => {
             if (i < 4) {
-              prefilled[i] = { name: v.name, linkedin: v.linkedin, email: v.email || '' };
+              prefilled[i] = { name: v.name, linkedin: v.linkedin, email: v.email || '', responded: !!v.responded };
             }
           });
           setContacts(prefilled);
@@ -920,11 +920,24 @@ export default function App() {
                   <span style={{ fontSize: 14, fontWeight: 600, color: C.success, flex: 1 }}>
                     {contacts[i].name}
                   </span>
-                  <button onClick={() => setActiveIndex(i)} style={{
-                    background: "none", border: "none",
-                    fontSize: 12, color: C.sub, cursor: "pointer", padding: "2px 6px",
-                    borderRadius: 4, fontFamily: FONT,
-                  }}>Edit</button>
+                  {contacts[i].responded ? (
+                    <span title="This person has already responded — their vouch can't be edited" style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "2px 6px", color: C.sub, fontSize: 13,
+                      cursor: "default",
+                    }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                      </svg>
+                    </span>
+                  ) : (
+                    <button onClick={() => setActiveIndex(i)} style={{
+                      background: "none", border: "none",
+                      fontSize: 12, color: C.sub, cursor: "pointer", padding: "2px 6px",
+                      borderRadius: 4, fontFamily: FONT,
+                    }}>Edit</button>
+                  )}
                 </div>
               )}
 

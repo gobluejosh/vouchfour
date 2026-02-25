@@ -896,7 +896,12 @@ Rules:
         if (hasJobFunction) {
           // New model: query from vouches table filtered by job function
           const vouchesRes = await query(`
-            SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
+            SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email,
+                   EXISTS(
+                     SELECT 1 FROM vouch_invites vi
+                     WHERE vi.inviter_id = $1 AND vi.invitee_id = v.vouchee_id
+                       AND vi.job_function_id = $2 AND vi.status = 'completed'
+                   ) AS responded
             FROM vouches v
             JOIN people p ON p.id = v.vouchee_id
             WHERE v.voucher_id = $1 AND v.job_function_id = $2
@@ -928,7 +933,12 @@ Rules:
         )
         if (hasVouched.rows.length > 0) {
           const vouchesRes = await query(`
-            SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email
+            SELECT p.display_name AS name, p.linkedin_url AS linkedin, p.email,
+                   EXISTS(
+                     SELECT 1 FROM vouch_invites vi
+                     WHERE vi.inviter_id = $1 AND vi.invitee_id = v.vouchee_id
+                       AND vi.job_function_id = $2 AND vi.status = 'completed'
+                   ) AS responded
             FROM vouches v
             JOIN people p ON p.id = v.vouchee_id
             WHERE v.voucher_id = $1 AND v.job_function_id = $2
