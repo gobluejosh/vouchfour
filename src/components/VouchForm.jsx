@@ -990,12 +990,21 @@ export default function App() {
           </button>
         )}
 
-        <p style={{
-          marginTop: 40, fontSize: 12, color: "#57534E",
-          lineHeight: 1.5, textAlign: "left", padding: "0 12px",
+        <div style={{
+          marginTop: 32, padding: "16px 18px",
+          background: "#fff", borderRadius: 12,
+          border: `1.5px solid ${C.border}`,
         }}>
-          Each person you recommend will receive an email letting them know you think highly of their work. They'll be invited to vouch for their own top 4, building a chain of trusted talent.
-        </p>
+          <div style={{
+            fontSize: 13, fontWeight: 700, color: C.ink,
+            marginBottom: 6, fontFamily: FONT,
+          }}>
+            How your picks build your network
+          </div>
+          <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
+            Each person you pick will be invited to vouch for their 4 all-time best{invitee?.jobFunction?.practitionerLabel ? ` ${invitee.jobFunction.practitionerLabel}` : ""} colleagues. The talent you discover in your network comes from this chain, so pick people who are genuinely great at what they do and whose judgment you trust.
+          </div>
+        </div>
 
         <p style={{
           marginTop: 24, fontSize: 11, color: "#78716C",
