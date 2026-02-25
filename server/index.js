@@ -1125,32 +1125,14 @@ Rules:
         res.writeHead(200)
         res.end(JSON.stringify({ ok: true, personId: voucherId }))
 
-        // ── Post-commit: chain propagation + readiness ──
-
-        // Determine chain depth to decide whether to propagate
-        const depthRes = await query(`
-          WITH RECURSIVE chain AS (
-            SELECT inviter_id, invitee_id, id AS invite_id, 0 AS depth
-            FROM vouch_invites WHERE id = $1
-            UNION ALL
-            SELECT vi.inviter_id, vi.invitee_id, vi.id, c.depth + 1
-            FROM chain c
-            JOIN vouch_invites vi ON vi.invitee_id = c.inviter_id
-              AND vi.id != c.invite_id
-              AND vi.job_function_id = $2
-              AND vi.status = 'completed'
-            WHERE c.depth < 5
-          )
-          SELECT MAX(depth) AS max_depth FROM chain
-          WHERE inviter_id = invitee_id
-        `, [invite.id, jobFunctionId])
-        const chainDepth = Number(depthRes.rows[0]?.max_depth ?? 0)
-        const shouldPropagate = chainDepth < 3
+        // ── Post-commit: send invite emails + check readiness ──
 
         const jobFunction = { id: invite.jf_id, name: invite.jf_name, slug: invite.jf_slug, practitionerLabel: invite.jf_practitioner_label }
         const inviterFullName = invite.display_name
 
-        // Send vouch_invite emails to new vouchees (chain propagation)
+        // Send vouch_invite emails to all new vouchees. Chain propagation is
+        // unlimited — every vouched person gets an invite. Display depth is
+        // controlled on the talent profile page instead.
         ;(async () => {
           for (const talent of newPeople) {
             if (!talent.email) continue
@@ -1160,23 +1142,18 @@ Rules:
                 continue
               }
 
-              if (shouldPropagate) {
-                // Create vouch invite for this person to continue the chain
-                const newToken = crypto.randomUUID()
-                await query(
-                  `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
-                  [newToken, voucherId, talent.id, jobFunctionId]
-                )
+              const newToken = crypto.randomUUID()
+              await query(
+                `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
+                [newToken, voucherId, talent.id, jobFunctionId]
+              )
 
-                const resendId = await sendVouchInviteEmail(talent, inviterFullName, jobFunction, newToken)
-                await query(
-                  `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
-                   VALUES ($1, 'vouch_invite', $2, $3)`,
-                  [talent.id, invite.id, resendId]
-                )
-              } else {
-                console.log(`[Vouch] Chain depth ${chainDepth} >= 3, not propagating to ${talent.display_name}`)
-              }
+              const resendId = await sendVouchInviteEmail(talent, inviterFullName, jobFunction, newToken)
+              await query(
+                `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
+                 VALUES ($1, 'vouch_invite', $2, $3)`,
+                [talent.id, invite.id, resendId]
+              )
             } catch (err) {
               console.error(`[Email] Failed to send vouch_invite to ${talent.display_name}:`, err.message)
             }

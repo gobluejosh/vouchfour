@@ -16,9 +16,10 @@ import { query } from './db.js'
  *
  * @param {number} userId - people.id of the user
  * @param {number|null} jobFunctionId - job_functions.id to filter by, or null for all functions
+ * @param {number} maxDegree - maximum degree to include in results (default 3)
  * @returns {Array<{id, display_name, linkedin_url, email, degree, recommendation_count, vouch_score}>}
  */
-export async function getTalentRecommendations(userId, jobFunctionId = null) {
+export async function getTalentRecommendations(userId, jobFunctionId = null, maxDegree = 3) {
   const result = await query(`
     WITH
       -- Degree 1: User's own vouches
@@ -122,5 +123,5 @@ export async function getTalentRecommendations(userId, jobFunctionId = null) {
     ORDER BY vouch_score DESC, s.degree ASC, p.display_name ASC
   `, [userId, jobFunctionId])
 
-  return result.rows
+  return result.rows.filter(r => r.degree <= maxDegree)
 }
