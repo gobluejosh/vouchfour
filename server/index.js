@@ -1345,14 +1345,44 @@ Rules:
         id: fn.id, name: fn.name, slug: fn.slug, practitionerLabel: fn.practitionerLabel,
       }))
 
-      // Find all functions with talent reachable through user's network
-      // (functions the user or their direct vouchees have vouched in)
+      // Find all functions with talent reachable through user's full network
+      // Matches the graph query's 3-degree reach: user, direct vouchees, siblings, degree-2 people
       const reachableRes = await query(`
+        WITH
+          direct_vouchees AS (
+            SELECT DISTINCT vouchee_id AS person_id FROM vouches WHERE voucher_id = $1
+          ),
+          sponsors AS (
+            SELECT DISTINCT voucher_id AS person_id FROM vouches WHERE vouchee_id = $1
+          ),
+          siblings AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM sponsors s
+            JOIN vouches v ON v.voucher_id = s.person_id
+            WHERE v.vouchee_id != $1
+          ),
+          degree2_sources AS (
+            SELECT person_id FROM direct_vouchees
+            UNION
+            SELECT person_id FROM siblings
+          ),
+          degree2_people AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM degree2_sources d2s
+            JOIN vouches v ON v.voucher_id = d2s.person_id
+            WHERE v.vouchee_id != $1
+              AND v.vouchee_id NOT IN (SELECT person_id FROM direct_vouchees)
+          ),
+          network_vouchers AS (
+            SELECT $1::int AS person_id
+            UNION SELECT person_id FROM direct_vouchees
+            UNION SELECT person_id FROM siblings
+            UNION SELECT person_id FROM degree2_people
+          )
         SELECT DISTINCT jf.id, jf.name, jf.slug, jf.practitioner_label, jf.display_order
         FROM vouches v
         JOIN job_functions jf ON jf.id = v.job_function_id
-        WHERE v.voucher_id = $1
-           OR v.voucher_id IN (SELECT DISTINCT vouchee_id FROM vouches WHERE voucher_id = $1)
+        WHERE v.voucher_id IN (SELECT person_id FROM network_vouchers)
         ORDER BY jf.display_order
       `, [userId])
       const reachableFunctions = reachableRes.rows.map(f => ({
