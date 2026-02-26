@@ -17,13 +17,15 @@ const JOB_FUNCTIONS = [
   { id: 1, name: "Engineering / Software Development", slug: "engineering" },
   { id: 2, name: "Product Management", slug: "product" },
   { id: 3, name: "Marketing", slug: "marketing" },
-  { id: 4, name: "Sales", slug: "sales" },
-  { id: 5, name: "Design (Product/UX)", slug: "design" },
   { id: 6, name: "Data / Analytics", slug: "data" },
+  { id: 5, name: "Design (Product/UX)", slug: "design" },
+  { id: 4, name: "Sales", slug: "sales" },
+  { id: 10, name: "Customer Success", slug: "customer-success" },
   { id: 7, name: "Finance / Accounting", slug: "finance" },
   { id: 8, name: "Operations", slug: "operations" },
   { id: 9, name: "People / HR", slug: "people-hr" },
-  { id: 10, name: "Customer Success", slug: "customer-success" },
+  { id: 11, name: "Executive", slug: "executive" },
+  { id: 12, name: "Investor", slug: "investor" },
 ];
 
 // ─── Main Page ──────────────────────────────────────────────────────────────
