@@ -320,6 +320,7 @@ export default function AdminPage() {
             readiness_threshold_pct: settings.readiness_threshold_pct,
             readiness_threshold_min: settings.readiness_threshold_min,
             cross_function_discount: settings.cross_function_discount,
+            sibling_coefficient: settings.sibling_coefficient,
           },
         }),
       });
@@ -523,9 +524,26 @@ export default function AdminPage() {
                   value={settings.readiness_threshold_pct || ""}
                   onChange={v => setSettings(s => ({ ...s, readiness_threshold_pct: v }))}
                 />
+                <SaveButton onClick={saveSettings} saving={savingSettings} saved={savedSettings} />
+              </Section>
+
+              {/* Network Scoring */}
+              <Section title="Network Scoring">
+                <p style={{ fontSize: 12, color: C.sub, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+                  Multipliers that adjust scores for talent discovered through indirect network paths.
+                  Lower values = stronger discount. Applied on top of degree coefficients.
+                </p>
+                <InputRow
+                  label="Sibling coefficient"
+                  description="Multiplier for talent reached via sponsors' other vouchees (0-1)"
+                  type="number"
+                  step="0.01"
+                  value={settings.sibling_coefficient || ""}
+                  onChange={v => setSettings(s => ({ ...s, sibling_coefficient: v }))}
+                />
                 <InputRow
                   label="Cross-function discount"
-                  description="Multiplier applied to talent reached through cross-function bridges (0-1)"
+                  description="Multiplier for talent reached through cross-function bridges (0-1)"
                   type="number"
                   step="0.01"
                   value={settings.cross_function_discount || ""}

@@ -1304,15 +1304,18 @@ Rules:
         if (fnRes.rows.length > 0) jobFunctionId = fnRes.rows[0].id
       }
 
-      // Fetch cross-function discount setting
-      const discountRes = await query(
-        "SELECT value FROM app_settings WHERE key = 'cross_function_discount'"
+      // Fetch scoring settings
+      const scoringRes = await query(
+        "SELECT key, value FROM app_settings WHERE key IN ('cross_function_discount', 'sibling_coefficient')"
       )
-      const crossFunctionDiscount = parseFloat(discountRes.rows[0]?.value) || 0.5
+      const scoringSettings = Object.fromEntries(scoringRes.rows.map(r => [r.key, r.value]))
+      const crossFunctionDiscount = parseFloat(scoringSettings.cross_function_discount) || 0.5
+      const siblingCoefficient = parseFloat(scoringSettings.sibling_coefficient) || 0.8
 
       // Get talent recommendations from the graph
       const talent = await getTalentRecommendations(userId, jobFunctionId, {
         crossFunctionDiscount,
+        siblingCoefficient,
       })
 
       // Get user's vouches grouped by job function, with invite status per vouchee
@@ -1354,10 +1357,10 @@ Rules:
       }))
 
       // Find all functions with talent reachable through user's full network
-      // Matches the graph query's 3-degree reach: user, direct vouchees, siblings, degree-2 people
+      // Matches the graph query's 3-degree reach: degree1, degree2 (direct + siblings), degree3
       const reachableRes = await query(`
         WITH
-          direct_vouchees AS (
+          degree1 AS (
             SELECT DISTINCT vouchee_id AS person_id FROM vouches WHERE voucher_id = $1
           ),
           sponsors AS (
@@ -1368,24 +1371,33 @@ Rules:
             FROM sponsors s
             JOIN vouches v ON v.voucher_id = s.person_id
             WHERE v.vouchee_id != $1
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
           ),
-          degree2_sources AS (
-            SELECT person_id FROM direct_vouchees
+          degree2_direct AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM degree1 d1
+            JOIN vouches v ON v.voucher_id = d1.person_id
+            WHERE v.vouchee_id != $1
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+          ),
+          degree2 AS (
+            SELECT person_id FROM degree2_direct
             UNION
             SELECT person_id FROM siblings
           ),
-          degree2_people AS (
+          degree3 AS (
             SELECT DISTINCT v.vouchee_id AS person_id
-            FROM degree2_sources d2s
-            JOIN vouches v ON v.voucher_id = d2s.person_id
+            FROM degree2 d2
+            JOIN vouches v ON v.voucher_id = d2.person_id
             WHERE v.vouchee_id != $1
-              AND v.vouchee_id NOT IN (SELECT person_id FROM direct_vouchees)
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree2)
           ),
           network_vouchers AS (
             SELECT $1::int AS person_id
-            UNION SELECT person_id FROM direct_vouchees
-            UNION SELECT person_id FROM siblings
-            UNION SELECT person_id FROM degree2_people
+            UNION SELECT person_id FROM degree1
+            UNION SELECT person_id FROM degree2
+            UNION SELECT person_id FROM degree3
           )
         SELECT DISTINCT jf.id, jf.name, jf.slug, jf.practitioner_label, jf.display_order
         FROM vouches v

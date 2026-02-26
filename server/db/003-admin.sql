@@ -111,3 +111,7 @@ ON CONFLICT (key) DO NOTHING;
 INSERT INTO app_settings (key, value) VALUES
     ('cross_function_discount', '0.5')
 ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO app_settings (key, value) VALUES
+    ('sibling_coefficient', '0.8')
+ON CONFLICT (key) DO NOTHING;

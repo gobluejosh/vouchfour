@@ -9,19 +9,23 @@ import { query } from './db.js'
  *
  * Cross-function detection uses a parallel function-SPECIFIC traversal. A result is
  * "cross-function" if it can only be reached through cross-function bridges — i.e.,
- * it does NOT appear in the pure function-specific chain. These results receive a
- * configurable discount multiplier on their score.
+ * it does NOT appear in the pure function-specific chain. In the "All" view, the
+ * function-specific traversal restricts to the user's own vouch functions.
  *
- * Score: degree_coefficient[degree] * recommendation_count * (cross_function_discount if applicable)
+ * Siblings (people vouched for by the user's sponsors) receive a configurable
+ * sibling coefficient discount since the trust signal is indirect.
+ *
+ * Score: degree_coefficient * recommendation_count * sibling_coefficient * cross_function_discount
  *
  * @param {number} userId - people.id of the user
  * @param {number|null} jobFunctionId - job_functions.id to filter by, or null for all functions
  * @param {Object} options
  * @param {number} options.maxDegree - maximum degree to include (default 3)
  * @param {number} options.crossFunctionDiscount - multiplier for cross-function results (default 0.5)
- * @returns {Array<{id, display_name, linkedin_url, email, degree, is_cross_function, recommendation_count, vouch_score}>}
+ * @param {number} options.siblingCoefficient - multiplier for sibling-path results (default 0.8)
+ * @returns {Array<{id, display_name, linkedin_url, email, degree, is_sibling, is_cross_function, recommendation_count, vouch_score}>}
  */
-export async function getTalentRecommendations(userId, jobFunctionId = null, { maxDegree = 3, crossFunctionDiscount = 0.5 } = {}) {
+export async function getTalentRecommendations(userId, jobFunctionId = null, { maxDegree = 3, crossFunctionDiscount = 0.5, siblingCoefficient = 0.8 } = {}) {
   const result = await query(`
     WITH
       -- ══════════════════════════════════════════════════════════════════
@@ -78,43 +82,57 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
           AND v.vouchee_id NOT IN (SELECT person_id FROM degree2)
       ),
 
-      -- Best (closest) degree per person
+      -- Best (closest) degree per person, preferring non-sibling paths
       all_talent AS (
-        SELECT person_id, 1 AS degree FROM all_seeds
+        SELECT person_id, 1 AS degree, FALSE AS is_sibling FROM all_seeds
         UNION ALL
-        SELECT person_id, 2 AS degree FROM degree2
+        SELECT person_id, 2 AS degree, FALSE AS is_sibling FROM degree2_direct
         UNION ALL
-        SELECT person_id, 3 AS degree FROM degree3
+        SELECT person_id, 2 AS degree, TRUE AS is_sibling FROM siblings
+          WHERE person_id NOT IN (SELECT person_id FROM degree2_direct)
+        UNION ALL
+        SELECT person_id, 3 AS degree, FALSE AS is_sibling FROM degree3
       ),
       best_degree AS (
-        SELECT person_id, MIN(degree) AS degree
+        SELECT DISTINCT ON (person_id) person_id, degree, is_sibling
         FROM all_talent
-        GROUP BY person_id
+        ORDER BY person_id, degree ASC, is_sibling ASC
       ),
 
       -- ══════════════════════════════════════════════════════════════════
       -- FUNCTION-SPECIFIC TRAVERSAL (for cross-function detection)
-      -- Follows only vouches in the target function. A result that appears
-      -- in the agnostic network but NOT here is cross-function.
+      -- Follows only vouches in the target function (or the user's own
+      -- vouch functions when in All view). A result that appears in the
+      -- agnostic network but NOT here is cross-function.
       -- ══════════════════════════════════════════════════════════════════
+
+      -- User's own vouch functions (used for All-view cross-function detection)
+      user_functions AS (
+        SELECT DISTINCT job_function_id AS fn_id
+        FROM vouches
+        WHERE voucher_id = $1
+      ),
 
       fn_degree1 AS (
         SELECT DISTINCT vouchee_id AS person_id
         FROM vouches
         WHERE voucher_id = $1
-          AND ($2::int IS NULL OR job_function_id = $2)
+          AND (($2::int IS NOT NULL AND job_function_id = $2)
+            OR ($2::int IS NULL AND job_function_id IN (SELECT fn_id FROM user_functions)))
       ),
       fn_sponsors AS (
         SELECT DISTINCT voucher_id
         FROM vouches
         WHERE vouchee_id = $1
-          AND ($2::int IS NULL OR job_function_id = $2)
+          AND (($2::int IS NOT NULL AND job_function_id = $2)
+            OR ($2::int IS NULL AND job_function_id IN (SELECT fn_id FROM user_functions)))
       ),
       fn_siblings AS (
         SELECT DISTINCT v.vouchee_id AS person_id
         FROM fn_sponsors s
         JOIN vouches v ON v.voucher_id = s.voucher_id
-          AND ($2::int IS NULL OR v.job_function_id = $2)
+          AND (($2::int IS NOT NULL AND job_function_id = $2)
+            OR ($2::int IS NULL AND job_function_id IN (SELECT fn_id FROM user_functions)))
         WHERE v.vouchee_id != $1
           AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree1)
       ),
@@ -122,7 +140,8 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
         SELECT DISTINCT v.vouchee_id AS person_id
         FROM fn_degree1 d1
         JOIN vouches v ON v.voucher_id = d1.person_id
-          AND ($2::int IS NULL OR v.job_function_id = $2)
+          AND (($2::int IS NOT NULL AND job_function_id = $2)
+            OR ($2::int IS NULL AND job_function_id IN (SELECT fn_id FROM user_functions)))
         WHERE v.vouchee_id != $1
           AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree1)
       ),
@@ -135,7 +154,8 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
         SELECT DISTINCT v.vouchee_id AS person_id
         FROM fn_degree2 d2
         JOIN vouches v ON v.voucher_id = d2.person_id
-          AND ($2::int IS NULL OR v.job_function_id = $2)
+          AND (($2::int IS NOT NULL AND job_function_id = $2)
+            OR ($2::int IS NULL AND job_function_id IN (SELECT fn_id FROM user_functions)))
         WHERE v.vouchee_id != $1
           AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree1)
           AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree2)
@@ -156,8 +176,8 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
         SELECT
           bd.person_id,
           bd.degree,
+          bd.is_sibling,
           CASE
-            WHEN $2::int IS NULL THEN FALSE
             WHEN bd.person_id IN (SELECT person_id FROM fn_reachable) THEN FALSE
             ELSE TRUE
           END AS is_cross_function,
@@ -184,16 +204,18 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
         p.linkedin_url,
         p.email,
         s.degree,
+        s.is_sibling,
         s.is_cross_function,
         s.recommendation_count,
         ROUND(dc.coefficient * s.recommendation_count
+          * CASE WHEN s.is_sibling THEN $4 ELSE 1.0 END
           * CASE WHEN s.is_cross_function THEN $3 ELSE 1.0 END, 3) AS vouch_score
     FROM scored s
     JOIN people p ON p.id = s.person_id
     JOIN degree_coefficients dc ON dc.degree = s.degree
     WHERE s.recommendation_count > 0
     ORDER BY vouch_score DESC, s.degree ASC, p.display_name ASC
-  `, [userId, jobFunctionId, crossFunctionDiscount])
+  `, [userId, jobFunctionId, crossFunctionDiscount, siblingCoefficient])
 
   return result.rows.filter(r => r.degree <= maxDegree)
 }
