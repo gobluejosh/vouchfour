@@ -319,6 +319,7 @@ export default function AdminPage() {
           settings: {
             readiness_threshold_pct: settings.readiness_threshold_pct,
             readiness_threshold_min: settings.readiness_threshold_min,
+            cross_function_discount: settings.cross_function_discount,
           },
         }),
       });
@@ -521,6 +522,14 @@ export default function AdminPage() {
                   type="number"
                   value={settings.readiness_threshold_pct || ""}
                   onChange={v => setSettings(s => ({ ...s, readiness_threshold_pct: v }))}
+                />
+                <InputRow
+                  label="Cross-function discount"
+                  description="Multiplier applied to talent reached through cross-function bridges (0-1)"
+                  type="number"
+                  step="0.01"
+                  value={settings.cross_function_discount || ""}
+                  onChange={v => setSettings(s => ({ ...s, cross_function_discount: v }))}
                 />
                 <SaveButton onClick={saveSettings} saving={savingSettings} saved={savedSettings} />
               </Section>

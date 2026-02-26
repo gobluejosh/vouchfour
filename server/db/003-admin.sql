@@ -107,3 +107,7 @@ INSERT INTO email_templates (template_key, subject, body_html, available_vars) V
 INSERT INTO app_settings (key, value) VALUES
     ('email_test_mode', 'true')
 ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO app_settings (key, value) VALUES
+    ('cross_function_discount', '0.5')
+ON CONFLICT (key) DO NOTHING;

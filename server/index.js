@@ -1304,8 +1304,16 @@ Rules:
         if (fnRes.rows.length > 0) jobFunctionId = fnRes.rows[0].id
       }
 
-      // Get talent recommendations from the new graph
-      const talent = await getTalentRecommendations(userId, jobFunctionId)
+      // Fetch cross-function discount setting
+      const discountRes = await query(
+        "SELECT value FROM app_settings WHERE key = 'cross_function_discount'"
+      )
+      const crossFunctionDiscount = parseFloat(discountRes.rows[0]?.value) || 0.5
+
+      // Get talent recommendations from the graph
+      const talent = await getTalentRecommendations(userId, jobFunctionId, {
+        crossFunctionDiscount,
+      })
 
       // Get user's vouches grouped by job function, with invite status per vouchee
       const vouchesRes = await query(`

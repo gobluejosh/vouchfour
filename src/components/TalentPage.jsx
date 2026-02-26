@@ -21,6 +21,10 @@ const DEGREE_COLORS = {
   3: { bg: "#FFF7ED", border: "#FDBA74", badge: "#EA580C" },
 };
 
+const CROSS_FUNCTION_COLORS = {
+  bg: "#F5F3FF", border: "#C4B5FD", badge: "#7C3AED",
+};
+
 function Avatar({ name, size = 38 }) {
   const initials = name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
   return (
@@ -45,7 +49,9 @@ function ExternalLinkIcon() {
 }
 
 function TalentCard({ talent }) {
-  const colors = DEGREE_COLORS[talent.degree] || DEGREE_COLORS[3];
+  const colors = talent.is_cross_function
+    ? CROSS_FUNCTION_COLORS
+    : (DEGREE_COLORS[talent.degree] || DEGREE_COLORS[3]);
   const count = Number(talent.recommendation_count);
   const recText = count === 1
     ? "Recommended by 1 person in your network"
