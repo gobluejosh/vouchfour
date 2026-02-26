@@ -26,6 +26,7 @@ const JOB_FUNCTIONS = [
   { id: 9, name: "People / HR", slug: "people-hr" },
   { id: 11, name: "Executive", slug: "executive" },
   { id: 12, name: "Investor", slug: "investor" },
+  { id: 13, name: "Legal", slug: "legal" },
 ];
 
 // ─── Main Page ──────────────────────────────────────────────────────────────
