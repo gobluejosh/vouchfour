@@ -101,6 +101,7 @@ function serveStaticFile(req, res) {
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 const BRAVE_API_KEY = process.env.BRAVE_API_KEY
 const RESEND_API_KEY = process.env.RESEND_API_KEY
+const APOLLO_API_KEY = process.env.APOLLO_API_KEY || ''
 const ADMIN_SECRET = process.env.ADMIN_SECRET || ''
 
 if (!ANTHROPIC_API_KEY || !BRAVE_API_KEY || !RESEND_API_KEY) {
@@ -471,7 +472,45 @@ const server = http.createServer(async (req, res) => {
         company = m ? m[1].trim() : ''
       }
 
-      // ── Step 1: Brave Search (fast, ~500ms) ──────────────────────────
+      // ── Step 1: Apollo People Match (fast, reliable) ──────────────────
+      if (APOLLO_API_KEY && linkedinUrl) {
+        try {
+          const normalizedUrl = normalizeLinkedInUrl(linkedinUrl)
+          const apolloRes = await fetch('https://api.apollo.io/api/v1/people/match', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': APOLLO_API_KEY,
+            },
+            body: JSON.stringify({
+              linkedin_url: normalizedUrl || linkedinUrl,
+              reveal_personal_emails: true,
+            }),
+          })
+
+          if (apolloRes.ok) {
+            const apolloData = await apolloRes.json()
+            const person = apolloData.person
+            if (person?.email) {
+              const confidence = person.email_status === 'verified' ? 95
+                : person.email_status === 'guessed' ? 65
+                : 75
+              console.log(`[Email] Apollo found ${person.email} (${person.email_status}, ${confidence}%) in ${Date.now() - startTime}ms`)
+              res.writeHead(200)
+              res.end(JSON.stringify({
+                emails: [{ email: person.email, confidence, source: 'apollo' }],
+                source: 'apollo',
+              }))
+              return
+            }
+          }
+          console.log(`[Email] Apollo: no email found (${Date.now() - startTime}ms)`)
+        } catch (err) {
+          console.warn(`[Email] Apollo error (falling back to Brave):`, err.message)
+        }
+      }
+
+      // ── Step 2: Brave Search (fast, ~500ms) ──────────────────────────
       const braveQuery = company
         ? `${fullName} ${company} email contact`
         : `${fullName} email contact`
@@ -557,7 +596,7 @@ const server = http.createServer(async (req, res) => {
         return
       }
 
-      // ── Step 2: Claude fallback (slower, ~5-15s) ─────────────────────
+      // ── Step 3: Claude fallback (slower, ~5-15s) ─────────────────────
       // If braveOnly mode, return empty immediately (for prefetch)
       if (braveOnly) {
         console.log(`[Email] Brave-only mode, skipping Claude (${Date.now() - startTime}ms)`)
