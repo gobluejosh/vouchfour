@@ -102,7 +102,7 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
           bd.degree,
           CASE
             WHEN $2::int IS NULL THEN FALSE
-            WHEN bd.person_id IN (SELECT person_id FROM fn_degree1) THEN FALSE
+            WHEN EXISTS (SELECT 1 FROM vouches WHERE voucher_id = $1 AND job_function_id = $2) THEN FALSE
             ELSE TRUE
           END AS is_cross_function,
           CASE
