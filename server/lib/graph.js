@@ -7,9 +7,10 @@ import { query } from './db.js'
  * function). The function filter is applied only at the output level — a person
  * appears in results only if they have a vouch in the target function pointing to them.
  *
- * Cross-function results: when filtering by function, a result is "cross-function"
- * if the user has NOT personally vouched for that person in the target function.
- * These results receive a configurable discount multiplier on their score.
+ * Cross-function detection uses a parallel function-SPECIFIC traversal. A result is
+ * "cross-function" if it can only be reached through cross-function bridges — i.e.,
+ * it does NOT appear in the pure function-specific chain. These results receive a
+ * configurable discount multiplier on their score.
  *
  * Score: degree_coefficient[degree] * recommendation_count * (cross_function_discount if applicable)
  *
@@ -23,29 +24,25 @@ import { query } from './db.js'
 export async function getTalentRecommendations(userId, jobFunctionId = null, { maxDegree = 3, crossFunctionDiscount = 0.5 } = {}) {
   const result = await query(`
     WITH
-      -- All user's direct vouchees (function-agnostic, used for network traversal)
+      -- ══════════════════════════════════════════════════════════════════
+      -- FUNCTION-AGNOSTIC NETWORK TRAVERSAL (for discovery)
+      -- ══════════════════════════════════════════════════════════════════
+
+      -- All user's direct vouchees (any function)
       all_seeds AS (
         SELECT DISTINCT vouchee_id AS person_id
         FROM vouches
         WHERE voucher_id = $1
       ),
 
-      -- Function-specific degree 1 (used only for cross-function detection and rec count)
-      fn_degree1 AS (
-        SELECT DISTINCT vouchee_id AS person_id
-        FROM vouches
-        WHERE voucher_id = $1
-          AND ($2::int IS NULL OR job_function_id = $2)
-      ),
-
-      -- Sponsors: people who vouched FOR the user (function-agnostic for broader reach)
+      -- Sponsors: people who vouched FOR the user (any function)
       sponsors AS (
         SELECT DISTINCT voucher_id
         FROM vouches
         WHERE vouchee_id = $1
       ),
 
-      -- Siblings: other people those sponsors vouched for (function-agnostic)
+      -- Siblings: other people those sponsors vouched for (any function)
       siblings AS (
         SELECT DISTINCT v.vouchee_id AS person_id
         FROM sponsors s
@@ -53,14 +50,14 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
         WHERE v.vouchee_id != $1
       ),
 
-      -- Degree 2 sources: all direct vouchees + siblings (function-agnostic)
+      -- Degree 2 sources: all direct vouchees + siblings
       degree2_sources AS (
         SELECT person_id FROM all_seeds
         UNION
         SELECT person_id FROM siblings
       ),
 
-      -- Degree 2: function-agnostic traversal from degree2 sources
+      -- Degree 2: vouchees of degree2 sources
       degree2 AS (
         SELECT DISTINCT v.vouchee_id AS person_id
         FROM degree2_sources d2s
@@ -69,7 +66,7 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
           AND v.vouchee_id NOT IN (SELECT person_id FROM all_seeds)
       ),
 
-      -- Degree 3: function-agnostic traversal from degree2 people
+      -- Degree 3: vouchees of degree2 people
       degree3 AS (
         SELECT DISTINCT v.vouchee_id AS person_id
         FROM degree2 d2
@@ -79,7 +76,7 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
           AND v.vouchee_id NOT IN (SELECT person_id FROM degree2)
       ),
 
-      -- Assign degrees (all_seeds = degree 1, then degree 2, degree 3)
+      -- Best (closest) degree per person
       all_talent AS (
         SELECT person_id, 1 AS degree FROM all_seeds
         UNION ALL
@@ -87,22 +84,78 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
         UNION ALL
         SELECT person_id, 3 AS degree FROM degree3
       ),
-
-      -- Best (closest) degree per person
       best_degree AS (
         SELECT person_id, MIN(degree) AS degree
         FROM all_talent
         GROUP BY person_id
       ),
 
-      -- Score and filter by function at output level
+      -- ══════════════════════════════════════════════════════════════════
+      -- FUNCTION-SPECIFIC TRAVERSAL (for cross-function detection)
+      -- Follows only vouches in the target function. A result that appears
+      -- in the agnostic network but NOT here is cross-function.
+      -- ══════════════════════════════════════════════════════════════════
+
+      fn_degree1 AS (
+        SELECT DISTINCT vouchee_id AS person_id
+        FROM vouches
+        WHERE voucher_id = $1
+          AND ($2::int IS NULL OR job_function_id = $2)
+      ),
+      fn_sponsors AS (
+        SELECT DISTINCT voucher_id
+        FROM vouches
+        WHERE vouchee_id = $1
+          AND ($2::int IS NULL OR job_function_id = $2)
+      ),
+      fn_siblings AS (
+        SELECT DISTINCT v.vouchee_id AS person_id
+        FROM fn_sponsors s
+        JOIN vouches v ON v.voucher_id = s.voucher_id
+          AND ($2::int IS NULL OR v.job_function_id = $2)
+        WHERE v.vouchee_id != $1
+      ),
+      fn_degree2_sources AS (
+        SELECT person_id FROM fn_degree1
+        UNION
+        SELECT person_id FROM fn_siblings
+      ),
+      fn_degree2 AS (
+        SELECT DISTINCT v.vouchee_id AS person_id
+        FROM fn_degree2_sources d2s
+        JOIN vouches v ON v.voucher_id = d2s.person_id
+          AND ($2::int IS NULL OR v.job_function_id = $2)
+        WHERE v.vouchee_id != $1
+          AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree1)
+      ),
+      fn_degree3 AS (
+        SELECT DISTINCT v.vouchee_id AS person_id
+        FROM fn_degree2 d2
+        JOIN vouches v ON v.voucher_id = d2.person_id
+          AND ($2::int IS NULL OR v.job_function_id = $2)
+        WHERE v.vouchee_id != $1
+          AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree1)
+          AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree2)
+      ),
+      fn_reachable AS (
+        SELECT person_id FROM fn_degree1
+        UNION
+        SELECT person_id FROM fn_degree2
+        UNION
+        SELECT person_id FROM fn_degree3
+      ),
+
+      -- ══════════════════════════════════════════════════════════════════
+      -- SCORING & OUTPUT
+      -- ══════════════════════════════════════════════════════════════════
+
       scored AS (
         SELECT
           bd.person_id,
           bd.degree,
           CASE
             WHEN $2::int IS NULL THEN FALSE
-            WHEN EXISTS (SELECT 1 FROM vouches WHERE voucher_id = $1 AND job_function_id = $2) THEN FALSE
+            WHEN bd.person_id IN (SELECT person_id FROM fn_reachable) THEN FALSE
             ELSE TRUE
           END AS is_cross_function,
           CASE
