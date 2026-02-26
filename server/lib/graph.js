@@ -28,7 +28,7 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
       -- FUNCTION-AGNOSTIC NETWORK TRAVERSAL (for discovery)
       -- ══════════════════════════════════════════════════════════════════
 
-      -- All user's direct vouchees (any function)
+      -- Degree 1: user's direct vouchees (any function)
       all_seeds AS (
         SELECT DISTINCT vouchee_id AS person_id
         FROM vouches
@@ -43,30 +43,32 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
       ),
 
       -- Siblings: other people those sponsors vouched for (any function)
+      -- Excludes user and anyone already in degree 1
       siblings AS (
         SELECT DISTINCT v.vouchee_id AS person_id
         FROM sponsors s
         JOIN vouches v ON v.voucher_id = s.voucher_id
         WHERE v.vouchee_id != $1
+          AND v.vouchee_id NOT IN (SELECT person_id FROM all_seeds)
       ),
 
-      -- Degree 2 sources: all direct vouchees + siblings
-      degree2_sources AS (
-        SELECT person_id FROM all_seeds
-        UNION
-        SELECT person_id FROM siblings
-      ),
-
-      -- Degree 2: vouchees of degree2 sources
-      degree2 AS (
+      -- Degree 2 from direct vouchees: people vouched for by degree-1 people
+      degree2_direct AS (
         SELECT DISTINCT v.vouchee_id AS person_id
-        FROM degree2_sources d2s
-        JOIN vouches v ON v.voucher_id = d2s.person_id
+        FROM all_seeds a
+        JOIN vouches v ON v.voucher_id = a.person_id
         WHERE v.vouchee_id != $1
           AND v.vouchee_id NOT IN (SELECT person_id FROM all_seeds)
       ),
 
-      -- Degree 3: vouchees of degree2 people
+      -- Combined degree 2: direct vouchee chains + siblings
+      degree2 AS (
+        SELECT person_id FROM degree2_direct
+        UNION
+        SELECT person_id FROM siblings
+      ),
+
+      -- Degree 3: vouchees of degree-2 people
       degree3 AS (
         SELECT DISTINCT v.vouchee_id AS person_id
         FROM degree2 d2
@@ -114,19 +116,20 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
         JOIN vouches v ON v.voucher_id = s.voucher_id
           AND ($2::int IS NULL OR v.job_function_id = $2)
         WHERE v.vouchee_id != $1
+          AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree1)
       ),
-      fn_degree2_sources AS (
-        SELECT person_id FROM fn_degree1
-        UNION
-        SELECT person_id FROM fn_siblings
-      ),
-      fn_degree2 AS (
+      fn_degree2_direct AS (
         SELECT DISTINCT v.vouchee_id AS person_id
-        FROM fn_degree2_sources d2s
-        JOIN vouches v ON v.voucher_id = d2s.person_id
+        FROM fn_degree1 d1
+        JOIN vouches v ON v.voucher_id = d1.person_id
           AND ($2::int IS NULL OR v.job_function_id = $2)
         WHERE v.vouchee_id != $1
           AND v.vouchee_id NOT IN (SELECT person_id FROM fn_degree1)
+      ),
+      fn_degree2 AS (
+        SELECT person_id FROM fn_degree2_direct
+        UNION
+        SELECT person_id FROM fn_siblings
       ),
       fn_degree3 AS (
         SELECT DISTINCT v.vouchee_id AS person_id
