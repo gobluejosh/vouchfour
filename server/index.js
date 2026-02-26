@@ -161,7 +161,94 @@ async function validateSession(req) {
   return result.rows[0] || null
 }
 
+// ─── Unsubscribe token helpers ─────────────────────────────────────────────
+const UNSUB_SECRET = ADMIN_SECRET || 'vouchfour-unsub-key'
+
+function generateUnsubToken(personId) {
+  const sig = crypto.createHmac('sha256', UNSUB_SECRET).update(String(personId)).digest('hex').slice(0, 16)
+  return `${personId}-${sig}`
+}
+
+function verifyUnsubToken(token) {
+  const [idStr, sig] = (token || '').split('-')
+  const personId = parseInt(idStr, 10)
+  if (!personId || !sig) return null
+  const expected = crypto.createHmac('sha256', UNSUB_SECRET).update(String(personId)).digest('hex').slice(0, 16)
+  if (sig !== expected) return null
+  return personId
+}
+
+function unsubscribeUrl(personId) {
+  return `${BASE_URL}/unsubscribe?token=${generateUnsubToken(personId)}`
+}
+
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000'
+
 const server = http.createServer(async (req, res) => {
+  // ─── Unsubscribe page (GET) + one-click handler (POST) ─────────────
+  const unsubMatch = req.url.match(/^\/unsubscribe\?(.+)/)
+  if (unsubMatch || req.url === '/unsubscribe') {
+    const params = new URLSearchParams(req.url.split('?')[1] || '')
+    const token = params.get('token')
+    const personId = verifyUnsubToken(token)
+
+    if (!personId) {
+      res.writeHead(400, { 'Content-Type': 'text/html' })
+      res.end('<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Invalid link</h2><p>This unsubscribe link is invalid or expired.</p></body></html>')
+      return
+    }
+
+    if (req.method === 'POST') {
+      await query('UPDATE people SET unsubscribed_at = NOW() WHERE id = $1', [personId])
+      const person = await query('SELECT display_name FROM people WHERE id = $1', [personId])
+      const name = person.rows[0]?.display_name?.split(' ')[0] || ''
+      console.log(`[Unsubscribe] Unsubscribed person ${personId} (${name})`)
+
+      // Check if request is from email client (RFC 8058 one-click) or browser form
+      const contentType = req.headers['content-type'] || ''
+      if (contentType.includes('application/x-www-form-urlencoded') && !req.headers['list-unsubscribe']) {
+        // Browser form submission — show confirmation page
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end(`<html><body style="font-family:'Helvetica Neue',Arial,sans-serif;text-align:center;padding:60px;color:#1C1917;">
+          <h2 style="margin-bottom:8px">You've been unsubscribed</h2>
+          <p style="color:#78716C">${name ? name + ', you' : 'You'} will no longer receive emails from VouchFour.</p>
+        </body></html>`)
+        return
+      }
+
+      // RFC 8058 one-click from email client UI
+      res.writeHead(200, { 'Content-Type': 'text/plain' })
+      res.end('OK')
+      return
+    }
+
+    // GET: show confirmation page
+    const person = await query('SELECT display_name, unsubscribed_at FROM people WHERE id = $1', [personId])
+    const name = person.rows[0]?.display_name?.split(' ')[0] || ''
+    const alreadyUnsub = !!person.rows[0]?.unsubscribed_at
+
+    if (alreadyUnsub) {
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      res.end(`<html><body style="font-family:'Helvetica Neue',Arial,sans-serif;text-align:center;padding:60px;color:#1C1917;">
+        <h2 style="margin-bottom:8px">Already unsubscribed</h2>
+        <p style="color:#78716C">${name ? name + ', you are' : 'You are'} already unsubscribed from VouchFour emails.</p>
+      </body></html>`)
+      return
+    }
+
+    res.writeHead(200, { 'Content-Type': 'text/html' })
+    res.end(`<html><body style="font-family:'Helvetica Neue',Arial,sans-serif;text-align:center;padding:60px;color:#1C1917;">
+      <h2 style="margin-bottom:8px">Unsubscribe from VouchFour</h2>
+      <p style="color:#78716C;margin-bottom:24px">${name ? name + ', click' : 'Click'} below to stop receiving emails from VouchFour.</p>
+      <form method="POST" action="/unsubscribe?token=${token}">
+        <button type="submit" style="padding:12px 28px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;">
+          Unsubscribe
+        </button>
+      </form>
+    </body></html>`)
+    return
+  }
+
   // Only set API headers for /api routes
   if (req.url.startsWith('/api')) {
     res.setHeader('Content-Type', 'application/json')

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { Resend } from 'resend'
 import { query } from './db.js'
 
@@ -9,6 +10,19 @@ const FROM_ADDRESS = 'VouchFour <noreply@vouchfour.us>'
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000'
 
 const TEST_EMAIL = 'josh@joshscott.me'
+
+// ─── Unsubscribe token helpers ────────────────────────────────────────────────
+
+const UNSUB_SECRET = process.env.ADMIN_SECRET || 'vouchfour-unsub-key'
+
+function generateUnsubToken(personId) {
+  const sig = crypto.createHmac('sha256', UNSUB_SECRET).update(String(personId)).digest('hex').slice(0, 16)
+  return `${personId}-${sig}`
+}
+
+function unsubscribeUrl(personId) {
+  return `${BASE_URL}/unsubscribe?token=${generateUnsubToken(personId)}`
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +38,15 @@ async function getRecipient(intendedEmail) {
     return TEST_EMAIL // fail-safe: default to test mode
   }
   return intendedEmail
+}
+
+async function isUnsubscribed(personId) {
+  if (!personId) return false
+  const result = await query(
+    'SELECT unsubscribed_at FROM people WHERE id = $1',
+    [personId]
+  )
+  return !!result.rows[0]?.unsubscribed_at
 }
 
 async function loadTemplate(templateKey) {
@@ -45,7 +68,11 @@ function applyVariables(text, vars) {
 
 // ─── Shared email wrapper ─────────────────────────────────────────────────────
 
-function emailLayout(bodyHtml) {
+function emailLayout(bodyHtml, personId) {
+  const unsubLink = personId
+    ? `<a href="${unsubscribeUrl(personId)}" style="color:#A8A29E;text-decoration:underline;">Unsubscribe</a>`
+    : ''
+
   return `
 <!DOCTYPE html>
 <html>
@@ -79,13 +106,48 @@ function emailLayout(bodyHtml) {
       </p>
     </div>
   </div>
+  <div style="max-width:480px;margin:0 auto;padding:16px 28px 32px;text-align:center;">
+    <p style="font-size:11px;color:#A8A29E;margin:0;line-height:1.6;">
+      VouchFour &middot; 2343 N West Torch Lake Dr., Kewadin, MI 49648
+    </p>
+    <p style="font-size:11px;color:#A8A29E;margin:6px 0 0;line-height:1.6;">
+      ${unsubLink}
+    </p>
+  </div>
 </body>
 </html>`
+}
+
+// ─── Send helper (adds List-Unsubscribe headers) ─────────────────────────────
+
+async function sendEmail({ to, subject, html, personId, templateKey }) {
+  const headers = {}
+  if (personId) {
+    const unsub = unsubscribeUrl(personId)
+    headers['List-Unsubscribe'] = `<${unsub}>`
+    headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+  }
+
+  const { data, error } = await resend.emails.send({
+    from: FROM_ADDRESS,
+    to: [to],
+    subject,
+    html,
+    headers,
+  })
+
+  if (error) throw new Error(`Resend error: ${error.message}`)
+  return data?.id
 }
 
 // ─── Template 4: Please Vouch (sent to connectors after network form) ─────────
 
 export async function sendPleaseVouchEmail(connector, inviterFirstName, vouchToken) {
+  if (await isUnsubscribed(connector.id)) {
+    console.log(`[Email] Skipping please_vouch — ${connector.display_name} is unsubscribed`)
+    return null
+  }
+
   const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}`
   const firstName = connector.display_name.split(' ')[0]
 
@@ -94,26 +156,23 @@ export async function sendPleaseVouchEmail(connector, inviterFirstName, vouchTok
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml)
+  const html = emailLayout(bodyHtml, connector.id)
 
   const recipient = await getRecipient(connector.email)
+  const id = await sendEmail({ to: recipient, subject, html, personId: connector.id, templateKey: 'please_vouch' })
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    to: [recipient],
-    subject,
-    html,
-  })
-
-  if (error) throw new Error(`Resend error: ${error.message}`)
-
-  console.log(`[Email] Sent please_vouch to ${connector.display_name} (${data?.id})`)
-  return data?.id
+  console.log(`[Email] Sent please_vouch to ${connector.display_name} (${id})`)
+  return id
 }
 
 // ─── Template 1: Talent Network Ready ─────────────────────────────────────────
 
 export async function sendTalentReadyEmail(person, slug, loginToken, jobFunctionName = '', practitionerLabel = '') {
+  if (await isUnsubscribed(person.id)) {
+    console.log(`[Email] Skipping talent_ready — ${person.display_name} is unsubscribed`)
+    return null
+  }
+
   const talentUrl = `${BASE_URL}/talent/${slug}?token=${loginToken}`
   const firstName = person.display_name.split(' ')[0]
 
@@ -122,26 +181,19 @@ export async function sendTalentReadyEmail(person, slug, loginToken, jobFunction
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml)
+  const html = emailLayout(bodyHtml, person.id)
 
   const recipient = await getRecipient(person.email)
+  const id = await sendEmail({ to: recipient, subject, html, personId: person.id, templateKey: 'talent_ready' })
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    to: [recipient],
-    subject,
-    html,
-  })
-
-  if (error) throw new Error(`Resend error: ${error.message}`)
-
-  console.log(`[Email] Sent talent_ready to ${person.display_name} (${data?.id})`)
-  return data?.id
+  console.log(`[Email] Sent talent_ready to ${person.display_name} (${id})`)
+  return id
 }
 
 // ─── Template 2: Login Link ──────────────────────────────────────────────────
 
 export async function sendLoginLinkEmail(person, slug, loginToken) {
+  // Login links are transactional — don't block on unsubscribe
   const talentUrl = `${BASE_URL}/talent/${slug}?token=${loginToken}`
   const firstName = person.display_name.split(' ')[0]
 
@@ -150,26 +202,23 @@ export async function sendLoginLinkEmail(person, slug, loginToken) {
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml)
+  const html = emailLayout(bodyHtml, person.id)
 
   const recipient = await getRecipient(person.email)
+  const id = await sendEmail({ to: recipient, subject, html, personId: person.id, templateKey: 'login_link' })
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    to: [recipient],
-    subject,
-    html,
-  })
-
-  if (error) throw new Error(`Resend error: ${error.message}`)
-
-  console.log(`[Email] Sent login_link to ${person.display_name} (${data?.id})`)
-  return data?.id
+  console.log(`[Email] Sent login_link to ${person.display_name} (${id})`)
+  return id
 }
 
 // ─── Template 3: You Were Vouched ────────────────────────────────────────────
 
 export async function sendYouWereVouchedEmail(talentPerson, vouchToken, voucherName) {
+  if (await isUnsubscribed(talentPerson.id)) {
+    console.log(`[Email] Skipping you_were_vouched — ${talentPerson.display_name} is unsubscribed`)
+    return null
+  }
+
   const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}`
   const firstName = talentPerson.display_name.split(' ')[0]
 
@@ -178,26 +227,23 @@ export async function sendYouWereVouchedEmail(talentPerson, vouchToken, voucherN
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml)
+  const html = emailLayout(bodyHtml, talentPerson.id)
 
   const recipient = await getRecipient(talentPerson.email)
+  const id = await sendEmail({ to: recipient, subject, html, personId: talentPerson.id, templateKey: 'you_were_vouched' })
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    to: [recipient],
-    subject,
-    html,
-  })
-
-  if (error) throw new Error(`Resend error: ${error.message}`)
-
-  console.log(`[Email] Sent you_were_vouched to ${talentPerson.display_name} (${data?.id})`)
-  return data?.id
+  console.log(`[Email] Sent you_were_vouched to ${talentPerson.display_name} (${id})`)
+  return id
 }
 
 // ─── Template 7: Vouch Invite (sent to vouchees in the new chain model) ──────
 
 export async function sendVouchInviteEmail(vouchee, inviterFullName, jobFunction, vouchToken) {
+  if (await isUnsubscribed(vouchee.id)) {
+    console.log(`[Email] Skipping vouch_invite — ${vouchee.display_name} is unsubscribed`)
+    return null
+  }
+
   const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}`
   const firstName = vouchee.display_name.split(' ')[0]
   const inviterFirstName = inviterFullName.split(' ')[0]
@@ -219,26 +265,23 @@ export async function sendVouchInviteEmail(vouchee, inviterFullName, jobFunction
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml)
+  const html = emailLayout(bodyHtml, vouchee.id)
 
   const recipient = await getRecipient(vouchee.email)
+  const id = await sendEmail({ to: recipient, subject, html, personId: vouchee.id, templateKey: 'vouch_invite' })
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    to: [recipient],
-    subject,
-    html,
-  })
-
-  if (error) throw new Error(`Resend error: ${error.message}`)
-
-  console.log(`[Email] Sent vouch_invite to ${vouchee.display_name} for ${practitionerLabel} (${data?.id})`)
-  return data?.id
+  console.log(`[Email] Sent vouch_invite to ${vouchee.display_name} for ${practitionerLabel} (${id})`)
+  return id
 }
 
 // ─── Template 5: Role Network (sent to recommenders for role-specific vouch) ─
 
 export async function sendRoleNetworkEmail(connector, inviterFirstName, role, vouchToken) {
+  if (await isUnsubscribed(connector.id)) {
+    console.log(`[Email] Skipping role_network — ${connector.display_name} is unsubscribed`)
+    return null
+  }
+
   const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}&role=${role.slug}`
   const firstName = connector.display_name.split(' ')[0]
 
@@ -258,26 +301,23 @@ export async function sendRoleNetworkEmail(connector, inviterFirstName, role, vo
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml)
+  const html = emailLayout(bodyHtml, connector.id)
 
   const recipient = await getRecipient(connector.email)
+  const id = await sendEmail({ to: recipient, subject, html, personId: connector.id, templateKey: 'role_network' })
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    to: [recipient],
-    subject,
-    html,
-  })
-
-  if (error) throw new Error(`Resend error: ${error.message}`)
-
-  console.log(`[Email] Sent role_network to ${connector.display_name} (${data?.id})`)
-  return data?.id
+  console.log(`[Email] Sent role_network to ${connector.display_name} (${id})`)
+  return id
 }
 
 // ─── Template 6: Role Ready (sent to creator when role threshold met) ────────
 
 export async function sendRoleReadyEmail(person, role, loginToken) {
+  if (await isUnsubscribed(person.id)) {
+    console.log(`[Email] Skipping role_ready — ${person.display_name} is unsubscribed`)
+    return null
+  }
+
   const roleUrl = `${BASE_URL}/role/${role.slug}?token=${loginToken}`
   const firstName = person.display_name.split(' ')[0]
 
@@ -291,19 +331,11 @@ export async function sendRoleReadyEmail(person, role, loginToken) {
 
   const subject = applyVariables(template.subject, vars)
   const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml)
+  const html = emailLayout(bodyHtml, person.id)
 
   const recipient = await getRecipient(person.email)
+  const id = await sendEmail({ to: recipient, subject, html, personId: person.id, templateKey: 'role_ready' })
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    to: [recipient],
-    subject,
-    html,
-  })
-
-  if (error) throw new Error(`Resend error: ${error.message}`)
-
-  console.log(`[Email] Sent role_ready to ${person.display_name} for role ${role.slug} (${data?.id})`)
-  return data?.id
+  console.log(`[Email] Sent role_ready to ${person.display_name} for role ${role.slug} (${id})`)
+  return id
 }
