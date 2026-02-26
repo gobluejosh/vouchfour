@@ -1345,6 +1345,20 @@ Rules:
         id: fn.id, name: fn.name, slug: fn.slug, practitionerLabel: fn.practitionerLabel,
       }))
 
+      // Find all functions with talent reachable through user's network
+      // (functions the user or their direct vouchees have vouched in)
+      const reachableRes = await query(`
+        SELECT DISTINCT jf.id, jf.name, jf.slug, jf.practitioner_label
+        FROM vouches v
+        JOIN job_functions jf ON jf.id = v.job_function_id
+        WHERE v.voucher_id = $1
+           OR v.voucher_id IN (SELECT DISTINCT vouchee_id FROM vouches WHERE voucher_id = $1)
+        ORDER BY jf.display_order
+      `, [userId])
+      const reachableFunctions = reachableRes.rows.map(f => ({
+        id: f.id, name: f.name, slug: f.slug, practitionerLabel: f.practitioner_label,
+      }))
+
       // Get all job functions, marking which ones are available (not yet vouched in)
       const allFnRes = await query('SELECT id, name, slug, practitioner_label FROM job_functions ORDER BY display_order')
       const activeSlugs = new Set(activeJobFunctions.map(f => f.slug))
@@ -1404,6 +1418,7 @@ Rules:
         myVouches,
         vouchTokens,
         activeJobFunctions,
+        reachableFunctions,
         availableJobFunctions,
         contributorCount,
       }))

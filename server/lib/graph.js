@@ -22,12 +22,19 @@ import { query } from './db.js'
 export async function getTalentRecommendations(userId, jobFunctionId = null, maxDegree = 3) {
   const result = await query(`
     WITH
-      -- Degree 1: User's own vouches
+      -- Degree 1: User's own vouches in the target function
       degree1 AS (
         SELECT DISTINCT vouchee_id AS person_id
         FROM vouches
         WHERE voucher_id = $1
           AND ($2::int IS NULL OR job_function_id = $2)
+      ),
+
+      -- All seeds: User's vouchees across ALL functions (enables cross-function bridging)
+      all_seeds AS (
+        SELECT DISTINCT vouchee_id AS person_id
+        FROM vouches
+        WHERE voucher_id = $1
       ),
 
       -- Sponsors: people who vouched FOR the user in this function
@@ -47,11 +54,13 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, max
         WHERE v.vouchee_id != $1
       ),
 
-      -- Degree 2 sources: degree1 people + siblings
+      -- Degree 2 sources: degree1 people + siblings + all seeds (cross-function bridge)
       degree2_sources AS (
         SELECT person_id FROM degree1
         UNION
         SELECT person_id FROM siblings
+        UNION
+        SELECT person_id FROM all_seeds
       ),
 
       -- Degree 2: vouches by degree2 sources, excluding user and degree1

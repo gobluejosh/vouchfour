@@ -264,6 +264,7 @@ export default function TalentPage() {
   const [myVouches, setMyVouches] = useState({}); // { engineering: [{name, linkedin, inviteStatus}], ... }
   const [vouchTokens, setVouchTokens] = useState({}); // { engineering: "token", ... }
   const [activeJobFunctions, setActiveJobFunctions] = useState([]); // functions user has vouched in
+  const [reachableFunctions, setReachableFunctions] = useState([]); // all functions with reachable talent
   const [availableJobFunctions, setAvailableJobFunctions] = useState([]); // functions user hasn't vouched in
   const [activeFunction, setActiveFunction] = useState(null); // slug or null for "All"
 
@@ -327,6 +328,7 @@ export default function TalentPage() {
         setMyVouches(data.myVouches || {});
         setVouchTokens(data.vouchTokens || {});
         setActiveJobFunctions(data.activeJobFunctions || []);
+        setReachableFunctions(data.reachableFunctions || data.activeJobFunctions || []);
         setAvailableJobFunctions(data.availableJobFunctions || []);
 ;
       })
@@ -338,7 +340,7 @@ export default function TalentPage() {
   const fullName = user?.name || "";
 
   // Get the vouch data for the currently-active function tab
-  const displayedFunctionSlug = activeFunction || (activeJobFunctions.length === 1 ? activeJobFunctions[0]?.slug : null);
+  const displayedFunctionSlug = activeFunction || (reachableFunctions.length === 1 ? reachableFunctions[0]?.slug : null);
   const currentVouchData = displayedFunctionSlug ? myVouches[displayedFunctionSlug] : null;
   const currentVouches = currentVouchData?.vouches || [];
   const currentVouchToken = displayedFunctionSlug ? vouchTokens[displayedFunctionSlug] : null;
@@ -400,7 +402,7 @@ export default function TalentPage() {
               </div>
 
               {/* Job function filter pills */}
-              {!loading && activeJobFunctions.length === 1 && (
+              {!loading && reachableFunctions.length === 1 && (
                 <div style={{
                   display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20,
                 }}>
@@ -414,11 +416,11 @@ export default function TalentPage() {
                       cursor: "default",
                     }}
                   >
-                    {activeJobFunctions[0].practitionerLabel || activeJobFunctions[0].name}
+                    {reachableFunctions[0].practitionerLabel || reachableFunctions[0].name}
                   </button>
                 </div>
               )}
-              {!loading && activeJobFunctions.length >= 2 && (
+              {!loading && reachableFunctions.length >= 2 && (
                 <div style={{
                   display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20,
                 }}>
@@ -435,7 +437,7 @@ export default function TalentPage() {
                   >
                     All
                   </button>
-                  {activeJobFunctions.map(jf => (
+                  {reachableFunctions.map(jf => (
                     <button
                       key={jf.slug}
                       onClick={() => { setActiveFunction(jf.slug); setVisibleCount(10); }}
@@ -513,13 +515,13 @@ export default function TalentPage() {
                 <VouchStatusCard
                   vouches={currentVouches}
                   vouchToken={currentVouchToken}
-                  label={displayedFunctionSlug && activeJobFunctions.length > 1
-                    ? (activeJobFunctions.find(f => f.slug === displayedFunctionSlug)?.practitionerLabel || "")
+                  label={displayedFunctionSlug && reachableFunctions.length > 1
+                    ? (reachableFunctions.find(f => f.slug === displayedFunctionSlug)?.practitionerLabel || "")
                     : ""}
                 />
               )}
-              {/* Single-function user: show vouch status when there's only one function */}
-              {activeFunction === null && activeJobFunctions.length === 1 && currentVouches.length > 0 && (
+              {/* Single-function user: show vouch status when there's only one reachable function */}
+              {activeFunction === null && reachableFunctions.length === 1 && currentVouches.length > 0 && (
                 <VouchStatusCard
                   vouches={currentVouches}
                   vouchToken={currentVouchToken}
