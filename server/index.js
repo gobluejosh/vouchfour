@@ -1348,7 +1348,7 @@ Rules:
       // Find all functions with talent reachable through user's network
       // (functions the user or their direct vouchees have vouched in)
       const reachableRes = await query(`
-        SELECT DISTINCT jf.id, jf.name, jf.slug, jf.practitioner_label
+        SELECT DISTINCT jf.id, jf.name, jf.slug, jf.practitioner_label, jf.display_order
         FROM vouches v
         JOIN job_functions jf ON jf.id = v.job_function_id
         WHERE v.voucher_id = $1
