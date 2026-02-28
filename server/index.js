@@ -9,6 +9,7 @@ import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations } from './lib/graph.js'
 import { sendVouchInviteEmail, sendLoginLinkEmail } from './lib/email.js'
 import { checkAndNotifyReadiness } from './lib/readiness.js'
+import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -203,6 +204,7 @@ const server = http.createServer(async (req, res) => {
       const person = await query('SELECT display_name FROM people WHERE id = $1', [personId])
       const name = person.rows[0]?.display_name?.split(' ')[0] || ''
       console.log(`[Unsubscribe] Unsubscribed person ${personId} (${name})`)
+      trackEvent(String(personId), 'unsubscribed', { person_id: personId })
 
       // Check if request is from email client (RFC 8058 one-click) or browser form
       const contentType = req.headers['content-type'] || ''
@@ -328,6 +330,9 @@ const server = http.createServer(async (req, res) => {
         )
         personId = insertRes.rows[0].id
       }
+      identifyPerson(String(personId), { name: name.trim() })
+      trackEvent(String(personId), 'user_identified', { person_id: personId, is_new: existingPerson.rows.length === 0 })
+
       res.writeHead(200)
       res.end(JSON.stringify({ personId }))
     } catch (err) {
@@ -543,6 +548,7 @@ const server = http.createServer(async (req, res) => {
           )
           if (knownPerson.rows.length > 0) {
             console.log(`[Email] Found known email for ${fullName} in DB (${Date.now() - startTime}ms)`)
+            trackEvent('server', 'email_lookup_completed', { source: 'db_cache', has_result: true, duration_ms: Date.now() - startTime })
             res.writeHead(200)
             res.end(JSON.stringify({
               emails: [{ email: knownPerson.rows[0].email, confidence: 100, source: 'known' }]
@@ -583,6 +589,7 @@ const server = http.createServer(async (req, res) => {
                 : person.email_status === 'guessed' ? 65
                 : 75
               console.log(`[Email] Apollo found ${person.email} (${person.email_status}, ${confidence}%) in ${Date.now() - startTime}ms`)
+              trackEvent('server', 'email_lookup_completed', { source: 'apollo', has_result: true, confidence, duration_ms: Date.now() - startTime })
               res.writeHead(200)
               res.end(JSON.stringify({
                 emails: [{ email: person.email, confidence, source: 'apollo' }],
@@ -678,6 +685,7 @@ const server = http.createServer(async (req, res) => {
 
       // If Brave found emails, return them immediately
       if (braveEmails.length > 0) {
+        trackEvent('server', 'email_lookup_completed', { source: 'brave', has_result: true, result_count: braveEmails.length, duration_ms: Date.now() - startTime })
         res.writeHead(200)
         res.end(JSON.stringify({ emails: braveEmails, source: 'brave' }))
         return
@@ -745,6 +753,7 @@ Rules:
 
       const parsed = JSON.parse(match[0])
       console.log(`[Email] Claude found ${(parsed.emails||[]).length} emails in ${Date.now() - startTime}ms`)
+      trackEvent('server', 'email_lookup_completed', { source: 'claude', has_result: (parsed.emails||[]).length > 0, result_count: (parsed.emails||[]).length, duration_ms: Date.now() - startTime })
       res.writeHead(200)
       res.end(JSON.stringify({ emails: parsed.emails || [], source: 'claude' }))
     } catch (err) {
@@ -1257,6 +1266,16 @@ Rules:
 
         const newPeople = vouchedPeople.filter(v => v.isNew)
         console.log(`[Vouch] ${invite.display_name} ${isUpdate ? 'updated' : 'submitted'} ${invite.jf_name} vouches for ${vouchedPeople.length} people (${newPeople.length} new)`)
+
+        identifyPerson(String(voucherId), { name: invite.display_name })
+        trackEvent(String(voucherId), 'vouch_submitted', {
+          person_id: voucherId,
+          job_function: invite.jf_name,
+          job_function_slug: invite.jf_slug,
+          vouch_count: vouchedPeople.length,
+          new_vouchee_count: newPeople.length,
+          is_update: isUpdate,
+        })
 
         res.writeHead(200)
         res.end(JSON.stringify({ ok: true, personId: voucherId }))
@@ -1859,6 +1878,7 @@ Rules:
           [person.id, resendId]
         )
         console.log(`[Auth] Login link sent to ${person.display_name}`)
+        trackEvent(String(person.id), 'login_requested', { person_id: person.id, method: trimmed.includes('linkedin.com') ? 'linkedin' : 'email' })
       } else {
         console.log(`[Auth] Login request for unknown identifier: ${trimmed}`)
       }
@@ -1921,6 +1941,9 @@ Rules:
       res.setHeader('Set-Cookie',
         `vf_session=${sessionToken}; HttpOnly; Path=/; Max-Age=${30 * 24 * 60 * 60}; SameSite=Lax`
       )
+
+      identifyPerson(String(person.id), { name: person.display_name })
+      trackEvent(String(person.id), 'login_completed', { person_id: person.id })
 
       res.writeHead(200)
       res.end(JSON.stringify({
@@ -2505,4 +2528,14 @@ Rules:
 
 server.listen(PORT, () => {
   console.log(`API server running on http://localhost:${PORT}`)
+})
+
+// Flush PostHog events on shutdown
+process.on('SIGTERM', async () => {
+  await posthogShutdown()
+  process.exit(0)
+})
+process.on('SIGINT', async () => {
+  await posthogShutdown()
+  process.exit(0)
 })

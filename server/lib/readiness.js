@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { query } from './db.js'
 import { sendTalentReadyEmail } from './email.js'
+import { trackEvent } from './posthog.js'
 
 /**
  * Called after every vouch submission in the new chain model.
@@ -102,6 +103,12 @@ export async function checkAndNotifyReadiness(inviterId, jobFunctionId) {
     )
 
     console.log(`[Readiness] ✓ Talent ready email sent to ${person.display_name} for ${jobFunctionName} (${completedNum}/${totalNum})`)
+    trackEvent(String(inviterId), 'readiness_reached', {
+      person_id: inviterId,
+      job_function: jobFunctionName,
+      completed_count: completedNum,
+      total_count: totalNum,
+    })
   } catch (err) {
     console.error(`[Readiness] Error checking readiness for inviter ${inviterId}, fn ${jobFunctionId}:`, err.message)
   }

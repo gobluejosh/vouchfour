@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { capture, identify } from "../lib/posthog.js";
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 const C = {
@@ -57,6 +58,8 @@ export default function StartVouchPage() {
         setUser(data.user);
         setFirstName(data.user?.name?.split(" ")[0] || null);
         setAuthState("authenticated");
+        if (data.user?.id) identify(data.user.id, { name: data.user.name });
+        capture("start_vouch_page_viewed", { auth_state: "authenticated" });
         if (loginToken) {
           const url = new URL(window.location);
           url.searchParams.delete("token");
@@ -70,6 +73,8 @@ export default function StartVouchPage() {
           setPersonId(Number(storedPersonId));
           setFirstName(sessionStorage.getItem("vouchfour_firstName") || null);
           setAuthState("identified");
+          identify(storedPersonId, { name: sessionStorage.getItem("vouchfour_firstName") || undefined });
+          capture("start_vouch_page_viewed", { auth_state: "identified" });
         } else {
           // No identity — redirect to homepage
           window.location.href = "/";
@@ -88,6 +93,11 @@ export default function StartVouchPage() {
   const handleFunctionClick = async (jf) => {
     setLoading(jf.id);
     setError(null);
+    capture("vouch_function_selected", {
+      job_function: jf.name,
+      job_function_slug: jf.slug,
+      already_vouched: vouchedFunctions.has(jf.slug),
+    });
     try {
       const bodyData = { jobFunctionId: jf.id };
       if (authState === "identified" && personId) {

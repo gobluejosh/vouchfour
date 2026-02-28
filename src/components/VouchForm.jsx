@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { capture, identify } from "../lib/posthog.js";
 
 // ─── Email Finder via backend ────────────────────────────────────────────────
 async function fetchEmailSuggestions(fullName, linkedinUrl, linkedinDetail, { braveOnly = false } = {}) {
@@ -265,6 +266,8 @@ function SingleContactForm({ index, onComplete }) {
     const trimmed = name.trim();
     const cached = prefetchCache.current[trimmed];
 
+    capture("linkedin_search_started", { slot_index: index });
+
     if (cached && cached !== "__loading__") {
       // Results already in — show instantly, no shimmer
       setLiSuggestions(cached);
@@ -300,6 +303,7 @@ function SingleContactForm({ index, onComplete }) {
     setLinkedinInput(item.url);
     setLiSuggestions([]);
     setStep("email");
+    capture("linkedin_result_selected", { slot_index: index, method: "suggestion" });
     setTimeout(() => emailInputRef.current?.focus(), 100);
   }
 
@@ -308,6 +312,7 @@ function SingleContactForm({ index, onComplete }) {
     setLiConfirmed({ label: name.trim(), detail: linkedinInput.trim(), url: linkedinInput.trim() });
     setLiSuggestions([]);
     setStep("email");
+    capture("linkedin_result_selected", { slot_index: index, method: "manual" });
     setTimeout(() => emailInputRef.current?.focus(), 100);
   }
 
@@ -340,6 +345,7 @@ function SingleContactForm({ index, onComplete }) {
   function handleDone() {
     if (!name.trim() || !emailInput.trim()) return;
     setStep("done");
+    capture("vouch_slot_filled", { slot_index: index });
     onComplete({ name, linkedin: linkedinInput, email: emailInput });
   }
 
@@ -624,6 +630,12 @@ export default function App() {
         if (!res.ok) throw new Error(data.error || 'Invalid invite');
         setInvitee(data);
 
+        capture("vouch_page_viewed", {
+          has_inviter: !!data.inviterName,
+          job_function: data.jobFunction?.name || null,
+          is_update: data.isUpdate || false,
+        });
+
         // Pre-populate contacts if this is an update (re-vouch)
         if (data.isUpdate && data.existingVouches?.length > 0) {
           setIsUpdate(true);
@@ -663,10 +675,17 @@ export default function App() {
       if (data.personId) {
         sessionStorage.setItem("vouchfour_personId", String(data.personId));
         sessionStorage.setItem("vouchfour_hasVouched", "true");
+        identify(data.personId, { name: invitee?.name });
       }
       if (invitee?.name) {
         sessionStorage.setItem("vouchfour_firstName", invitee.name.split(" ")[0]);
       }
+
+      capture("vouch_form_submitted", {
+        vouch_count: recommendations.length,
+        job_function: invitee?.jobFunction?.name || null,
+        is_update: isUpdate,
+      });
 
       setSubmitted(true);
       window.scrollTo(0, 0);

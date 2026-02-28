@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { Resend } from 'resend'
 import { query } from './db.js'
+import { trackEvent } from './posthog.js'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -137,6 +138,14 @@ async function sendEmail({ to, subject, html, personId, templateKey }) {
   })
 
   if (error) throw new Error(`Resend error: ${error.message}`)
+
+  if (personId) {
+    trackEvent(String(personId), 'email_sent', {
+      person_id: personId,
+      template_key: templateKey || 'unknown',
+    })
+  }
+
   return data?.id
 }
 

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { capture, identify } from "../lib/posthog.js";
 
 const C = {
   ink: "#1C1917",
@@ -62,6 +63,7 @@ function TalentCard({ talent }) {
       href={talent.linkedin_url}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={() => capture("talent_card_linkedin_clicked", { degree: talent.degree, is_cross_function: talent.is_cross_function })}
       style={{
         display: "flex", alignItems: "center", gap: 12,
         padding: "12px 14px", background: colors.bg,
@@ -336,7 +338,13 @@ export default function TalentPage() {
         setActiveJobFunctions(data.activeJobFunctions || []);
         setReachableFunctions(data.reachableFunctions || data.activeJobFunctions || []);
         setAvailableJobFunctions(data.availableJobFunctions || []);
-;
+
+        if (data.user?.id) identify(data.user.id, { name: data.user.name });
+        capture("talent_page_viewed", {
+          talent_count: (data.talent || []).length,
+          function_filter: activeFunction || "all",
+          active_functions_count: (data.activeJobFunctions || []).length,
+        });
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
@@ -431,7 +439,7 @@ export default function TalentPage() {
                   display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20,
                 }}>
                   <button
-                    onClick={() => { setActiveFunction(null); setVisibleCount(10); }}
+                    onClick={() => { setActiveFunction(null); setVisibleCount(10); capture("talent_filter_changed", { function_filter: "all" }); }}
                     style={{
                       padding: "6px 14px", borderRadius: 20,
                       border: `1.5px solid ${activeFunction === null ? C.accent : C.border}`,
@@ -446,7 +454,7 @@ export default function TalentPage() {
                   {reachableFunctions.map(jf => (
                     <button
                       key={jf.slug}
-                      onClick={() => { setActiveFunction(jf.slug); setVisibleCount(10); }}
+                      onClick={() => { setActiveFunction(jf.slug); setVisibleCount(10); capture("talent_filter_changed", { function_filter: jf.slug }); }}
                       style={{
                         padding: "6px 14px", borderRadius: 20,
                         border: `1.5px solid ${activeFunction === jf.slug ? C.accent : C.border}`,
