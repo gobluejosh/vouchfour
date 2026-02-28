@@ -806,8 +806,8 @@ export default function App() {
             }}>
               <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 8, marginTop: 0 }}>
                 {jobFnShort
-                  ? `You recommended ${submittedContacts.length} excellent ${jobFnShort}. They'll each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`
-                  : `You recommended ${submittedContacts.length} excellent professional${submittedContacts.length !== 1 ? 's' : ''}. They'll each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`}
+                  ? `The ${jobFnShort} you recommended will each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`
+                  : `The professionals you recommended will each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`}
               </p>
               <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 20 }}>
                 In the meantime, let's keep building your network by vouching for your best colleagues in a different function.
