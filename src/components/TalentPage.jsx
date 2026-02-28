@@ -633,7 +633,7 @@ export default function TalentPage() {
               )}
 
               {/* If no available functions but also no active ones, show generic CTA */}
-              {availableJobFunctions.length === 0 && activeJobFunctions.length === 0 && (
+              {!loading && availableJobFunctions.length === 0 && activeJobFunctions.length === 0 && (
                 <div style={{
                   background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
                   padding: "16px 18px", marginTop: 24,
