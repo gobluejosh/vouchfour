@@ -48,6 +48,10 @@ const C = {
 const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+function capitalizeName(name) {
+  return name.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+}
+
 function useDebounce(value, ms) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -347,7 +351,7 @@ function SingleContactForm({ index, onComplete }) {
     if (!name.trim() || !emailInput.trim()) return;
     setStep("done");
     capture("vouch_slot_filled", { slot_index: index });
-    onComplete({ name, linkedin: linkedinInput, email: emailInput });
+    onComplete({ name: capitalizeName(name), linkedin: linkedinInput, email: emailInput });
   }
 
   const liShowSuggestions = step === "linkedin" && !liConfirmed && (liLoading || liSuggestions.length > 0 || liSearched);
@@ -716,7 +720,7 @@ export default function App() {
   if (tokenLoading) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "16px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
           <div style={{ padding: "0 4px", marginBottom: 16 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
@@ -752,7 +756,7 @@ export default function App() {
   if (token && tokenError) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "16px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
           <div style={{ padding: "0 4px", marginBottom: 24 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
@@ -782,7 +786,7 @@ export default function App() {
 
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "16px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
           <div style={{ padding: "0 4px", marginBottom: 32 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
@@ -872,7 +876,7 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
 
       {/* Phone-width container */}
-      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
+      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "16px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
         <div style={{ padding: "0 4px", marginBottom: 16 }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
             Vouch<span style={{ color: C.accent }}>Four</span>

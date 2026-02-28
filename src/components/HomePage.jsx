@@ -30,6 +30,10 @@ const C = {
 const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+function capitalizeName(name) {
+  return name.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+}
+
 function useDebounce(value, ms) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -253,7 +257,7 @@ function IdentityForm({ onComplete }) {
   function handleDone() {
     if (!name.trim() || !linkedinInput.trim() || !emailInput.trim()) return;
     setStep("done");
-    onComplete({ name: name.trim(), linkedin: linkedinInput.trim(), email: emailInput.trim() });
+    onComplete({ name: capitalizeName(name), linkedin: linkedinInput.trim(), email: emailInput.trim() });
   }
 
   const liShowSuggestions = step === "linkedin" && !liConfirmed && (liLoading || liSuggestions.length > 0 || liSearched);
@@ -663,7 +667,7 @@ export default function HomePage() {
     }}>
       <div style={{
         width: "100%", maxWidth: 900,
-        background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px",
+        background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "16px 16px 120px",
         borderRadius: 24, margin: "8px 0 16px",
       }}>
         {/* Header */}

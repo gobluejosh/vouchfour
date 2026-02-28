@@ -362,7 +362,7 @@ export default function TalentPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
-      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
+      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "16px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
         {/* Header */}
         <div style={{ padding: "0 4px", marginBottom: 24 }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
@@ -416,58 +416,59 @@ export default function TalentPage() {
                 </div>
               </div>
 
-              {/* Job function filter pills */}
+              {/* Job function filter */}
               {!loading && reachableFunctions.length === 1 && (
-                <div style={{
-                  display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20,
-                }}>
-                  <button
+                <div style={{ marginBottom: 20 }}>
+                  <select
+                    disabled
                     style={{
-                      padding: "6px 14px", borderRadius: 20,
+                      width: "100%", padding: "10px 14px",
+                      fontSize: 16, fontFamily: FONT, fontWeight: 600,
                       border: `1.5px solid ${C.accent}`,
-                      background: C.accentLight,
-                      color: C.accent,
-                      fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                      cursor: "default",
+                      borderRadius: 10, color: C.accent,
+                      background: C.accentLight, cursor: "default",
+                      WebkitAppearance: "none", appearance: "none",
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%234F46E5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 14px center",
                     }}
                   >
-                    {reachableFunctions[0].practitionerLabel || reachableFunctions[0].name}
-                  </button>
+                    <option>{reachableFunctions[0].practitionerLabel || reachableFunctions[0].name}</option>
+                  </select>
                 </div>
               )}
               {!loading && reachableFunctions.length >= 2 && (
                 <div style={{
-                  display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20,
+                  marginBottom: 20, borderRadius: 12, padding: 2,
+                  background: "linear-gradient(135deg, #6366F1, #EC4899)",
                 }}>
-                  <button
-                    onClick={() => { setActiveFunction(null); setVisibleCount(10); capture("talent_filter_changed", { function_filter: "all" }); }}
+                  <select
+                    value={activeFunction || ""}
+                    onChange={e => {
+                      const val = e.target.value || null;
+                      setActiveFunction(val);
+                      setVisibleCount(10);
+                      capture("talent_filter_changed", { function_filter: val || "all" });
+                    }}
                     style={{
-                      padding: "6px 14px", borderRadius: 20,
-                      border: `1.5px solid ${activeFunction === null ? C.accent : C.border}`,
-                      background: activeFunction === null ? C.accentLight : "#fff",
-                      color: activeFunction === null ? C.accent : C.sub,
-                      fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                      cursor: "pointer",
+                      width: "100%", padding: "10px 14px",
+                      fontSize: 16, fontFamily: FONT, fontWeight: 600,
+                      border: "none",
+                      borderRadius: 10, color: C.ink,
+                      background: "#fff", cursor: "pointer",
+                      WebkitAppearance: "none", appearance: "none",
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 14px center",
                     }}
                   >
-                    All
-                  </button>
-                  {reachableFunctions.map(jf => (
-                    <button
-                      key={jf.slug}
-                      onClick={() => { setActiveFunction(jf.slug); setVisibleCount(10); capture("talent_filter_changed", { function_filter: jf.slug }); }}
-                      style={{
-                        padding: "6px 14px", borderRadius: 20,
-                        border: `1.5px solid ${activeFunction === jf.slug ? C.accent : C.border}`,
-                        background: activeFunction === jf.slug ? C.accentLight : "#fff",
-                        color: activeFunction === jf.slug ? C.accent : C.sub,
-                        fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {jf.practitionerLabel || jf.name}
-                    </button>
-                  ))}
+                    <option value="">All functions</option>
+                    {reachableFunctions.map(jf => (
+                      <option key={jf.slug} value={jf.slug}>
+                        {jf.practitionerLabel || jf.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
