@@ -527,9 +527,14 @@ function UserCard({ user, slug }) {
 
   return (
     <div style={{
-      background: "#fff", borderRadius: 14, border: "none",
-      padding: "20px 22px",
-      boxShadow: "0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.05)",
+      position: "relative",
+      borderRadius: 18, padding: 2,
+      background: "linear-gradient(135deg, #6366F1, #EC4899)",
+      boxShadow: "0 12px 40px rgba(99,102,241,0.20), 0 4px 16px rgba(236,72,153,0.12)",
+    }}>
+    <div style={{
+      borderRadius: 16, padding: "20px 22px",
+      background: "#fff",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <div style={{
@@ -584,6 +589,7 @@ function UserCard({ user, slug }) {
       >
         Keep building your network
       </a>
+    </div>
     </div>
   );
 }
@@ -663,35 +669,44 @@ export default function HomePage() {
   return (
     <div style={{
       minHeight: "100vh", background: "#000000", fontFamily: FONT,
-      display: "flex", justifyContent: "center", overflowX: "hidden",
+      display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden",
     }}>
+      {/* Fixed logo bar */}
+      <div style={{
+        position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100,
+        width: "100%", maxWidth: 900,
+        background: "#FFFFFF",
+        padding: "12px 20px",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 0 }}>
+          <span style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5 }}>
+            Vouch<span style={{ color: C.accent }}>Four</span>
+          </span>
+          {!user && (
+            <button
+              onClick={() => setLoginOpen(o => !o)}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                fontSize: 13, fontWeight: 600, color: C.accent, fontFamily: FONT,
+                padding: "4px 0",
+              }}
+            >
+              {loginOpen ? "Close" : "Log in"}
+            </button>
+          )}
+        </div>
+        <div style={{ fontSize: 15, color: "#374151", lineHeight: 1.6, marginLeft: 10 }}>
+          Find the best talent through people you trust.
+        </div>
+      </div>
+
       <div style={{
         width: "100%", maxWidth: 900,
-        background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "16px 16px 120px",
-        borderRadius: 24, margin: "8px 0 16px",
+        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px",
+        borderRadius: 0, margin: "80px 0 0",
       }}>
         {/* Header */}
-        <div style={{ padding: "0 4px", marginBottom: 40 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <span style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5 }}>
-              Vouch<span style={{ color: C.accent }}>Four</span>
-            </span>
-            {!user && (
-              <button
-                onClick={() => setLoginOpen(o => !o)}
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  fontSize: 13, fontWeight: 600, color: C.accent, fontFamily: FONT,
-                  padding: "4px 0",
-                }}
-              >
-                {loginOpen ? "Close" : "Log in"}
-              </button>
-            )}
-          </div>
-          <div style={{ fontSize: 15, color: "#374151", lineHeight: 1.6 }}>
-            Find the best talent through people you trust.
-          </div>
+        <div style={{ padding: "12px 4px 0", marginBottom: 40 }}>
 
           {/* Login expander */}
           {!user && loginOpen && (

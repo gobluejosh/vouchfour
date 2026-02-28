@@ -122,23 +122,20 @@ export default function StartVouchPage() {
   const isChecking = authState === "checking";
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
+    <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
+      {/* Fixed logo bar */}
+      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", maxWidth: 900, background: "#FFFFFF", padding: "12px 20px" }}>
+        <a href="/" style={{ textDecoration: "none" }}>
+          <span style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, fontFamily: FONT }}>
+            Vouch<span style={{ color: C.accent }}>Four</span>
+          </span>
+        </a>
+      </div>
       <div style={{
         width: "100%", maxWidth: 900,
-        background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "16px 16px 120px",
-        borderRadius: 24, margin: "8px 0 16px",
+        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px",
+        borderRadius: 0, margin: "52px 0 0",
       }}>
-        {/* Header */}
-        <div style={{ padding: "0 4px", marginBottom: 40 }}>
-          <a href="/" style={{ textDecoration: "none" }}>
-            <span style={{
-              fontSize: 28, fontWeight: 700, color: C.ink,
-              letterSpacing: -0.5, fontFamily: FONT,
-            }}>
-              Vouch<span style={{ color: C.accent }}>Four</span>
-            </span>
-          </a>
-        </div>
 
         <div style={{ maxWidth: 480, margin: "0 auto" }}>
           {isChecking ? (
@@ -230,7 +227,7 @@ export default function StartVouchPage() {
             })}
           </div>
 
-          <p style={{ fontSize: 13, color: C.sub, margin: "18px 0 0", lineHeight: 1.5, textAlign: "center" }}>
+          <p style={{ fontSize: 13, color: "#FFFFFF", margin: "18px 0 0", lineHeight: 1.5, textAlign: "center" }}>
             You'll vouch for the 4 best professionals you've worked with in that function.
           </p>
 
