@@ -856,7 +856,7 @@ export default function App() {
             </div>
 
             <p style={{
-              marginTop: 40, fontSize: 11, color: "#78716C",
+              marginTop: 40, fontSize: 11, color: "rgba(255,255,255,0.6)",
               lineHeight: 1.5, textAlign: "center", padding: "0 12px",
             }}>
               This tool was built by{" "}
@@ -864,7 +864,7 @@ export default function App() {
                 href="https://www.linkedin.com/in/joshscott/"
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "#78716C", textDecoration: "underline" }}
+                style={{ color: "rgba(255,255,255,0.6)", textDecoration: "underline" }}
               >Josh Scott</a>{" "}
               with significant help from Claude.
             </p>
@@ -1041,7 +1041,7 @@ export default function App() {
         </div>
 
         <p style={{
-          marginTop: 24, fontSize: 11, color: "#78716C",
+          marginTop: 24, fontSize: 11, color: "rgba(255,255,255,0.6)",
           lineHeight: 1.5, textAlign: "center", padding: "0 12px",
         }}>
           This tool was built by{" "}
@@ -1049,7 +1049,7 @@ export default function App() {
             href="https://www.linkedin.com/in/joshscott/"
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: "#78716C", textDecoration: "underline" }}
+            style={{ color: "rgba(255,255,255,0.6)", textDecoration: "underline" }}
           >Josh Scott</a>{" "}
           with significant help from Claude.
         </p>
