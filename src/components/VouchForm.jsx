@@ -693,7 +693,9 @@ export default function App() {
       });
 
       setSubmitted(true);
-      window.scrollTo(0, 0);
+      window.scrollTo({ top: 0, behavior: "instant" });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
     } catch (err) {
       console.error('[VouchForm] Submit error:', err);
       setSubmitError(err.message);
