@@ -1065,7 +1065,7 @@ const labelStyle = {
 
 const inputStyle = {
   width: "100%", padding: "12px 14px",
-  fontSize: 15, border: `1.5px solid ${C.border}`,
+  fontSize: 16, border: `1.5px solid ${C.border}`,
   borderRadius: 10, fontFamily: FONT,
   color: "#1C1917", background: "#fff",
   transition: "border-color 0.15s, box-shadow 0.15s",
