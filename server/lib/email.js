@@ -78,8 +78,8 @@ function emailLayout(bodyHtml, personId) {
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
-<body style="margin:0;padding:0;background:#000000;font-family:'Helvetica Neue',Arial,sans-serif;">
-  <div style="max-width:480px;margin:32px auto;background:#FFFFFF;border-radius:14px;border-top:3px solid #6366F1;padding:32px 28px;">
+<body style="margin:0;padding:0;background:#FFFFFF;font-family:'Helvetica Neue',Arial,sans-serif;">
+  <div style="max-width:480px;margin:32px auto;padding:32px 28px;">
     <div style="margin-bottom:24px;">
       <span style="font-size:20px;font-weight:700;color:#171717;letter-spacing:-0.5px;">
         Vouch<span style="color:#4F46E5;">Four</span>
@@ -90,28 +90,28 @@ function emailLayout(bodyHtml, personId) {
       <p style="font-size:12px;color:#6B7280;margin:0 0 12px;line-height:1.6;font-style:italic;">
         "Is this a real thing?"
       </p>
-      <p style="font-size:12px;color:#6B7280;margin:0 0 10px;line-height:1.6;">
+      <p style="font-size:12px;color:#171717;margin:0 0 10px;line-height:1.6;">
         Yep! VouchFour is brand new, so no surprise if you haven't heard of it.
         <a href="https://www.linkedin.com/in/joshscott/" style="color:#4F46E5;text-decoration:none;font-weight:600;">Josh Scott</a>
         built it (with significant help from Claude) because he was tired of a familiar problem:
         LinkedIn was originally meant to map trusted professional relationships, but most of us now
         have hundreds of connections — many of whom we barely know, if at all.
       </p>
-      <p style="font-size:12px;color:#6B7280;margin:0 0 10px;line-height:1.6;">
+      <p style="font-size:12px;color:#171717;margin:0 0 10px;line-height:1.6;">
         Rather than endlessly asking "do you actually know this person?", Josh wanted a professional
         talent network with real constraints — where every recommendation carries weight because it
         comes from someone you genuinely trust. So he built one.
       </p>
-      <p style="font-size:12px;color:#6B7280;margin:0;line-height:1.6;">
+      <p style="font-size:12px;color:#171717;margin:0;line-height:1.6;">
         Questions or thoughts? <a href="https://www.linkedin.com/in/joshscott/" style="color:#4F46E5;text-decoration:none;">Reach out to Josh anytime</a>.
       </p>
     </div>
   </div>
-  <div style="max-width:480px;margin:0 auto;padding:16px 28px 32px;text-align:center;">
-    <p style="font-size:11px;color:#A8A29E;margin:0;line-height:1.6;">
+  <div style="max-width:480px;margin:0 auto;padding:0 28px 32px;text-align:center;">
+    <p style="font-size:11px;color:#9CA3AF;margin:0;line-height:1.6;">
       VouchFour &middot; 2343 N West Torch Lake Dr., Kewadin, MI 49648
     </p>
-    <p style="font-size:11px;color:#A8A29E;margin:6px 0 0;line-height:1.6;">
+    <p style="font-size:11px;color:#9CA3AF;margin:6px 0 0;line-height:1.6;">
       ${unsubLink}
     </p>
   </div>
