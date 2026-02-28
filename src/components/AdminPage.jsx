@@ -422,7 +422,7 @@ export default function AdminPage() {
           </a>
           <span style={{ fontSize: 12, color: C.sub, marginLeft: 10, fontFamily: FONT }}>Admin</span>
         </div>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div style={{ paddingTop: 40 }}>
@@ -485,7 +485,7 @@ export default function AdminPage() {
         </a>
         <span style={{ fontSize: 12, color: C.sub, marginLeft: 10, fontFamily: FONT }}>Admin</span>
       </div>
-      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
         <div style={{ maxWidth: 540, margin: "0 auto" }}>
 

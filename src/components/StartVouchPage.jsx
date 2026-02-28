@@ -133,7 +133,7 @@ export default function StartVouchPage() {
       </div>
       <div style={{
         width: "100%", maxWidth: 900,
-        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px",
+        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px",
         borderRadius: 0, margin: "52px 0 0",
       }}>
 
@@ -227,7 +227,7 @@ export default function StartVouchPage() {
             })}
           </div>
 
-          <p style={{ fontSize: 13, color: "#FFFFFF", margin: "18px 0 0", lineHeight: 1.5, textAlign: "center" }}>
+          <p style={{ fontSize: 13, color: "#7C6FA0", margin: "18px 0 0", lineHeight: 1.5, textAlign: "center" }}>
             You'll vouch for the 4 best professionals you've worked with in that function.
           </p>
 

@@ -702,7 +702,7 @@ export default function HomePage() {
 
       <div style={{
         width: "100%", maxWidth: 900,
-        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px",
+        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px",
         borderRadius: 0, margin: "80px 0 0",
       }}>
         {/* Header */}
@@ -876,7 +876,7 @@ export default function HomePage() {
 
           {/* Footer */}
           <p style={{
-            marginTop: 32, fontSize: 11, color: "rgba(255,255,255,0.6)",
+            marginTop: 32, fontSize: 11, color: "#7C6FA0",
             lineHeight: 1.5, textAlign: "center", padding: "0 12px",
           }}>
             Built by{" "}
@@ -884,7 +884,7 @@ export default function HomePage() {
               href="https://www.linkedin.com/in/joshscott/"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "rgba(255,255,255,0.6)", textDecoration: "underline" }}
+              style={{ color: "#7C6FA0", textDecoration: "underline" }}
             >Josh Scott</a>{" "}
             with significant help from Claude.
           </p>

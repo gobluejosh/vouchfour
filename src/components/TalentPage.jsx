@@ -18,20 +18,30 @@ const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 const DEGREE_LABELS = { 1: "1st", 2: "2nd", 3: "3rd" };
 const DEGREE_COLORS = {
-  1: { bg: "#F0FDF4", border: "#86EFAC", badge: "#16A34A" },
-  2: { bg: "#EFF6FF", border: "#93C5FD", badge: "#2563EB" },
-  3: { bg: "#FFF7ED", border: "#FDBA74", badge: "#EA580C" },
+  1: { bg: "#EEF2FF", border: "#A5B4FC", badge: "linear-gradient(135deg, #6366F1, #4F46E5)" },
+  2: { bg: "#ECFDF5", border: "#86EFAC", badge: "linear-gradient(135deg, #34D399, #16A34A)" },
+  3: { bg: "#F5F3FF", border: "#C4B5FD", badge: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
 };
 
 const CROSS_FUNCTION_COLORS = {
-  bg: "#F5F3FF", border: "#C4B5FD", badge: "#7C3AED",
+  bg: "#FFF1EE", border: "#FDBA9E", badge: "linear-gradient(135deg, #FB923C, #C2410C)",
 };
 
-function Avatar({ name, size = 38 }) {
+const DEGREE_AVATAR_GRADIENTS = {
+  1: "linear-gradient(135deg, #6366F1, #4F46E5)", // indigo
+  2: "linear-gradient(135deg, #34D399, #16A34A)", // emerald
+  3: "linear-gradient(135deg, #A78BFA, #7C3AED)", // violet
+};
+const CROSS_FUNCTION_AVATAR_GRADIENT = "linear-gradient(135deg, #FB923C, #C2410C)"; // warm orange
+
+function Avatar({ name, size = 38, degree, isCrossFunction }) {
+  const bg = isCrossFunction
+    ? CROSS_FUNCTION_AVATAR_GRADIENT
+    : (degree && DEGREE_AVATAR_GRADIENTS[degree]) || gradientForName(name);
   return (
     <div style={{
       width: size, height: size, borderRadius: size * 0.26,
-      background: gradientForName(name), color: "#fff",
+      background: bg, color: "#fff",
       display: "flex", alignItems: "center", justifyContent: "center",
       fontSize: size * 0.36, fontWeight: 700, fontFamily: FONT,
       flexShrink: 0, textShadow: "0 1px 2px rgba(0,0,0,0.15)",
@@ -73,7 +83,7 @@ function TalentCard({ talent }) {
         transition: "box-shadow 0.15s",
       }}
     >
-      <Avatar name={talent.display_name} size={38} />
+      <Avatar name={talent.display_name} size={38} degree={talent.degree} isCrossFunction={talent.is_cross_function} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontWeight: 600, fontSize: 15, color: C.ink, fontFamily: FONT }}>{talent.display_name}</span>
@@ -368,7 +378,7 @@ export default function TalentPage() {
           Vouch<span style={{ color: C.accent }}>Four</span>
         </a>
       </div>
-      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
         <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 6 }}>
 
@@ -644,7 +654,7 @@ export default function TalentPage() {
 
           {/* Footer */}
           <p style={{
-            marginTop: 40, fontSize: 11, color: "rgba(255,255,255,0.6)",
+            marginTop: 40, fontSize: 11, color: "#7C6FA0",
             lineHeight: 1.5, textAlign: "center", padding: "0 12px",
           }}>
             This tool was built by{" "}
@@ -652,7 +662,7 @@ export default function TalentPage() {
               href="https://www.linkedin.com/in/joshscott/"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "rgba(255,255,255,0.6)", textDecoration: "underline" }}
+              style={{ color: "#7C6FA0", textDecoration: "underline" }}
             >Josh Scott</a>{" "}
             with significant help from Claude.
           </p>

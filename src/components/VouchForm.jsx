@@ -727,7 +727,7 @@ export default function App() {
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>
         </div>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
           <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
             <div style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
@@ -763,7 +763,7 @@ export default function App() {
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>
         </div>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
           <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center", paddingTop: 40 }}>
             <div style={{ fontSize: 17, fontWeight: 600, color: C.ink }}>Invalid Invite</div>
             <div style={{ marginTop: 8, fontSize: 14, color: C.sub }}>{tokenError}</div>
@@ -793,7 +793,7 @@ export default function App() {
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>
         </div>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
           <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
             <div style={{ fontSize: 24, fontWeight: 700, color: C.ink, marginBottom: 12, lineHeight: 1.3 }}>
@@ -856,7 +856,7 @@ export default function App() {
             </div>
 
             <p style={{
-              marginTop: 40, fontSize: 11, color: "rgba(255,255,255,0.6)",
+              marginTop: 40, fontSize: 11, color: "#7C6FA0",
               lineHeight: 1.5, textAlign: "center", padding: "0 12px",
             }}>
               This tool was built by{" "}
@@ -864,7 +864,7 @@ export default function App() {
                 href="https://www.linkedin.com/in/joshscott/"
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "rgba(255,255,255,0.6)", textDecoration: "underline" }}
+                style={{ color: "#7C6FA0", textDecoration: "underline" }}
               >Josh Scott</a>{" "}
               with significant help from Claude.
             </p>
@@ -885,7 +885,7 @@ export default function App() {
       </div>
 
       {/* Phone-width container */}
-      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #6B4DC0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
        <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
         <div style={{ marginBottom: 20 }}>
@@ -1041,7 +1041,7 @@ export default function App() {
         </div>
 
         <p style={{
-          marginTop: 24, fontSize: 11, color: "rgba(255,255,255,0.6)",
+          marginTop: 24, fontSize: 11, color: "#7C6FA0",
           lineHeight: 1.5, textAlign: "center", padding: "0 12px",
         }}>
           This tool was built by{" "}
@@ -1049,7 +1049,7 @@ export default function App() {
             href="https://www.linkedin.com/in/joshscott/"
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: "rgba(255,255,255,0.6)", textDecoration: "underline" }}
+            style={{ color: "#7C6FA0", textDecoration: "underline" }}
           >Josh Scott</a>{" "}
           with significant help from Claude.
         </p>
