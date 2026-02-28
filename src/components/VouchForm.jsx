@@ -170,19 +170,16 @@ function SingleContactForm({ index, onComplete }) {
   const liInputRef = useRef();
   const emailInputRef = useRef();
 
+  // Transfer focus from bridge input to name input on mount
+  useEffect(() => {
+    if (nameInputRef.current) nameInputRef.current.focus();
+  }, []);
+
   const debouncedName = useDebounce(name, 800);
   const liSearchId = useRef(0);
   const prefetchCache = useRef({});
   const emailSearchId = useRef(0);
   const [prefetchStatus, setPrefetchStatus] = useState("idle"); // idle | loading | ready
-
-  // Auto-focus name input on mount
-  useEffect(() => {
-    if (nameInputRef.current) {
-      // Small delay to ensure the card expansion animation has started
-      setTimeout(() => nameInputRef.current?.focus(), 50);
-    }
-  }, []);
 
   // Prefetch LinkedIn while user is still on the name step.
   // Fires as soon as name is 3+ chars and stable for 800ms.
@@ -712,13 +709,21 @@ export default function App() {
     }
   }
 
+  const focusBridgeRef = useRef();
+
   function handleComplete(index, data) {
     const next = [...contacts];
     next[index] = data;
     setContacts(next);
     // Open next slot if available
     const nextEmpty = next.findIndex((c, i) => i > index && c === null);
-    if (nextEmpty !== -1) setActiveIndex(nextEmpty);
+    if (nextEmpty !== -1) {
+      // On mobile Safari, we must grab focus synchronously within the user gesture
+      // so the keyboard stays up. We focus a hidden bridge input, then transfer
+      // focus to the real name input after React re-renders.
+      if (focusBridgeRef.current) focusBridgeRef.current.focus();
+      setActiveIndex(nextEmpty);
+    }
     else setActiveIndex(-1); // all done
   }
 
@@ -925,6 +930,8 @@ export default function App() {
                 : "Who are 4 of the highest performers you've worked with in your career?"}
           </p>
         </div>
+        {/* Hidden input to bridge focus on mobile Safari between form saves */}
+        <input ref={focusBridgeRef} aria-hidden="true" style={{ position: "absolute", opacity: 0, height: 0, width: 0, padding: 0, border: "none", pointerEvents: "none" }} tabIndex={-1} />
         {[0, 1, 2, 3].map(i => {
           const isComplete = !!contacts[i];
           const isActive = activeIndex === i;
