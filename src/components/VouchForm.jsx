@@ -715,7 +715,7 @@ export default function App() {
   // Show loading state while validating token
   if (tokenLoading) {
     return (
-      <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
         <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
           <div style={{ padding: "0 4px", marginBottom: 16 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
@@ -751,7 +751,7 @@ export default function App() {
   // Show error if token is invalid or missing
   if (token && tokenError) {
     return (
-      <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
         <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
           <div style={{ padding: "0 4px", marginBottom: 24 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
@@ -781,7 +781,7 @@ export default function App() {
     const jobFnShort = invitee?.jobFunction?.practitionerLabel || null;
 
     return (
-      <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
         <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>
           <div style={{ padding: "0 4px", marginBottom: 32 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
@@ -869,7 +869,7 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
+    <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center", overflowX: "hidden" }}>
 
       {/* Phone-width container */}
       <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "8px 0 16px" }}>

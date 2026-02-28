@@ -659,7 +659,7 @@ export default function HomePage() {
   return (
     <div style={{
       minHeight: "100vh", background: "#000000", fontFamily: FONT,
-      display: "flex", justifyContent: "center",
+      display: "flex", justifyContent: "center", overflowX: "hidden",
     }}>
       <div style={{
         width: "100%", maxWidth: 900,
