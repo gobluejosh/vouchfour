@@ -415,8 +415,8 @@ export default function AdminPage() {
 
   if (!authed) {
     return (
-      <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
+      <div style={{ minHeight: "100vh", background: "#EBEDF0", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
+        <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #F4F7FB 0%, #F9F7F4 100%)", padding: "28px 16px 120px" }}>
           <div style={{ padding: "0 20px", marginBottom: 24 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
@@ -477,8 +477,8 @@ export default function AdminPage() {
   // ─── Admin dashboard ────────────────────────────────────────────────
 
   return (
-    <div style={{ minHeight: "100vh", background: "#E8E4DF", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-      <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "#F8F4E8", padding: "28px 16px 120px" }}>
+    <div style={{ minHeight: "100vh", background: "#EBEDF0", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
+      <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #F4F7FB 0%, #F9F7F4 100%)", padding: "28px 16px 120px" }}>
         {/* Header */}
         <div style={{ padding: "0 20px", marginBottom: 24 }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
