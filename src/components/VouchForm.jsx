@@ -911,7 +911,7 @@ export default function App() {
             {isUpdate
               ? `Update your top 4${invitee?.jobFunction ? ` ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name}` : ""}`
               : invitee?.jobFunction
-                ? `Who are 4 of the best ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} you've ever worked with?`
+                ? `Who are the 4 best ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} you've ever worked with?`
                 : "Who are 4 of the highest performers you've worked with in your career?"}
           </p>
         </div>
