@@ -137,7 +137,7 @@ export default function StartVouchPage() {
         borderRadius: 0, margin: "52px 0 0",
       }}>
 
-        <div style={{ maxWidth: 480, margin: "0 auto" }}>
+        <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 6 }}>
           {isChecking ? (
             <>
               <div style={{ height: 28, width: "60%", borderRadius: 6, marginBottom: 10, background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.2s infinite" }} />

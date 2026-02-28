@@ -876,7 +876,7 @@ export default function HomePage() {
 
           {/* Footer */}
           <p style={{
-            marginTop: 32, fontSize: 11, color: "#6B7280",
+            marginTop: 32, fontSize: 11, color: "rgba(255,255,255,0.6)",
             lineHeight: 1.5, textAlign: "center", padding: "0 12px",
           }}>
             Built by{" "}
@@ -884,7 +884,7 @@ export default function HomePage() {
               href="https://www.linkedin.com/in/joshscott/"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "#6B7280", textDecoration: "underline" }}
+              style={{ color: "rgba(255,255,255,0.6)", textDecoration: "underline" }}
             >Josh Scott</a>{" "}
             with significant help from Claude.
           </p>
