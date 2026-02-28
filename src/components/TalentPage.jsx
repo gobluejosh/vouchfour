@@ -3,9 +3,9 @@ import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
 
 const C = {
-  ink: "#1C1917",
-  sub: "#78716C",
-  accent: "#2563EB",
+  ink: "#171717",
+  sub: "#6B7280",
+  accent: "#4F46E5",
   accentLight: "#EFF6FF",
   border: "#E7E5E0",
   success: "#16A34A",
@@ -14,7 +14,7 @@ const C = {
   chipBorder: "#BFDBFE",
 };
 
-const FONT = "'Helvetica Neue', Arial, sans-serif";
+const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 const DEGREE_LABELS = { 1: "1st", 2: "2nd", 3: "3rd" };
 const DEGREE_COLORS = {
@@ -245,7 +245,7 @@ function LoginPrompt() {
           disabled={!identifier.trim() || sending}
           style={{
             padding: "12px 20px",
-            background: identifier.trim() && !sending ? C.accent : "#D1D5DB",
+            background: identifier.trim() && !sending ? C.accent : "#C7D2FE",
             color: "#fff", border: "none", borderRadius: 10,
             fontSize: 14, fontWeight: 600, fontFamily: FONT,
             cursor: identifier.trim() && !sending ? "pointer" : "not-allowed",
@@ -362,7 +362,7 @@ export default function TalentPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-      <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px" }}>
+      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "16px 0" }}>
         {/* Header */}
         <div style={{ padding: "0 4px", marginBottom: 24 }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
@@ -384,7 +384,7 @@ export default function TalentPage() {
                 {[0, 1, 2, 3, 4].map(i => (
                   <div key={i} style={{
                     height: 62, borderRadius: 12,
-                    background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)",
+                    background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)",
                     backgroundSize: "200% 100%",
                     animation: `shimmer 1.2s ${i * 0.15}s infinite`,
                   }} />
@@ -477,7 +477,7 @@ export default function TalentPage() {
                   {[0, 1, 2, 3, 4].map(i => (
                     <div key={i} style={{
                       height: 62, borderRadius: 12,
-                      background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)",
+                      background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)",
                       backgroundSize: "200% 100%",
                       animation: `shimmer 1.2s ${i * 0.15}s infinite`,
                     }} />
@@ -547,8 +547,13 @@ export default function TalentPage() {
               {/* Keep building CTA */}
               {availableJobFunctions.length > 0 && (
                 <div style={{
-                  background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
-                  padding: "16px 18px", marginTop: 24,
+                  borderRadius: 16, padding: 2, marginTop: 24,
+                  background: "linear-gradient(135deg, #6366F1, #EC4899)",
+                  boxShadow: "0 12px 40px rgba(99,102,241,0.20), 0 4px 16px rgba(236,72,153,0.12)",
+                }}>
+                <div style={{
+                  background: "#fff", borderRadius: 14,
+                  padding: "16px 18px",
                 }}>
                   <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 4 }}>
                     Keep building your network
@@ -602,7 +607,7 @@ export default function TalentPage() {
                       }}
                       style={{
                         padding: "10px 20px",
-                        background: selectedNextFn && !startingVouch ? C.accent : "#D1D5DB",
+                        background: selectedNextFn && !startingVouch ? C.accent : "#C7D2FE",
                         color: "#fff", border: "1.5px solid transparent", borderRadius: 10,
                         fontSize: 14, fontWeight: 600, fontFamily: FONT,
                         cursor: selectedNextFn && !startingVouch ? "pointer" : "not-allowed",
@@ -612,6 +617,7 @@ export default function TalentPage() {
                       {startingVouch ? "..." : "Let's go"}
                     </button>
                   </div>
+                </div>
                 </div>
               )}
 

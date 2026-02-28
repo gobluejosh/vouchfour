@@ -32,10 +32,10 @@ const C = {
   bg: "#F7F5F2",
   card: "#FFFFFF",
   cardDone: "#FAFAF9",
-  ink: "#1C1917",
-  sub: "#78716C",
+  ink: "#171717",
+  sub: "#6B7280",
   border: "#E7E5E0",
-  accent: "#2563EB",
+  accent: "#4F46E5",
   accentLight: "#EFF6FF",
   accentSub: "#93C5FD",
   success: "#16A34A",
@@ -45,7 +45,7 @@ const C = {
   warn: "#D97706",
 };
 
-const FONT = "'Helvetica Neue', Arial, sans-serif";
+const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function useDebounce(value, ms) {
@@ -83,7 +83,7 @@ function SuggestionChips({ items, onSelect, loading, show, type }) {
           {[0, 1, 2].map((i) => (
             <div key={i} style={{
               height: 58, borderRadius: 12,
-              background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)",
+              background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)",
               backgroundSize: "200% 100%",
               animation: `shimmer 1.2s ${i * 0.15}s infinite`,
             }} />
@@ -716,7 +716,7 @@ export default function App() {
   if (tokenLoading) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "16px 0" }}>
           <div style={{ padding: "0 4px", marginBottom: 16 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
@@ -729,13 +729,13 @@ export default function App() {
                   <div key={i} style={{ height: 4, flex: 1, borderRadius: 2, background: C.border }} />
                 ))}
               </div>
-              <div style={{ height: 20, width: "75%", borderRadius: 6, background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.2s infinite" }} />
+              <div style={{ height: 20, width: "75%", borderRadius: 6, background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.2s infinite" }} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {[0, 1, 2, 3].map(i => (
                 <div key={i} style={{
                   height: 140, borderRadius: 16,
-                  background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)",
+                  background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)",
                   backgroundSize: "200% 100%",
                   animation: `shimmer 1.2s ${i * 0.15}s infinite`,
                 }} />
@@ -752,7 +752,7 @@ export default function App() {
   if (token && tokenError) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "16px 0" }}>
           <div style={{ padding: "0 4px", marginBottom: 24 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
@@ -782,7 +782,7 @@ export default function App() {
 
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "16px 0" }}>
           <div style={{ padding: "0 4px", marginBottom: 32 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
@@ -793,28 +793,34 @@ export default function App() {
             <div style={{ fontSize: 24, fontWeight: 700, color: C.ink, marginBottom: 12, lineHeight: 1.3 }}>
               Your network is taking shape, {vouchFirstName}.
             </div>
-            <p style={{ fontSize: 15, color: C.sub, lineHeight: 1.6, marginBottom: 8 }}>
-              {jobFnShort
-                ? `You recommended ${submittedContacts.length} excellent ${jobFnShort}. They'll each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`
-                : `You recommended ${submittedContacts.length} excellent professional${submittedContacts.length !== 1 ? 's' : ''}. They'll each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`}
-            </p>
-            <p style={{ fontSize: 15, color: C.sub, lineHeight: 1.6, marginBottom: 20 }}>
-              In the meantime, let's keep building your network by vouching for your best colleagues in a different function.
-            </p>
+            <div style={{
+              background: "linear-gradient(135deg, #FDE6D0 0%, #D4F0E0 100%)",
+              borderRadius: 14, border: "1.5px solid rgba(0,0,0,0.06)",
+              padding: "18px 18px 22px", marginBottom: 28,
+            }}>
+              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 8, marginTop: 0 }}>
+                {jobFnShort
+                  ? `You recommended ${submittedContacts.length} excellent ${jobFnShort}. They'll each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`
+                  : `You recommended ${submittedContacts.length} excellent professional${submittedContacts.length !== 1 ? 's' : ''}. They'll each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`}
+              </p>
+              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 20 }}>
+                In the meantime, let's keep building your network by vouching for your best colleagues in a different function.
+              </p>
 
-            <div style={{ textAlign: "center", marginBottom: 28 }}>
-              <a href="/start-vouch" style={{
-                display: "inline-block", padding: "14px 28px",
-                background: C.accent, color: "#fff", borderRadius: 10,
-                fontSize: 15, fontWeight: 600, textDecoration: "none",
-                fontFamily: FONT,
-              }}>
-                Keep building your network
-              </a>
+              <div style={{ textAlign: "center" }}>
+                <a href="/start-vouch" style={{
+                  display: "inline-block", padding: "14px 28px",
+                  background: C.accent, color: "#fff", borderRadius: 10,
+                  fontSize: 15, fontWeight: 600, textDecoration: "none",
+                  fontFamily: FONT,
+                }}>
+                  Keep building your network
+                </a>
+              </div>
             </div>
 
             <div style={{
-              background: C.card, borderRadius: 14, border: `1.5px solid ${C.border}`,
+              background: "linear-gradient(135deg, #ECFDF5 0%, #DBEAFE 100%)", borderRadius: 14, border: "1.5px solid rgba(0,0,0,0.06)",
               padding: "16px 18px", marginBottom: 28,
             }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>
@@ -866,7 +872,7 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
 
       {/* Phone-width container */}
-      <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px" }}>
+      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "16px 0" }}>
         <div style={{ padding: "0 4px", marginBottom: 16 }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
             Vouch<span style={{ color: C.accent }}>Four</span>
@@ -890,7 +896,7 @@ export default function App() {
             {[0,1,2,3].map(i => (
               <div key={i} style={{
                 height: 4, flex: 1, borderRadius: 2,
-                background: contacts[i] ? C.accent : C.border,
+                background: contacts[i] ? C.accent : "rgba(255,255,255,0.5)",
                 transition: "background 0.3s",
               }} />
             ))}
@@ -1012,8 +1018,8 @@ export default function App() {
 
         <div style={{
           marginTop: 32, padding: "16px 18px",
-          background: "#fff", borderRadius: 12,
-          border: `1.5px solid ${C.border}`,
+          background: "linear-gradient(135deg, #ECFDF5 0%, #DBEAFE 100%)", borderRadius: 12,
+          border: `1.5px solid rgba(0,0,0,0.06)`,
         }}>
           <div style={{
             fontSize: 13, fontWeight: 700, color: C.ink,
@@ -1054,7 +1060,7 @@ export default function App() {
 // ─── Shared Styles ───────────────────────────────────────────────────────────
 const labelStyle = {
   display: "block", fontSize: 13, fontWeight: 600,
-  color: "#44403C", marginBottom: 6, fontFamily: FONT,
+  color: "#3730A3", marginBottom: 6, fontFamily: FONT,
 };
 
 const inputStyle = {
@@ -1069,7 +1075,7 @@ const inputStyle = {
 const nextBtnStyle = (enabled) => ({
   display: "inline-flex", alignItems: "center",
   padding: "12px 18px",
-  background: enabled ? "#2563EB" : "#D1D5DB",
+  background: enabled ? "#4F46E5" : "#C7D2FE",
   color: "#fff", border: "none", borderRadius: 10,
   fontSize: 14, fontWeight: 600, fontFamily: FONT,
   cursor: enabled ? "pointer" : "not-allowed",

@@ -14,9 +14,9 @@ async function fetchLinkedInProfiles(name) {
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 const C = {
-  ink: "#1C1917",
-  sub: "#78716C",
-  accent: "#2563EB",
+  ink: "#171717",
+  sub: "#6B7280",
+  accent: "#4F46E5",
   accentLight: "#EFF6FF",
   accentSub: "#93C5FD",
   border: "#E7E5E0",
@@ -27,7 +27,7 @@ const C = {
   cardDone: "#FAFAF9",
 };
 
-const FONT = "'Helvetica Neue', Arial, sans-serif";
+const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function useDebounce(value, ms) {
@@ -40,15 +40,24 @@ function useDebounce(value, ms) {
 }
 
 // ─── Step Indicator ──────────────────────────────────────────────────────────
+const STEP_GRADIENTS = [
+  "linear-gradient(135deg, #6366F1, #8B5CF6)", // indigo → violet
+  "linear-gradient(135deg, #F59E0B, #EF4444)", // amber → red
+  "linear-gradient(135deg, #10B981, #3B82F6)", // emerald → blue
+];
+
 function StepRow({ number, title, description }) {
   return (
     <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
       <div style={{
         width: 30, height: 30, borderRadius: "50%",
-        background: C.accentLight, border: `1.5px solid ${C.chipBorder}`,
+        background: STEP_GRADIENTS[number - 1] || STEP_GRADIENTS[0],
+        border: "none",
         display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 13, fontWeight: 700, color: C.accent, fontFamily: FONT,
+        fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: FONT,
         flexShrink: 0, marginTop: 1,
+        textShadow: "0 1px 2px rgba(0,0,0,0.15)",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
       }}>
         {number}
       </div>
@@ -74,7 +83,7 @@ function SuggestionChips({ items, onSelect, loading, show }) {
           {[0, 1, 2].map((i) => (
             <div key={i} style={{
               height: 58, borderRadius: 12,
-              background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)",
+              background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)",
               backgroundSize: "200% 100%",
               animation: `shimmer 1.2s ${i * 0.15}s infinite`,
             }} />
@@ -89,8 +98,8 @@ function SuggestionChips({ items, onSelect, loading, show }) {
           <button key={i} type="button" onClick={() => onSelect(item)} style={{
             display: "flex", alignItems: "center", gap: 10,
             padding: "10px 14px", borderRadius: 12,
-            border: `1.5px solid ${C.chipBorder}`,
-            background: C.chip, cursor: "pointer",
+            border: "1px solid rgba(0,0,0,0.06)",
+            background: "rgba(255,255,255,0.5)", cursor: "pointer",
             textAlign: "left", width: "100%",
             transition: "all 0.12s", fontFamily: FONT,
           }}>
@@ -252,16 +261,20 @@ function IdentityForm({ onComplete }) {
   return (
     <div style={{
       position: "relative",
-      border: `1.5px solid ${C.chipBorder}`,
+      borderRadius: 18, padding: 2,
+      background: "linear-gradient(135deg, #6366F1, #EC4899)",
+      boxShadow: "0 12px 40px rgba(99,102,241,0.20), 0 4px 16px rgba(236,72,153,0.12)",
+    }}>
+    <div style={{
       borderRadius: 16, padding: "20px 18px",
-      background: C.accentLight,
+      background: "#fff",
     }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
         {/* Heading */}
         <div>
           <div style={{
-            fontSize: 18, fontWeight: 700, color: C.ink,
+            fontSize: 18, fontWeight: 700, color: "#1E1B4B",
             lineHeight: 1.3, fontFamily: FONT, marginBottom: 4,
           }}>
             Build your trusted talent network
@@ -380,8 +393,8 @@ function IdentityForm({ onComplete }) {
                 ) : (
                   <div style={{
                     padding: "12px 14px",
-                    background: "#FAFAF9",
-                    border: `1.5px solid ${C.border}`,
+                    background: "rgba(255,255,255,0.4)",
+                    border: "1px solid rgba(255,255,255,0.3)",
                     borderRadius: 12,
                     display: "flex", flexDirection: "column", gap: 10,
                   }}>
@@ -463,20 +476,21 @@ function IdentityForm({ onComplete }) {
         )}
       </div>
     </div>
+    </div>
   );
 }
 
 // ─── Shared Styles ──────────────────────────────────────────────────────────
 const labelStyle = {
   display: "block", fontSize: 13, fontWeight: 600,
-  color: "#44403C", marginBottom: 6, fontFamily: FONT,
+  color: "#3730A3", marginBottom: 6, fontFamily: FONT,
 };
 
 const inputStyle = {
   width: "100%", padding: "12px 14px",
   fontSize: 15, border: `1.5px solid ${C.border}`,
   borderRadius: 10, fontFamily: FONT,
-  color: "#1C1917", background: "#fff",
+  color: "#171717", background: "#fff",
   transition: "border-color 0.15s, box-shadow 0.15s",
   WebkitAppearance: "none",
   boxSizing: "border-box",
@@ -485,7 +499,7 @@ const inputStyle = {
 const nextBtnStyle = (enabled) => ({
   display: "inline-flex", alignItems: "center",
   padding: "12px 18px",
-  background: enabled ? "#2563EB" : "#D1D5DB",
+  background: enabled ? "#4F46E5" : "#C7D2FE",
   color: "#fff", border: "none", borderRadius: 10,
   fontSize: 14, fontWeight: 600, fontFamily: FONT,
   cursor: enabled ? "pointer" : "not-allowed",
@@ -509,8 +523,9 @@ function UserCard({ user, slug }) {
 
   return (
     <div style={{
-      background: "#fff", borderRadius: 14, border: `1.5px solid ${C.border}`,
+      background: "#fff", borderRadius: 14, border: "none",
       padding: "20px 22px",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.05)",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <div style={{
@@ -556,7 +571,7 @@ function UserCard({ user, slug }) {
           marginTop: 8,
           padding: "10px 20px",
           background: "transparent", color: C.accent,
-          border: `1.5px solid ${C.chipBorder}`,
+          border: `1.5px solid ${C.border}`,
           borderRadius: 12,
           fontSize: 13, fontWeight: 600,
           fontFamily: FONT, cursor: "pointer",
@@ -647,8 +662,9 @@ export default function HomePage() {
       display: "flex", justifyContent: "center",
     }}>
       <div style={{
-        width: "100%", maxWidth: 900, minHeight: "100vh",
-        background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px",
+        width: "100%", maxWidth: 900,
+        background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px",
+        borderRadius: 24, margin: "16px 0",
       }}>
         {/* Header */}
         <div style={{ padding: "0 4px", marginBottom: 40 }}>
@@ -669,7 +685,7 @@ export default function HomePage() {
               </button>
             )}
           </div>
-          <div style={{ fontSize: 15, color: C.sub, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 15, color: "#374151", lineHeight: 1.6 }}>
             Find the best talent through people you trust.
           </div>
 
@@ -677,8 +693,8 @@ export default function HomePage() {
           {!user && loginOpen && (
             <div style={{
               marginTop: 14, padding: "16px 18px",
-              background: "#fff", borderRadius: 12,
-              border: `1.5px solid ${C.border}`,
+              background: "rgba(255,255,255,0.7)", borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.4)",
             }}>
               {sent ? (
                 <div style={{
@@ -766,7 +782,8 @@ export default function HomePage() {
 
           {/* How it works */}
           <div style={{
-            background: "#fff", borderRadius: 14, border: `1.5px solid ${C.border}`,
+            background: "linear-gradient(135deg, #ECFDF5 0%, #DBEAFE 100%)",
+            borderRadius: 14, border: "1px solid rgba(255,255,255,0.4)",
             padding: "20px 22px", marginBottom: 24,
           }}>
             <div style={{
@@ -791,14 +808,15 @@ export default function HomePage() {
               <StepRow
                 number="3"
                 title="Discover top talent"
-                description="See who the people you actually know and trust think are the best."
+                description="See who the people you know and trust think are the best."
               />
             </div>
           </div>
 
           {/* Why it's different */}
           <div style={{
-            background: "#fff", borderRadius: 14, border: `1.5px solid ${C.border}`,
+            background: "linear-gradient(135deg, #FDE6D0 0%, #D4F0E0 100%)",
+            borderRadius: 14, border: "1px solid rgba(255,255,255,0.4)",
             padding: "20px 22px", marginBottom: 24,
           }}>
             <div style={{
@@ -839,7 +857,7 @@ export default function HomePage() {
 
           {/* Footer */}
           <p style={{
-            marginTop: 32, fontSize: 11, color: "#78716C",
+            marginTop: 32, fontSize: 11, color: "#6B7280",
             lineHeight: 1.5, textAlign: "center", padding: "0 12px",
           }}>
             Built by{" "}
@@ -847,7 +865,7 @@ export default function HomePage() {
               href="https://www.linkedin.com/in/joshscott/"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "#78716C", textDecoration: "underline" }}
+              style={{ color: "#6B7280", textDecoration: "underline" }}
             >Josh Scott</a>{" "}
             with significant help from Claude.
           </p>

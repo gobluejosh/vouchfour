@@ -3,16 +3,16 @@ import { capture, identify } from "../lib/posthog.js";
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 const C = {
-  ink: "#1C1917",
-  sub: "#78716C",
-  accent: "#2563EB",
+  ink: "#171717",
+  sub: "#6B7280",
+  accent: "#4F46E5",
   border: "#E7E5E0",
   success: "#16A34A",
   successLight: "#F0FDF4",
   chipBorder: "#BFDBFE",
 };
 
-const FONT = "'Helvetica Neue', Arial, sans-serif";
+const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 const JOB_FUNCTIONS = [
   { id: 1, name: "Engineering / Software Development", slug: "engineering" },
@@ -124,8 +124,9 @@ export default function StartVouchPage() {
   return (
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
       <div style={{
-        width: "100%", maxWidth: 900, minHeight: "100vh",
-        background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px",
+        width: "100%", maxWidth: 900,
+        background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px",
+        borderRadius: 24, margin: "16px 0",
       }}>
         {/* Header */}
         <div style={{ padding: "0 4px", marginBottom: 40 }}>
@@ -142,13 +143,13 @@ export default function StartVouchPage() {
         <div style={{ maxWidth: 480, margin: "0 auto" }}>
           {isChecking ? (
             <>
-              <div style={{ height: 28, width: "60%", borderRadius: 6, marginBottom: 10, background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.2s infinite" }} />
-              <div style={{ height: 16, width: "85%", borderRadius: 6, marginBottom: 28, background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.2s 0.1s infinite" }} />
+              <div style={{ height: 28, width: "60%", borderRadius: 6, marginBottom: 10, background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.2s infinite" }} />
+              <div style={{ height: 16, width: "85%", borderRadius: 6, marginBottom: 28, background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.2s 0.1s infinite" }} />
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {[0,1,2,3,4,5,6,7,8,9].map(i => (
                   <div key={i} style={{
                     height: 52, borderRadius: 10,
-                    background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)",
+                    background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)",
                     backgroundSize: "200% 100%",
                     animation: `shimmer 1.2s ${i * 0.08}s infinite`,
                   }} />
@@ -198,15 +199,15 @@ export default function StartVouchPage() {
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
                     padding: "14px 16px", borderRadius: 10,
-                    border: `1.5px solid ${alreadyVouched ? C.success : C.border}`,
-                    background: alreadyVouched ? C.successLight : "#FFFFFF",
+                    border: `1.5px solid ${alreadyVouched ? C.success : "#C7D2FE"}`,
+                    background: alreadyVouched ? C.successLight : "#fff",
                     cursor: isLoading ? "wait" : "pointer",
                     textAlign: "left", fontFamily: FONT,
                     transition: "border-color 0.15s",
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, lineHeight: 1.3 }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: "#1E1B4B", lineHeight: 1.3 }}>
                       {jf.name}
                     </div>
                     {alreadyVouched && (

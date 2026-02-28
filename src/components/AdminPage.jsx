@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 
 const C = {
-  ink: "#1C1917",
-  sub: "#78716C",
-  accent: "#2563EB",
+  ink: "#171717",
+  sub: "#6B7280",
+  accent: "#4F46E5",
   accentLight: "#EFF6FF",
   border: "#E7E5E0",
   success: "#16A34A",
@@ -14,7 +14,7 @@ const C = {
   danger: "#DC2626",
 };
 
-const FONT = "'Helvetica Neue', Arial, sans-serif";
+const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 const TEMPLATE_LABELS = {
   vouch_invite: "Vouch Invite",
@@ -85,7 +85,7 @@ function InputRow({ label, value, onChange, type = "text", step, description }) 
     <div style={{ marginBottom: 12 }}>
       <label style={{
         display: "block", fontSize: 12, fontWeight: 600,
-        color: "#44403C", marginBottom: 4, fontFamily: FONT,
+        color: "#3730A3", marginBottom: 4, fontFamily: FONT,
       }}>
         {label}
       </label>
@@ -202,7 +202,7 @@ function TemplateAccordion({ template, isOpen, onToggle, onChange }) {
           <div style={{ marginBottom: 10 }}>
             <label style={{
               display: "block", fontSize: 12, fontWeight: 600,
-              color: "#44403C", marginBottom: 4, fontFamily: FONT,
+              color: "#3730A3", marginBottom: 4, fontFamily: FONT,
             }}>
               Subject line
             </label>
@@ -221,7 +221,7 @@ function TemplateAccordion({ template, isOpen, onToggle, onChange }) {
           <div>
             <label style={{
               display: "block", fontSize: 12, fontWeight: 600,
-              color: "#44403C", marginBottom: 4, fontFamily: FONT,
+              color: "#3730A3", marginBottom: 4, fontFamily: FONT,
             }}>
               Body HTML
             </label>
@@ -416,7 +416,7 @@ export default function AdminPage() {
   if (!authed) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px" }}>
+        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "16px 0" }}>
           <div style={{ padding: "0 20px", marginBottom: 24 }}>
             <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
               Vouch<span style={{ color: C.accent }}>Four</span>
@@ -452,7 +452,7 @@ export default function AdminPage() {
                   disabled={!secret.trim() || authLoading}
                   style={{
                     padding: "12px 20px",
-                    background: secret.trim() && !authLoading ? C.accent : "#D1D5DB",
+                    background: secret.trim() && !authLoading ? C.accent : "#C7D2FE",
                     color: "#fff", border: "none", borderRadius: 10,
                     fontSize: 14, fontWeight: 600, fontFamily: FONT,
                     cursor: secret.trim() && !authLoading ? "pointer" : "not-allowed",
@@ -478,7 +478,7 @@ export default function AdminPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", justifyContent: "center" }}>
-      <div style={{ width: "100%", maxWidth: 900, minHeight: "100vh", background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px" }}>
+      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px", borderRadius: 24, margin: "16px 0" }}>
         {/* Header */}
         <div style={{ padding: "0 20px", marginBottom: 24 }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
