@@ -290,7 +290,7 @@ export default function TalentPage() {
   const [selectedNextFn, setSelectedNextFn] = useState(""); // id of function picked in CTA dropdown
   const [startingVouch, setStartingVouch] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   // Auth flow on mount

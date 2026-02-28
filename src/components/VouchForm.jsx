@@ -176,6 +176,14 @@ function SingleContactForm({ index, onComplete }) {
   const emailSearchId = useRef(0);
   const [prefetchStatus, setPrefetchStatus] = useState("idle"); // idle | loading | ready
 
+  // Auto-focus name input on mount
+  useEffect(() => {
+    if (nameInputRef.current) {
+      // Small delay to ensure the card expansion animation has started
+      setTimeout(() => nameInputRef.current?.focus(), 50);
+    }
+  }, []);
+
   // Prefetch LinkedIn while user is still on the name step.
   // Fires as soon as name is 3+ chars and stable for 800ms.
   // Result is cached so the LinkedIn step can show it instantly.
@@ -1006,7 +1014,40 @@ export default function App() {
           </div>
         )}
 
-        {canSubmit && (
+        {canSubmit && completedCount === 1 && (
+          <div style={{ textAlign: "center", marginTop: 12 }}>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              style={{
+                background: "none", border: "none", cursor: submitting ? "default" : "pointer",
+                fontSize: 14, fontWeight: 600, color: C.accent,
+                fontFamily: FONT, textDecoration: "underline",
+                padding: "4px 0",
+              }}
+            >
+              {submitting ? "Submitting..." : "Submit 1 of 4 picks"}
+            </button>
+          </div>
+        )}
+        {canSubmit && completedCount >= 2 && completedCount <= 3 && (
+          <button
+            onClick={handleSubmit}
+            disabled={submitting}
+            style={{
+              width: "100%", padding: "16px",
+              background: submitting ? "#93C5FD" : "#6366F1", color: "#fff",
+              border: "none", borderRadius: 14,
+              fontSize: 17, fontWeight: 700,
+              fontFamily: FONT, cursor: submitting ? "default" : "pointer",
+              marginTop: 8,
+              boxShadow: "0 4px 16px rgba(99,102,241,0.20)",
+            }}
+          >
+            {submitting ? "Submitting..." : `Submit ${completedCount} of 4`}
+          </button>
+        )}
+        {canSubmit && completedCount === 4 && (
           <button
             onClick={handleSubmit}
             disabled={submitting}
@@ -1020,7 +1061,7 @@ export default function App() {
               boxShadow: "0 4px 16px rgba(37,99,235,0.25)",
             }}
           >
-            {submitting ? "Submitting..." : completedCount === 4 ? "Submit" : `Submit ${completedCount} of 4`}
+            {submitting ? "Submitting..." : "Submit"}
           </button>
         )}
 
