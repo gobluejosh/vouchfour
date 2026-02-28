@@ -74,7 +74,7 @@ function SuggestionChips({ items, onSelect, loading, show }) {
           {[0, 1, 2].map((i) => (
             <div key={i} style={{
               height: 58, borderRadius: 12,
-              background: "linear-gradient(90deg, #eef0f3 25%, #e6e8ec 50%, #eef0f3 75%)",
+              background: "linear-gradient(90deg, #c8d4e8 25%, #bfcade 50%, #c8d4e8 75%)",
               backgroundSize: "200% 100%",
               animation: `shimmer 1.2s ${i * 0.15}s infinite`,
             }} />
@@ -643,12 +643,12 @@ export default function HomePage() {
 
   return (
     <div style={{
-      minHeight: "100vh", background: "#EBEDF0", fontFamily: FONT,
+      minHeight: "100vh", background: "#000000", fontFamily: FONT,
       display: "flex", justifyContent: "center",
     }}>
       <div style={{
         width: "100%", maxWidth: 900, minHeight: "100vh",
-        background: "linear-gradient(135deg, #F4F7FB 0%, #F9F7F4 100%)", padding: "28px 16px 120px",
+        background: "linear-gradient(135deg, #CFDCF0 0%, #E2D8F0 100%)", padding: "28px 16px 120px",
       }}>
         {/* Header */}
         <div style={{ padding: "0 4px", marginBottom: 40 }}>
