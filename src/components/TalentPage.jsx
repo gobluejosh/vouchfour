@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { capture, identify } from "../lib/posthog.js";
+import { gradientForName, initialsForName } from "../lib/avatar.js";
 
 const C = {
   ink: "#1C1917",
@@ -27,15 +28,15 @@ const CROSS_FUNCTION_COLORS = {
 };
 
 function Avatar({ name, size = 38 }) {
-  const initials = name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
   return (
     <div style={{
-      width: size, height: size, borderRadius: "50%",
-      background: C.accent, color: "#fff",
+      width: size, height: size, borderRadius: size * 0.26,
+      background: gradientForName(name), color: "#fff",
       display: "flex", alignItems: "center", justifyContent: "center",
       fontSize: size * 0.36, fontWeight: 700, fontFamily: FONT,
-      flexShrink: 0,
-    }}>{initials}</div>
+      flexShrink: 0, textShadow: "0 1px 2px rgba(0,0,0,0.15)",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+    }}>{initialsForName(name)}</div>
   );
 }
 

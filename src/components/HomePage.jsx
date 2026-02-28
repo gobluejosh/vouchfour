@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { gradientForName, initialsForName } from "../lib/avatar.js";
 
 // ─── LinkedIn Search via backend ────────────────────────────────────────────
 async function fetchLinkedInProfiles(name) {
@@ -505,7 +506,6 @@ const editBtnStyle = {
 
 function UserCard({ user, slug }) {
   const firstName = user.name.split(" ")[0];
-  const initials = user.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
 
   return (
     <div style={{
@@ -514,12 +514,14 @@ function UserCard({ user, slug }) {
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <div style={{
-          width: 42, height: 42, borderRadius: "50%",
-          background: C.accent, color: "#fff",
+          width: 42, height: 42, borderRadius: 11,
+          background: gradientForName(user.name), color: "#fff",
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 15, fontWeight: 700, fontFamily: FONT, flexShrink: 0,
+          textShadow: "0 1px 2px rgba(0,0,0,0.15)",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
         }}>
-          {initials}
+          {initialsForName(user.name)}
         </div>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.ink, fontFamily: FONT }}>

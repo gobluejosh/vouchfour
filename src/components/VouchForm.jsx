@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { capture, identify } from "../lib/posthog.js";
+import { gradientForName, initialsForName } from "../lib/avatar.js";
 
 // ─── Email Finder via backend ────────────────────────────────────────────────
 async function fetchEmailSuggestions(fullName, linkedinUrl, linkedinDetail, { braveOnly = false } = {}) {
@@ -57,15 +58,15 @@ function useDebounce(value, ms) {
 }
 
 function Avatar({ name, size = 36 }) {
-  const initials = name.split(" ").map(w => w[0]).slice(0,2).join("").toUpperCase();
   return (
     <div style={{
-      width: size, height: size, borderRadius: "50%",
-      background: C.accent, color: "#fff",
+      width: size, height: size, borderRadius: size * 0.26,
+      background: gradientForName(name), color: "#fff",
       display: "flex", alignItems: "center", justifyContent: "center",
       fontSize: size * 0.36, fontWeight: 700, fontFamily: FONT,
-      flexShrink: 0,
-    }}>{initials}</div>
+      flexShrink: 0, textShadow: "0 1px 2px rgba(0,0,0,0.15)",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+    }}>{initialsForName(name)}</div>
   );
 }
 
@@ -826,12 +827,14 @@ export default function App() {
                   borderTop: i > 0 ? `1px solid ${C.border}` : "none",
                 }}>
                   <div style={{
-                    width: 34, height: 34, borderRadius: "50%",
-                    background: C.accent, color: "#fff",
+                    width: 34, height: 34, borderRadius: 9,
+                    background: gradientForName(c.name), color: "#fff",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     fontSize: 12, fontWeight: 700, fontFamily: FONT, flexShrink: 0,
+                    textShadow: "0 1px 2px rgba(0,0,0,0.15)",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
                   }}>
-                    {c.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                    {initialsForName(c.name)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{c.name}</div>
