@@ -738,7 +738,7 @@ export default function HomePage() {
                     autoComplete="off"
                     style={{
                       flex: 1, padding: "10px 12px",
-                      fontSize: 14, border: `1.5px solid ${C.border}`,
+                      fontSize: 16, border: `1.5px solid ${C.border}`,
                       borderRadius: 8, fontFamily: FONT,
                       color: C.ink, background: "#fff",
                       WebkitAppearance: "none",
