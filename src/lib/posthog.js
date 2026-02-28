@@ -1,6 +1,8 @@
 import posthog from 'posthog-js'
 
-const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY || ''
+// PostHog project API keys are public by design (shipped in client JS).
+// Hardcoded to avoid build-time env var issues across deploy platforms.
+const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY || 'phc_l2DESgKoUOryAbVwFwh182wEQQmNJToPbn4SgwxVsE6'
 const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST || 'https://us.i.posthog.com'
 
 let initialized = false
