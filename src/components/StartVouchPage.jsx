@@ -126,7 +126,7 @@ export default function StartVouchPage() {
       <div style={{
         width: "100%", maxWidth: 900,
         background: "linear-gradient(135deg, #EECFD8 0%, #DAE0D2 100%)", padding: "28px 16px 120px",
-        borderRadius: 24, margin: "16px 0",
+        borderRadius: 24, margin: "8px 0 16px",
       }}>
         {/* Header */}
         <div style={{ padding: "0 4px", marginBottom: 40 }}>
