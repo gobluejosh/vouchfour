@@ -149,31 +149,6 @@ async function sendEmail({ to, subject, html, personId, templateKey }) {
   return data?.id
 }
 
-// ─── Template 4: Please Vouch (sent to connectors after network form) ─────────
-
-export async function sendPleaseVouchEmail(connector, inviterFirstName, vouchToken) {
-  if (await isUnsubscribed(connector.id)) {
-    console.log(`[Email] Skipping please_vouch — ${connector.display_name} is unsubscribed`)
-    return null
-  }
-
-  const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}`
-  const firstName = connector.display_name.split(' ')[0]
-
-  const template = await loadTemplate('please_vouch')
-  const vars = { firstName, inviterFirstName, vouchUrl }
-
-  const subject = applyVariables(template.subject, vars)
-  const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml, connector.id)
-
-  const recipient = await getRecipient(connector.email)
-  const id = await sendEmail({ to: recipient, subject, html, personId: connector.id, templateKey: 'please_vouch' })
-
-  console.log(`[Email] Sent please_vouch to ${connector.display_name} (${id})`)
-  return id
-}
-
 // ─── Template 1: Talent Network Ready ─────────────────────────────────────────
 
 export async function sendTalentReadyEmail(person, slug, loginToken, jobFunctionName = '', practitionerLabel = '') {
@@ -220,31 +195,6 @@ export async function sendLoginLinkEmail(person, slug, loginToken) {
   return id
 }
 
-// ─── Template 3: You Were Vouched ────────────────────────────────────────────
-
-export async function sendYouWereVouchedEmail(talentPerson, vouchToken, voucherName) {
-  if (await isUnsubscribed(talentPerson.id)) {
-    console.log(`[Email] Skipping you_were_vouched — ${talentPerson.display_name} is unsubscribed`)
-    return null
-  }
-
-  const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}`
-  const firstName = talentPerson.display_name.split(' ')[0]
-
-  const template = await loadTemplate('you_were_vouched')
-  const vars = { firstName, voucherName, vouchUrl }
-
-  const subject = applyVariables(template.subject, vars)
-  const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml, talentPerson.id)
-
-  const recipient = await getRecipient(talentPerson.email)
-  const id = await sendEmail({ to: recipient, subject, html, personId: talentPerson.id, templateKey: 'you_were_vouched' })
-
-  console.log(`[Email] Sent you_were_vouched to ${talentPerson.display_name} (${id})`)
-  return id
-}
-
 // ─── Template 7: Vouch Invite (sent to vouchees in the new chain model) ──────
 
 export async function sendVouchInviteEmail(vouchee, inviterFullName, jobFunction, vouchToken) {
@@ -283,68 +233,3 @@ export async function sendVouchInviteEmail(vouchee, inviterFullName, jobFunction
   return id
 }
 
-// ─── Template 5: Role Network (sent to recommenders for role-specific vouch) ─
-
-export async function sendRoleNetworkEmail(connector, inviterFirstName, role, vouchToken) {
-  if (await isUnsubscribed(connector.id)) {
-    console.log(`[Email] Skipping role_network — ${connector.display_name} is unsubscribed`)
-    return null
-  }
-
-  const vouchUrl = `${BASE_URL}/vouch?token=${vouchToken}&role=${role.slug}`
-  const firstName = connector.display_name.split(' ')[0]
-
-  const specialSkillsHtml = role.special_skills
-    ? `<div style="font-size:13px;color:#78716C;margin-top:4px;">Skills: ${role.special_skills}</div>`
-    : ''
-
-  const template = await loadTemplate('role_network')
-  const vars = {
-    firstName,
-    inviterFirstName,
-    jobFunction: role.job_function,
-    level: role.level,
-    specialSkillsHtml,
-    vouchUrl,
-  }
-
-  const subject = applyVariables(template.subject, vars)
-  const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml, connector.id)
-
-  const recipient = await getRecipient(connector.email)
-  const id = await sendEmail({ to: recipient, subject, html, personId: connector.id, templateKey: 'role_network' })
-
-  console.log(`[Email] Sent role_network to ${connector.display_name} (${id})`)
-  return id
-}
-
-// ─── Template 6: Role Ready (sent to creator when role threshold met) ────────
-
-export async function sendRoleReadyEmail(person, role, loginToken) {
-  if (await isUnsubscribed(person.id)) {
-    console.log(`[Email] Skipping role_ready — ${person.display_name} is unsubscribed`)
-    return null
-  }
-
-  const roleUrl = `${BASE_URL}/role/${role.slug}?token=${loginToken}`
-  const firstName = person.display_name.split(' ')[0]
-
-  const template = await loadTemplate('role_ready')
-  const vars = {
-    firstName,
-    jobFunction: role.job_function,
-    level: role.level,
-    roleUrl,
-  }
-
-  const subject = applyVariables(template.subject, vars)
-  const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml, person.id)
-
-  const recipient = await getRecipient(person.email)
-  const id = await sendEmail({ to: recipient, subject, html, personId: person.id, templateKey: 'role_ready' })
-
-  console.log(`[Email] Sent role_ready to ${person.display_name} for role ${role.slug} (${id})`)
-  return id
-}
