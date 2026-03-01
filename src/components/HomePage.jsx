@@ -696,7 +696,7 @@ export default function HomePage() {
           )}
         </div>
         <div style={{ fontSize: 15, color: "#374151", lineHeight: 1.6, marginLeft: 10 }}>
-          Find the best talent through people you trust.
+          Not Connections. Trusted Recommendations.
         </div>
       </div>
 
@@ -826,8 +826,8 @@ export default function HomePage() {
               />
               <StepRow
                 number="3"
-                title="Discover top talent"
-                description="See who the people you know and trust think are the best."
+                title="Access expertise. Find top talent."
+                description="Discover people your trusted colleagues say are best at what they do."
               />
             </div>
           </div>
