@@ -18,7 +18,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 // ─── IP rate limiting (in-memory) ──────────────────────────────────
 const ipRequestCounts = new Map() // ip -> { count, resetAt }
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000 // 15 minutes
-const RATE_LIMIT_MAX = 10 // max email-triggering requests per window per IP
+const RATE_LIMIT_MAX = 25 // max email-triggering requests per window per IP
 
 function isRateLimited(req) {
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress
