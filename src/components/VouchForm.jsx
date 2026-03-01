@@ -924,10 +924,10 @@ export default function App() {
           </div>
           <p style={{ margin: "12px 0 0", fontSize: 17, color: C.ink, fontWeight: 600, lineHeight: 1.45, paddingLeft: 10 }}>
             {isUpdate
-              ? `Update your top 4${invitee?.jobFunction ? ` ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name}` : ""}`
+              ? `Update your top${invitee?.jobFunction ? ` ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name}` : ""}`
               : invitee?.jobFunction
-                ? `Who are the 4 best ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} you've ever worked with?`
-                : "Who are 4 of the highest performers you've worked with in your career?"}
+                ? `Who are the best ${invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} you've ever worked with?`
+                : "Who are the highest performers you've worked with in your career?"}
           </p>
         </div>
         {/* Hidden input to bridge focus on mobile Safari between form saves */}
