@@ -827,7 +827,7 @@ export default function HomePage() {
               <StepRow
                 number="3"
                 title="Access expertise. Find top talent."
-                description="Discover people your trusted colleagues say are best at what they do."
+                description="Discover the people your trusted colleagues say are the best at what they do."
               />
             </div>
           </div>
