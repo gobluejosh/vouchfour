@@ -23,21 +23,13 @@ const DEGREE_COLORS = {
   3: { bg: "#F5F3FF", border: "#C4B5FD", badge: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
 };
 
-const CROSS_FUNCTION_COLORS = {
-  bg: "#FFF1EE", border: "#FDBA9E", badge: "linear-gradient(135deg, #FB923C, #C2410C)",
-};
-
 const DEGREE_AVATAR_GRADIENTS = {
   1: "linear-gradient(135deg, #6366F1, #4F46E5)", // indigo
   2: "linear-gradient(135deg, #34D399, #16A34A)", // emerald
   3: "linear-gradient(135deg, #A78BFA, #7C3AED)", // violet
 };
-const CROSS_FUNCTION_AVATAR_GRADIENT = "linear-gradient(135deg, #FB923C, #C2410C)"; // warm orange
-
-function Avatar({ name, size = 38, degree, isCrossFunction }) {
-  const bg = isCrossFunction
-    ? CROSS_FUNCTION_AVATAR_GRADIENT
-    : (degree && DEGREE_AVATAR_GRADIENTS[degree]) || gradientForName(name);
+function Avatar({ name, size = 38, degree }) {
+  const bg = (degree && DEGREE_AVATAR_GRADIENTS[degree]) || gradientForName(name);
   return (
     <div style={{
       width: size, height: size, borderRadius: size * 0.26,
@@ -61,9 +53,7 @@ function ExternalLinkIcon() {
 }
 
 function TalentCard({ talent }) {
-  const colors = talent.is_cross_function
-    ? CROSS_FUNCTION_COLORS
-    : (DEGREE_COLORS[talent.degree] || DEGREE_COLORS[3]);
+  const colors = DEGREE_COLORS[talent.degree] || DEGREE_COLORS[3];
   const count = Number(talent.recommendation_count);
   const recText = count === 1
     ? "Recommended by 1 person in your network"
@@ -83,7 +73,7 @@ function TalentCard({ talent }) {
         transition: "box-shadow 0.15s",
       }}
     >
-      <Avatar name={talent.display_name} size={38} degree={talent.degree} isCrossFunction={talent.is_cross_function} />
+      <Avatar name={talent.display_name} size={38} degree={talent.degree} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontWeight: 600, fontSize: 15, color: C.ink, fontFamily: FONT }}>{talent.display_name}</span>
