@@ -87,8 +87,9 @@ export async function processNudges() {
       ORDER BY vi.created_at ASC
     `, [nudge1Days])
 
-    // 4. Cache network sizes per inviter
+    // 4. Cache network sizes per inviter, and function-specific rec counts
     const networkSizeCache = new Map()
+    const recCountCache = new Map() // key: `${inviterId}:${jobFunctionId}`
 
     async function getNetworkSize(inviterId) {
       if (networkSizeCache.has(inviterId)) return networkSizeCache.get(inviterId)
@@ -103,6 +104,24 @@ export async function processNudges() {
       } catch (err) {
         console.error(`[Nudge] Failed to get network size for inviter ${inviterId}:`, err.message)
         networkSizeCache.set(inviterId, 0)
+        return 0
+      }
+    }
+
+    async function getRecCount(inviterId, jobFunctionId) {
+      const key = `${inviterId}:${jobFunctionId}`
+      if (recCountCache.has(key)) return recCountCache.get(key)
+      try {
+        const recs = await getTalentRecommendations(inviterId, jobFunctionId, {
+          crossFunctionDiscount,
+          siblingCoefficient,
+        })
+        const count = recs.length
+        recCountCache.set(key, count)
+        return count
+      } catch (err) {
+        console.error(`[Nudge] Failed to get rec count for inviter ${inviterId}, fn ${jobFunctionId}:`, err.message)
+        recCountCache.set(key, 0)
         return 0
       }
     }
@@ -150,6 +169,7 @@ export async function processNudges() {
         const inviterFirstName = row.inviter_name.split(' ')[0]
         const practitionerLabel = row.jf_practitioner_label || row.jf_name
         const vouchUrl = `${BASE_URL}/vouch?token=${row.token}`
+        const recommendationCount = await getRecCount(row.inviter_id, row.job_function_id)
 
         const vars = {
           firstName,
@@ -160,6 +180,7 @@ export async function processNudges() {
           practitionerLabel,
           vouchUrl,
           networkSize: String(networkSize),
+          recommendationCount: String(recommendationCount),
           daysSinceInvite: String(daysSince),
         }
 
