@@ -51,7 +51,7 @@ export async function processNudges() {
     //    - status = pending, not self-invite, invitee has email, not unsubscribed
     //    - invitee has NOT already vouched (not an active user)
     //    - old enough for at least nudge_1
-    //    - includes subselects for whether nudge_1/nudge_2 already sent
+    //    - dedup: checks if this PERSON has ever received nudge_1/nudge_2 (any invite)
     const eligibleRes = await query(`
       SELECT
         vi.id AS invite_id,
@@ -68,12 +68,10 @@ export async function processNudges() {
         jf.practitioner_label AS jf_practitioner_label,
         (SELECT COUNT(*) FROM sent_emails se
          WHERE se.recipient_id = vi.invitee_id
-           AND se.email_type = 'nudge_1'
-           AND se.reference_id = vi.id) AS nudge_1_sent_count,
+           AND se.email_type = 'nudge_1') AS nudge_1_sent_count,
         (SELECT COUNT(*) FROM sent_emails se
          WHERE se.recipient_id = vi.invitee_id
-           AND se.email_type = 'nudge_2'
-           AND se.reference_id = vi.id) AS nudge_2_sent_count
+           AND se.email_type = 'nudge_2') AS nudge_2_sent_count
       FROM vouch_invites vi
       JOIN people p_invitee ON p_invitee.id = vi.invitee_id
       JOIN people p_inviter ON p_inviter.id = vi.inviter_id
@@ -126,13 +124,16 @@ export async function processNudges() {
       }
     }
 
-    // 5. Process each eligible invite
+    // 5. Group eligible invites by invitee — each person gets at most one nudge.
+    //    For each invitee, determine the nudge type, then pick the invite whose
+    //    inviter has the largest network (best social proof).
+    const inviteeGroups = new Map() // invitee_id -> { nudgeType, rows: [...] }
+
     for (const row of eligibleRes.rows) {
-      const daysSince = Number(row.days_since_invite)
       const nudge1AlreadySent = Number(row.nudge_1_sent_count) > 0
       const nudge2AlreadySent = Number(row.nudge_2_sent_count) > 0
+      const daysSince = Number(row.days_since_invite)
 
-      // Determine which nudge to send
       let nudgeType = null
       if (daysSince >= nudge2Days && nudge1AlreadySent && !nudge2AlreadySent) {
         nudgeType = 'nudge_2'
@@ -145,10 +146,33 @@ export async function processNudges() {
         continue
       }
 
+      const existing = inviteeGroups.get(row.invitee_id)
+      if (!existing) {
+        inviteeGroups.set(row.invitee_id, { nudgeType, rows: [row] })
+      } else if (existing.nudgeType === nudgeType) {
+        // Same nudge type — add row as candidate (will pick best inviter later)
+        existing.rows.push(row)
+      } else {
+        // Different nudge type across invites for same person — skip the lower one
+        results.skipped++
+      }
+    }
+
+    // 6. For each invitee, pick the invite with the largest inviter network and send
+    for (const [inviteeId, { nudgeType, rows }] of inviteeGroups) {
       try {
-        // Check network size (cached per inviter)
-        const networkSize = await getNetworkSize(row.inviter_id)
-        if (networkSize < networkThreshold) {
+        // Resolve network sizes for all candidate inviters, pick the largest
+        let bestRow = null
+        let bestNetworkSize = -1
+        for (const row of rows) {
+          const networkSize = await getNetworkSize(row.inviter_id)
+          if (networkSize > bestNetworkSize) {
+            bestNetworkSize = networkSize
+            bestRow = row
+          }
+        }
+
+        if (bestNetworkSize < networkThreshold) {
           results.skipped++
           continue
         }
@@ -157,14 +181,16 @@ export async function processNudges() {
         const capRes = await query(
           `SELECT COUNT(*) AS cnt FROM sent_emails
            WHERE recipient_id = $1 AND sent_at > NOW() - INTERVAL '24 hours'`,
-          [row.invitee_id]
+          [inviteeId]
         )
         if (Number(capRes.rows[0].cnt) >= 3) {
           results.skipped++
           continue
         }
 
-        // Build template variables
+        // Build template variables using the best inviter's invite
+        const row = bestRow
+        const daysSince = Number(row.days_since_invite)
         const firstName = row.invitee_name.split(' ')[0]
         const inviterFirstName = row.inviter_name.split(' ')[0]
         const practitionerLabel = row.jf_practitioner_label || row.jf_name
@@ -179,7 +205,7 @@ export async function processNudges() {
           jobFunctionShort: practitionerLabel,
           practitionerLabel,
           vouchUrl,
-          networkSize: String(networkSize),
+          networkSize: String(bestNetworkSize),
           recommendationCount: String(recommendationCount),
           daysSinceInvite: String(daysSince),
         }
@@ -199,7 +225,7 @@ export async function processNudges() {
           templateKey: nudgeType,
         })
 
-        // Record in sent_emails (ON CONFLICT prevents duplicates)
+        // Record in sent_emails (unique index prevents duplicates per recipient)
         await query(
           `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
            VALUES ($1, $2, $3, $4)
@@ -207,12 +233,12 @@ export async function processNudges() {
           [row.invitee_id, nudgeType, row.invite_id, resendId]
         )
 
-        console.log(`[Nudge] Sent ${nudgeType} to ${row.invitee_name} (invite ${row.invite_id}, network=${networkSize})`)
+        console.log(`[Nudge] Sent ${nudgeType} to ${row.invitee_name} via ${row.inviter_name} (invite ${row.invite_id}, network=${bestNetworkSize})`)
         trackEvent(String(row.invitee_id), 'nudge_sent', {
           nudge_type: nudgeType,
           invite_id: row.invite_id,
           inviter_id: row.inviter_id,
-          network_size: networkSize,
+          network_size: bestNetworkSize,
           days_since_invite: daysSince,
         })
 
@@ -220,8 +246,8 @@ export async function processNudges() {
         else results.nudge_2_sent++
 
       } catch (err) {
-        console.error(`[Nudge] Error processing invite ${row.invite_id}:`, err.message)
-        results.errors.push({ invite_id: row.invite_id, error: err.message })
+        console.error(`[Nudge] Error processing nudge for invitee ${inviteeId}:`, err.message)
+        results.errors.push({ invitee_id: inviteeId, error: err.message })
       }
     }
   } catch (err) {
