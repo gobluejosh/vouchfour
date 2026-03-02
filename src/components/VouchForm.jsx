@@ -1100,7 +1100,10 @@ export default function App() {
             Let's Build Something Better, Together
           </div>
           <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
-            I find LinkedIn to be both indispensable and disappointing. It was originally meant to map trusted professional relationships, but most of us now have hundreds or thousands of connections — many of whom we barely know, if at all. I suspect I am not alone in regularly finding myself asking "do you actually know this person?"… let alone, "do you think highly of this person?" While for LinkedIn's business, I can of course understand the benefits of tons of connections and a constant stream of humble brag posts, personally, I would really benefit from a tool which makes discovery of and access to a professional network with reliable and consistent quality and trust. We can build that, together, here.
+            I find LinkedIn to be both indispensable and disappointing. It was originally meant to map trusted professional relationships, but most of us now have thousands of connections — many of whom we barely even know.
+          </div>
+          <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT, marginTop: 10 }}>
+            I know I would really benefit from a tool which facilitates a path to the most exceptional, highly recommended, and trusted people one or two hops away in my professional network — without the noise and constant stream of humblebrag posts. If that appeals to you as well, we can build that, together, here.
           </div>
         </div>
 
