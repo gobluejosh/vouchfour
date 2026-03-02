@@ -868,24 +868,8 @@ export default function App() {
               ))}
             </div>
 
-            <div style={{
-              marginTop: 32, padding: "20px 22px",
-              background: "linear-gradient(135deg, #FDE6D0 0%, #D4F0E0 100%)",
-              borderRadius: 14, border: "1px solid rgba(255,255,255,0.4)",
-            }}>
-              <div style={{
-                fontSize: 14, fontWeight: 700, color: C.ink,
-                marginBottom: 10, fontFamily: FONT,
-              }}>
-                Let's Build Something Better, Together
-              </div>
-              <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
-                I find LinkedIn to be both indispensable and disappointing. It was originally meant to map trusted professional relationships, but most of us now have hundreds or thousands of connections — many of whom we barely know, if at all. I suspect I am not alone in regularly finding myself asking "do you actually know this person?"… let alone, "do you think highly of this person?" While for LinkedIn's business, I can of course understand the benefits of tons of connections and a constant stream of humble brag posts, personally, I would really benefit from a tool which makes discovery of and access to a professional network with reliable and consistent quality and trust. We can build that, together, here.
-              </div>
-            </div>
-
             <p style={{
-              marginTop: 24, fontSize: 11, color: "#7C6FA0",
+              marginTop: 40, fontSize: 11, color: "#7C6FA0",
               lineHeight: 1.5, textAlign: "center", padding: "0 12px",
             }}>
               This tool was built by{" "}
