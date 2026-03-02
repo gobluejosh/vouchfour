@@ -9,6 +9,7 @@ import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations } from './lib/graph.js'
 import { sendVouchInviteEmail, sendLoginLinkEmail } from './lib/email.js'
 import { checkAndNotifyReadiness } from './lib/readiness.js'
+import { processNudges } from './lib/nudge.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
 
 const PORT = process.env.PORT || 3001
@@ -1448,6 +1449,22 @@ Rules:
     return
   }
 
+  // ─── Admin: send nudges ─────────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/admin/send-nudges') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const results = await processNudges()
+      console.log('[Admin] Nudge run results:', results)
+      res.writeHead(200)
+      res.end(JSON.stringify(results))
+    } catch (err) {
+      console.error('[/api/admin/send-nudges error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Request login (magic link) ──────────────────────────────────
   if (req.method === 'POST' && req.url === '/api/request-login') {
     if (isRateLimited(req)) {
@@ -1637,6 +1654,17 @@ Rules:
 server.listen(PORT, () => {
   console.log(`API server running on http://localhost:${PORT}`)
 })
+
+// ─── Auto-run nudges every 6 hours ───────────────────────────────
+setInterval(async () => {
+  console.log('[Nudge] Starting scheduled nudge run...')
+  try {
+    const results = await processNudges()
+    console.log('[Nudge] Scheduled run complete:', results)
+  } catch (err) {
+    console.error('[Nudge] Scheduled run failed:', err.message)
+  }
+}, 6 * 60 * 60 * 1000)
 
 // Flush PostHog events on shutdown
 process.on('SIGTERM', async () => {

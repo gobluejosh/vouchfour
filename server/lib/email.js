@@ -27,7 +27,7 @@ function unsubscribeUrl(personId) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function getRecipient(intendedEmail) {
+export async function getRecipient(intendedEmail) {
   try {
     const result = await query(
       `SELECT value FROM app_settings WHERE key = 'email_test_mode'`
@@ -41,7 +41,7 @@ async function getRecipient(intendedEmail) {
   return intendedEmail
 }
 
-async function isUnsubscribed(personId) {
+export async function isUnsubscribed(personId) {
   if (!personId) return false
   const result = await query(
     'SELECT unsubscribed_at FROM people WHERE id = $1',
@@ -50,7 +50,7 @@ async function isUnsubscribed(personId) {
   return !!result.rows[0]?.unsubscribed_at
 }
 
-async function loadTemplate(templateKey) {
+export async function loadTemplate(templateKey) {
   const result = await query(
     'SELECT subject, body_html FROM email_templates WHERE template_key = $1',
     [templateKey]
@@ -61,7 +61,7 @@ async function loadTemplate(templateKey) {
   return result.rows[0]
 }
 
-function applyVariables(text, vars) {
+export function applyVariables(text, vars) {
   return text.replace(/\{\{(\w+)\}\}/g, (match, key) => {
     return vars[key] !== undefined ? vars[key] : match
   })
@@ -69,7 +69,7 @@ function applyVariables(text, vars) {
 
 // ─── Shared email wrapper ─────────────────────────────────────────────────────
 
-function emailLayout(bodyHtml, personId) {
+export function emailLayout(bodyHtml, personId) {
   const unsubLink = personId
     ? `<a href="${unsubscribeUrl(personId)}" style="color:#A8A29E;text-decoration:underline;">Unsubscribe</a>`
     : ''
@@ -121,7 +121,7 @@ function emailLayout(bodyHtml, personId) {
 
 // ─── Send helper (adds List-Unsubscribe headers) ─────────────────────────────
 
-async function sendEmail({ to, subject, html, personId, templateKey }) {
+export async function sendEmail({ to, subject, html, personId, templateKey }) {
   const headers = {}
   if (personId) {
     const unsub = unsubscribeUrl(personId)
