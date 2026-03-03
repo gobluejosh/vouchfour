@@ -259,3 +259,201 @@ export async function processNudges() {
 
   return results
 }
+
+/**
+ * Process voucher nudge emails — remind vouchers to personally nudge their
+ * picks who haven't responded yet.
+ *
+ * For each voucher+function combo where at least one invitee is still pending
+ * after N days, sends a single email with the status of each pick (completed
+ * or pending) and the pending invitees' vouch URLs + mailto: links.
+ *
+ * One voucher_nudge per voucher per job function, ever.
+ *
+ * @returns {{ sent: number, skipped: number, errors: Array }}
+ */
+export async function processVoucherNudges() {
+  const results = { sent: 0, skipped: 0, errors: [] }
+
+  try {
+    // 1. Load delay setting
+    const settingsRes = await query(
+      `SELECT value FROM app_settings WHERE key = 'voucher_nudge_delay_days'`
+    )
+    const delayDays = Number(settingsRes.rows[0]?.value) || 7
+
+    // 2. Find vouchers with at least one pending invitee past the delay threshold,
+    //    who haven't already received a voucher_nudge for that function.
+    //    Groups by voucher + job function.
+    const vouchersRes = await query(`
+      SELECT
+        vi.inviter_id,
+        vi.job_function_id,
+        p.display_name AS voucher_name,
+        p.email AS voucher_email,
+        jf.name AS jf_name,
+        jf.practitioner_label,
+        MIN(vi.created_at) AS earliest_invite
+      FROM vouch_invites vi
+      JOIN people p ON p.id = vi.inviter_id
+      JOIN job_functions jf ON jf.id = vi.job_function_id
+      WHERE vi.inviter_id != vi.invitee_id
+        AND p.email IS NOT NULL
+        AND p.unsubscribed_at IS NULL
+        -- At least one pending invitee old enough
+        AND EXISTS (
+          SELECT 1 FROM vouch_invites vi2
+          WHERE vi2.inviter_id = vi.inviter_id
+            AND vi2.job_function_id = vi.job_function_id
+            AND vi2.inviter_id != vi2.invitee_id
+            AND vi2.status = 'pending'
+            AND EXTRACT(EPOCH FROM (NOW() - vi2.created_at)) / 86400.0 >= $1
+        )
+        -- Haven't already received voucher_nudge for this function
+        AND NOT EXISTS (
+          SELECT 1 FROM sent_emails se
+          WHERE se.recipient_id = vi.inviter_id
+            AND se.email_type = 'voucher_nudge'
+            AND se.reference_id = vi.job_function_id
+        )
+      GROUP BY vi.inviter_id, vi.job_function_id, p.display_name, p.email, jf.name, jf.practitioner_label
+      ORDER BY earliest_invite ASC
+    `, [delayDays])
+
+    // 3. For each voucher+function, get all their invitees and build the status email
+    for (const voucher of vouchersRes.rows) {
+      try {
+        // Check daily email cap
+        const capRes = await query(
+          `SELECT COUNT(*) AS cnt FROM sent_emails
+           WHERE recipient_id = $1 AND sent_at > NOW() - INTERVAL '24 hours'`,
+          [voucher.inviter_id]
+        )
+        if (Number(capRes.rows[0].cnt) >= 3) {
+          results.skipped++
+          continue
+        }
+
+        // Get all invitees for this voucher + function
+        const inviteesRes = await query(`
+          SELECT
+            vi.id AS invite_id,
+            vi.token,
+            vi.status,
+            vi.invitee_id,
+            p.display_name AS invitee_name,
+            p.email AS invitee_email
+          FROM vouch_invites vi
+          JOIN people p ON p.id = vi.invitee_id
+          WHERE vi.inviter_id = $1
+            AND vi.job_function_id = $2
+            AND vi.inviter_id != vi.invitee_id
+          ORDER BY vi.created_at ASC
+        `, [voucher.inviter_id, voucher.job_function_id])
+
+        const invitees = inviteesRes.rows
+        const pending = invitees.filter(i => i.status === 'pending')
+        const completed = invitees.filter(i => i.status === 'completed')
+
+        if (pending.length === 0) {
+          results.skipped++
+          continue
+        }
+
+        // Build invitee status HTML
+        const statusRows = invitees.map(inv => {
+          if (inv.status === 'completed') {
+            return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F3F4F6;">
+              <span style="font-size:18px;">✅</span>
+              <div>
+                <div style="font-size:14px;font-weight:600;color:#1C1917;">${inv.invitee_name}</div>
+                <div style="font-size:12px;color:#16A34A;">Completed</div>
+              </div>
+            </div>`
+          }
+
+          const vouchUrl = `${BASE_URL}/vouch?token=${inv.token}`
+          const inviteeFirst = inv.invitee_name.split(' ')[0]
+          const mailtoSubject = encodeURIComponent(`Quick favor — VouchFour`)
+          const mailtoBody = encodeURIComponent(
+            `Hey ${inviteeFirst},\n\nI vouched for you on VouchFour as one of the best people I've worked with. It only takes a couple minutes — would mean a lot if you could share your picks too:\n\n${vouchUrl}\n\nThanks!`
+          )
+          const mailtoLink = `mailto:${inv.invitee_email}?subject=${mailtoSubject}&body=${mailtoBody}`
+
+          return `<div style="padding:10px 0;border-bottom:1px solid #F3F4F6;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:18px;">⏳</span>
+              <div>
+                <div style="font-size:14px;font-weight:600;color:#1C1917;">${inv.invitee_name}</div>
+                <div style="font-size:12px;color:#D97706;">Waiting on response</div>
+              </div>
+            </div>
+            <div style="margin:8px 0 0 28px;">
+              <a href="${mailtoLink}" style="display:inline-block;padding:6px 14px;background:#2563EB;color:#FFFFFF;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">Email ${inviteeFirst} a reminder</a>
+              <div style="margin-top:6px;font-size:11px;color:#9CA3AF;word-break:break-all;">
+                Or text them this link: ${vouchUrl}
+              </div>
+            </div>
+          </div>`
+        })
+
+        const inviteeStatusHtml = `<div style="border:1px solid #E5E7EB;border-radius:10px;padding:4px 14px;background:#FAFAF9;">${statusRows.join('')}</div>`
+
+        // Build template variables
+        const firstName = voucher.voucher_name.split(' ')[0]
+        const practitionerLabel = voucher.practitioner_label || voucher.jf_name
+
+        const vars = {
+          firstName,
+          fullName: voucher.voucher_name,
+          practitionerLabel,
+          jobFunction: voucher.jf_name,
+          pendingCount: String(pending.length),
+          totalCount: String(invitees.length),
+          completedCount: String(completed.length),
+          inviteeStatusHtml,
+        }
+
+        // Load template, apply vars, send
+        const template = await loadTemplate('voucher_nudge')
+        const subject = applyVariables(template.subject, vars)
+        const bodyHtml = applyVariables(template.body_html, vars)
+        const html = emailLayout(bodyHtml, voucher.inviter_id)
+        const recipient = await getRecipient(voucher.voucher_email)
+
+        const resendId = await sendEmail({
+          to: recipient,
+          subject,
+          html,
+          personId: voucher.inviter_id,
+          templateKey: 'voucher_nudge',
+        })
+
+        // Record — reference_id = job_function_id for per-function dedup
+        await query(
+          `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
+           VALUES ($1, 'voucher_nudge', $2, $3)
+           ON CONFLICT DO NOTHING`,
+          [voucher.inviter_id, voucher.job_function_id, resendId]
+        )
+
+        console.log(`[VoucherNudge] Sent to ${voucher.voucher_name} for ${practitionerLabel} (${pending.length}/${invitees.length} pending)`)
+        trackEvent(String(voucher.inviter_id), 'voucher_nudge_sent', {
+          job_function: voucher.jf_name,
+          pending_count: pending.length,
+          total_count: invitees.length,
+        })
+
+        results.sent++
+      } catch (err) {
+        console.error(`[VoucherNudge] Error for inviter ${voucher.inviter_id}:`, err.message)
+        results.errors.push({ inviter_id: voucher.inviter_id, error: err.message })
+      }
+    }
+  } catch (err) {
+    console.error('[VoucherNudge] Fatal error:', err.message)
+    results.errors.push({ error: err.message })
+  }
+
+  return results
+}

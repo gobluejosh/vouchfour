@@ -20,6 +20,7 @@ const TEMPLATE_LABELS = {
   vouch_invite: "Vouch Invite",
   nudge_1: "Nudge 1 (First Reminder)",
   nudge_2: "Nudge 2 (Final Reminder)",
+  voucher_nudge: "Voucher Nudge (Ask to Reach Out)",
   login_link: "Login Link",
   talent_ready: "Talent Ready",
   please_vouch: "Please Vouch (Legacy)",
@@ -330,6 +331,7 @@ export default function AdminPage() {
             nudge_1_delay_days: settings.nudge_1_delay_days,
             nudge_2_delay_days: settings.nudge_2_delay_days,
             nudge_network_threshold: settings.nudge_network_threshold,
+            voucher_nudge_delay_days: settings.voucher_nudge_delay_days,
           },
         }),
       });
@@ -605,6 +607,13 @@ export default function AdminPage() {
                   type="number"
                   value={settings.nudge_network_threshold || ""}
                   onChange={v => setSettings(s => ({ ...s, nudge_network_threshold: v }))}
+                />
+                <InputRow
+                  label="Voucher nudge delay (days)"
+                  description="Days after vouch submission before emailing the voucher to personally nudge their unresponsive picks"
+                  type="number"
+                  value={settings.voucher_nudge_delay_days || ""}
+                  onChange={v => setSettings(s => ({ ...s, voucher_nudge_delay_days: v }))}
                 />
                 <SaveButton onClick={saveSettings} saving={savingSettings} saved={savedSettings} />
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>

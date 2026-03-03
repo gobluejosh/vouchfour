@@ -9,7 +9,7 @@ import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations } from './lib/graph.js'
 import { sendVouchInviteEmail, sendLoginLinkEmail } from './lib/email.js'
 import { checkAndNotifyReadiness } from './lib/readiness.js'
-import { processNudges } from './lib/nudge.js'
+import { processNudges, processVoucherNudges } from './lib/nudge.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
 
 const PORT = process.env.PORT || 3001
@@ -1453,7 +1453,11 @@ Rules:
   if (req.method === 'POST' && req.url === '/api/admin/send-nudges') {
     if (!requireAdmin(req, res)) return
     try {
-      const results = await processNudges()
+      const [inviteeResults, voucherResults] = await Promise.all([
+        processNudges(),
+        processVoucherNudges(),
+      ])
+      const results = { invitee: inviteeResults, voucher: voucherResults }
       console.log('[Admin] Nudge run results:', results)
       res.writeHead(200)
       res.end(JSON.stringify(results))
@@ -1659,8 +1663,11 @@ server.listen(PORT, () => {
 setInterval(async () => {
   console.log('[Nudge] Starting scheduled nudge run...')
   try {
-    const results = await processNudges()
-    console.log('[Nudge] Scheduled run complete:', results)
+    const [inviteeResults, voucherResults] = await Promise.all([
+      processNudges(),
+      processVoucherNudges(),
+    ])
+    console.log('[Nudge] Scheduled run complete:', { invitee: inviteeResults, voucher: voucherResults })
   } catch (err) {
     console.error('[Nudge] Scheduled run failed:', err.message)
   }
