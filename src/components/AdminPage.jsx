@@ -616,38 +616,43 @@ export default function AdminPage() {
                   onChange={v => setSettings(s => ({ ...s, voucher_nudge_delay_days: v }))}
                 />
                 <SaveButton onClick={saveSettings} saving={savingSettings} saved={savedSettings} />
-                <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-                  <button
-                    onClick={sendNudges}
-                    disabled={sendingNudges}
-                    style={{
-                      padding: "10px 22px",
-                      background: sendingNudges ? "#FCD34D" : C.warn,
-                      color: "#fff", border: "none", borderRadius: 8,
-                      fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                      cursor: sendingNudges ? "default" : "pointer",
-                    }}
-                  >
-                    {sendingNudges ? "Sending..." : "Send Nudges Now"}
-                  </button>
-                  {nudgeResults && (
-                    <div style={{
-                      marginTop: 10, padding: "10px 14px",
-                      background: nudgeResults.errors?.length > 0 ? "#FEF2F2" : C.successLight,
-                      border: `1px solid ${nudgeResults.errors?.length > 0 ? "#FECACA" : "#BBF7D0"}`,
-                      borderRadius: 8, fontSize: 12, fontFamily: FONT, lineHeight: 1.6,
-                    }}>
-                      <div><strong>Nudge 1 sent:</strong> {nudgeResults.nudge_1_sent ?? 0}</div>
-                      <div><strong>Nudge 2 sent:</strong> {nudgeResults.nudge_2_sent ?? 0}</div>
-                      <div><strong>Skipped:</strong> {nudgeResults.skipped ?? 0}</div>
-                      {nudgeResults.errors?.length > 0 && (
-                        <div style={{ color: C.danger, marginTop: 4 }}>
-                          <strong>Errors:</strong> {nudgeResults.errors.map(e => e.error).join(", ")}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <details style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+                  <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: FONT, color: C.warn, userSelect: "none" }}>
+                    Manual Send
+                  </summary>
+                  <div style={{ marginTop: 12 }}>
+                    <button
+                      onClick={sendNudges}
+                      disabled={sendingNudges}
+                      style={{
+                        padding: "10px 22px",
+                        background: sendingNudges ? "#FCD34D" : C.warn,
+                        color: "#fff", border: "none", borderRadius: 8,
+                        fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                        cursor: sendingNudges ? "default" : "pointer",
+                      }}
+                    >
+                      {sendingNudges ? "Sending..." : "Send Nudges Now"}
+                    </button>
+                    {nudgeResults && (
+                      <div style={{
+                        marginTop: 10, padding: "10px 14px",
+                        background: nudgeResults.errors?.length > 0 ? "#FEF2F2" : C.successLight,
+                        border: `1px solid ${nudgeResults.errors?.length > 0 ? "#FECACA" : "#BBF7D0"}`,
+                        borderRadius: 8, fontSize: 12, fontFamily: FONT, lineHeight: 1.6,
+                      }}>
+                        <div><strong>Nudge 1 sent:</strong> {nudgeResults.nudge_1_sent ?? 0}</div>
+                        <div><strong>Nudge 2 sent:</strong> {nudgeResults.nudge_2_sent ?? 0}</div>
+                        <div><strong>Skipped:</strong> {nudgeResults.skipped ?? 0}</div>
+                        {nudgeResults.errors?.length > 0 && (
+                          <div style={{ color: C.danger, marginTop: 4 }}>
+                            <strong>Errors:</strong> {nudgeResults.errors.map(e => e.error).join(", ")}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </details>
               </Section>
 
               {/* Degree Coefficients */}

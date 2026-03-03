@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { query } from './db.js'
 import { getTalentRecommendations } from './graph.js'
 import { trackEvent } from './posthog.js'
@@ -264,11 +265,13 @@ export async function processNudges() {
  * Process voucher nudge emails — remind vouchers to personally nudge their
  * picks who haven't responded yet.
  *
- * For each voucher+function combo where at least one invitee is still pending
- * after N days, sends a single email with the status of each pick (completed
- * or pending) and the pending invitees' vouch URLs + mailto: links.
+ * Sends one batched email per voucher with:
+ *   - A network CTA (login token link to their talent page)
+ *   - Status of each pick (completed or pending), grouped by function
+ *   - Gmail-aware compose links (Gmail compose URL or mailto:) for pending picks
+ *   - Raw vouch URL for copy/paste texting
  *
- * One voucher_nudge per voucher per job function, ever.
+ * One voucher_nudge per person, ever.
  *
  * @returns {{ sent: number, skipped: number, errors: Array }}
  */
@@ -276,11 +279,17 @@ export async function processVoucherNudges() {
   const results = { sent: 0, skipped: 0, errors: [] }
 
   try {
-    // 1. Load delay setting
+    // 1. Load settings
     const settingsRes = await query(
-      `SELECT value FROM app_settings WHERE key = 'voucher_nudge_delay_days'`
+      `SELECT key, value FROM app_settings WHERE key IN (
+        'voucher_nudge_delay_days', 'cross_function_discount', 'sibling_coefficient'
+      )`
     )
-    const delayDays = Number(settingsRes.rows[0]?.value) || 7
+    const settings = {}
+    for (const row of settingsRes.rows) settings[row.key] = row.value
+    const delayDays = Number(settings.voucher_nudge_delay_days) || 7
+    const crossFunctionDiscount = Number(settings.cross_function_discount) ?? 0.5
+    const siblingCoefficient = Number(settings.sibling_coefficient) ?? 0.8
 
     // 2. Find vouchers who have at least one pending invitee past the delay,
     //    and haven't already received a voucher_nudge (one per person, ever).
@@ -288,7 +297,15 @@ export async function processVoucherNudges() {
       SELECT DISTINCT
         vi.inviter_id,
         p.display_name AS voucher_name,
-        p.email AS voucher_email
+        p.email AS voucher_email,
+        p.linkedin_url AS voucher_linkedin_url,
+        (SELECT split_part(p2.display_name, ' ', 1)
+         FROM vouch_invites vi2
+         JOIN people p2 ON p2.id = vi2.inviter_id
+         WHERE vi2.invitee_id = vi.inviter_id
+           AND vi2.inviter_id != vi2.invitee_id
+         ORDER BY vi2.created_at ASC
+         LIMIT 1) AS vouched_by_first_name
       FROM vouch_invites vi
       JOIN people p ON p.id = vi.inviter_id
       WHERE vi.inviter_id != vi.invitee_id
@@ -336,7 +353,7 @@ export async function processVoucherNudges() {
           JOIN job_functions jf ON jf.id = vi.job_function_id
           WHERE vi.inviter_id = $1
             AND vi.inviter_id != vi.invitee_id
-          ORDER BY jf.sort_order ASC, vi.created_at ASC
+          ORDER BY vi.created_at ASC
         `, [voucher.inviter_id])
 
         const invitees = inviteesRes.rows
@@ -347,89 +364,133 @@ export async function processVoucherNudges() {
           continue
         }
 
-        // Group invitees by job function
-        const fnGroups = new Map() // job_function_id -> { name, label, invitees: [] }
-        for (const inv of invitees) {
-          if (!fnGroups.has(inv.job_function_id)) {
-            fnGroups.set(inv.job_function_id, {
-              name: inv.jf_name,
-              label: inv.practitioner_label || inv.jf_name,
-              invitees: [],
-            })
-          }
-          fnGroups.get(inv.job_function_id).invitees.push(inv)
-        }
+        // Detect Gmail for compose links
+        const isGmail = voucher.voucher_email?.toLowerCase().endsWith('@gmail.com')
 
-        // Only include function sections that have at least one pending invitee
-        const sectionsWithPending = [...fnGroups.values()].filter(
-          fn => fn.invitees.some(i => i.status === 'pending')
-        )
+        // Compute counts early — needed for network CTA
+        const totalPending = pending.length
+        const totalInvitees = invitees.length
+        const completedCount = totalInvitees - totalPending
 
-        if (sectionsWithPending.length === 0) {
-          results.skipped++
-          continue
-        }
-
-        // Build HTML sections per function
-        const functionSections = sectionsWithPending.map(fn => {
-          const statusRows = fn.invitees.map(inv => {
-            if (inv.status === 'completed') {
-              return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F3F4F6;">
-                <span style="font-size:18px;">✅</span>
-                <div>
-                  <div style="font-size:14px;font-weight:600;color:#1C1917;">${inv.invitee_name}</div>
-                  <div style="font-size:12px;color:#16A34A;">Completed</div>
-                </div>
-              </div>`
-            }
-
-            const vouchUrl = `${BASE_URL}/vouch?token=${inv.token}`
-            const inviteeFirst = inv.invitee_name.split(' ')[0]
-            const mailtoSubject = encodeURIComponent(`Quick favor — VouchFour`)
-            const mailtoBody = encodeURIComponent(
-              `Hey ${inviteeFirst},\n\nI vouched for you on VouchFour as one of the best people I've worked with. It only takes a couple minutes — would mean a lot if you could share your picks too:\n\n${vouchUrl}\n\nThanks!`
-            )
-            const mailtoLink = `mailto:${inv.invitee_email}?subject=${mailtoSubject}&body=${mailtoBody}`
-
-            return `<div style="padding:10px 0;border-bottom:1px solid #F3F4F6;">
-              <div style="display:flex;align-items:center;gap:10px;">
-                <span style="font-size:18px;">⏳</span>
-                <div>
-                  <div style="font-size:14px;font-weight:600;color:#1C1917;">${inv.invitee_name}</div>
-                  <div style="font-size:12px;color:#D97706;">Waiting on response</div>
-                </div>
-              </div>
-              <div style="margin:8px 0 0 28px;">
-                <a href="${mailtoLink}" style="display:inline-block;padding:6px 14px;background:#2563EB;color:#FFFFFF;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">Email ${inviteeFirst} a reminder</a>
-                <div style="margin-top:6px;font-size:11px;color:#9CA3AF;word-break:break-all;">
-                  Or text them this link: ${vouchUrl}
-                </div>
-              </div>
-            </div>`
+        // Compute network size for CTA
+        let networkSize = 0
+        try {
+          const recs = await getTalentRecommendations(voucher.inviter_id, null, {
+            crossFunctionDiscount,
+            siblingCoefficient,
           })
+          networkSize = recs.length
+        } catch (err) {
+          console.error(`[VoucherNudge] Failed to get network size for ${voucher.voucher_name}:`, err.message)
+        }
 
-          // Only show function header if there are multiple function sections
-          const header = sectionsWithPending.length > 1
-            ? `<div style="font-size:13px;font-weight:700;color:#44403C;padding:10px 0 4px;text-transform:uppercase;letter-spacing:0.5px;">${fn.label}</div>`
+        // Generate login token + talent URL for network CTA
+        let talentUrl = ''
+        let networkCtaHtml = ''
+        const slug = voucher.voucher_linkedin_url?.split('/in/')[1]?.replace(/\/$/, '')
+        if (slug) {
+          const loginToken = crypto.randomUUID()
+          await query(`
+            INSERT INTO login_tokens (token, person_id, expires_at)
+            VALUES ($1, $2, NOW() + INTERVAL '30 days')
+          `, [loginToken, voucher.inviter_id])
+          talentUrl = `${BASE_URL}/talent/${slug}?token=${loginToken}`
+
+          const vouchedByClause = voucher.vouched_by_first_name
+            ? `the recommendations from ${voucher.vouched_by_first_name} who vouched for you, in addition to `
             : ''
 
-          return `${header}<div style="border:1px solid #E5E7EB;border-radius:10px;padding:4px 14px;background:#FAFAF9;margin-bottom:16px;">${statusRows.join('')}</div>`
+          if (networkSize > 0) {
+            networkCtaHtml = `<div style="margin:0 0 20px;padding:16px 20px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;">
+              <p style="font-size:14px;color:#15803D;margin:0 0 10px;line-height:1.5;">
+                Hi ${firstName} — your VouchFour network is starting to come together. Since you get access to ${vouchedByClause}the recommendations from your own picks, your custom talent network already has <strong>${networkSize}+</strong> highly recommended people — and will keep getting better from here. Want to check it out?
+              </p>
+              <a href="${talentUrl}" style="display:inline-block;padding:8px 18px;background:#16A34A;color:#FFFFFF;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;">View Your Network →</a>
+            </div>`
+          } else {
+            networkCtaHtml = `<div style="margin:0 0 20px;padding:16px 20px;background:#F5F3FF;border:1px solid #DDD6FE;border-radius:8px;">
+              <p style="font-size:14px;color:#5B21B6;margin:0 0 10px;line-height:1.5;">
+                Hi ${firstName} — your network will populate as your picks respond — you can preview it anytime.
+              </p>
+              <a href="${talentUrl}" style="display:inline-block;padding:8px 18px;background:#7C3AED;color:#FFFFFF;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;">Preview Your Network →</a>
+            </div>`
+          }
+        }
+
+        // Build flat table — pending first, then completed
+        const sorted = [...invitees].sort((a, b) => {
+          if (a.status === 'pending' && b.status !== 'pending') return -1
+          if (a.status !== 'pending' && b.status === 'pending') return 1
+          return 0
         })
 
-        const inviteeStatusHtml = functionSections.join('')
+        const tableRows = sorted.map(inv => {
+          if (inv.status !== 'pending') {
+            return `<tr>
+              <td style="padding:8px 0 8px 14px;border-bottom:1px solid #F3F4F6;font-size:13px;font-weight:600;color:#1C1917;">${inv.invitee_name}</td>
+              <td style="padding:8px 0;border-bottom:1px solid #F3F4F6;text-align:center;font-size:12px;color:#16A34A;">✅</td>
+              <td colspan="2" style="padding:8px 14px 8px 0;border-bottom:1px solid #F3F4F6;"></td>
+            </tr>`
+          }
+
+          const vouchUrl = `${BASE_URL}/vouch?token=${inv.token}`
+          const inviteeFirst = inv.invitee_name.split(' ')[0]
+          const practLabel = (inv.practitioner_label || inv.jf_name || '').toLowerCase()
+          const voucherFirst = voucher.voucher_name.split(' ')[0]
+          const composeSubject = `Quick favor`
+          const composeBody = `Hey ${inviteeFirst},\n\nI am trying out VouchFour to build out a professional network without the noise - just people who are highly recommended by the people I most respect. You are one of the best ${practLabel} that I've ever worked with and your recommendations would mean a lot to me. If you are game to help, you can do so here:\n\n${vouchUrl}\n\nThanks!\n${voucherFirst}`
+          const smsBody = `Hey ${inviteeFirst}, I'm trying out VouchFour to build a professional network of just highly recommended people. You're one of the best ${practLabel} I've worked with — would mean a lot if you'd share your picks with me: ${vouchUrl}`
+
+          let composeLink
+          if (isGmail) {
+            composeLink = `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(inv.invitee_email)}&su=${encodeURIComponent(composeSubject)}&body=${encodeURIComponent(composeBody)}`
+          } else {
+            composeLink = `mailto:${inv.invitee_email}?subject=${encodeURIComponent(composeSubject)}&body=${encodeURIComponent(composeBody)}`
+          }
+          const smsLink = `sms:?&body=${encodeURIComponent(smsBody)}`
+
+          return `<tr>
+            <td style="padding:8px 0 8px 14px;border-bottom:1px solid #F3F4F6;">
+              <div style="font-size:13px;font-weight:600;color:#1C1917;">${inv.invitee_name}</div>
+            </td>
+            <td style="padding:8px 0;border-bottom:1px solid #F3F4F6;text-align:center;font-size:11px;color:#D97706;white-space:nowrap;">⏳</td>
+            <td style="padding:8px 6px;border-bottom:1px solid #F3F4F6;text-align:center;white-space:nowrap;vertical-align:middle;">
+              <a href="${composeLink}" style="color:#2563EB;font-size:12px;font-weight:600;text-decoration:none;">✉️ Email</a>
+            </td>
+            <td style="padding:8px 14px 8px 6px;border-bottom:1px solid #F3F4F6;text-align:center;white-space:nowrap;vertical-align:middle;">
+              <a href="${smsLink}" style="color:#2563EB;font-size:12px;font-weight:600;text-decoration:none;">💬 Text</a>
+            </td>
+          </tr>`
+        })
+
+        const inviteeStatusHtml = `<div style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;background:#FAFAF9;">
+          <div style="padding:12px 14px 8px;background:#F5F5F4;border-bottom:1px solid #E5E7EB;">
+            <div style="font-size:14px;font-weight:600;color:#1C1917;margin:0 0 2px;">...but ${totalPending} of your picks haven't responded yet</div>
+            <div style="font-size:12px;color:#78716C;">A quick personal email or text nudge from you will help remind them to engage. We've made it easy with links to pre-formatted drafts you can review and send.</div>
+          </div>
+          <table style="width:100%;border-collapse:collapse;">
+            <tr>
+              <td style="padding:6px 0 6px 14px;font-size:11px;font-weight:700;color:#78716C;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #E5E7EB;">Your Picks</td>
+              <td style="padding:6px 0;font-size:11px;font-weight:700;color:#78716C;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #E5E7EB;text-align:center;">Status</td>
+              <td colspan="2" style="padding:6px 14px 6px 0;font-size:11px;font-weight:700;color:#78716C;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #E5E7EB;text-align:center;">Draft Nudges</td>
+            </tr>
+            ${tableRows.join('')}
+          </table>
+        </div>`
 
         // Build template variables
         const firstName = voucher.voucher_name.split(' ')[0]
-        const totalPending = pending.length
-        const totalInvitees = invitees.length
 
         const vars = {
           firstName,
           fullName: voucher.voucher_name,
           pendingCount: String(totalPending),
           totalCount: String(totalInvitees),
-          completedCount: String(totalInvitees - totalPending),
+          completedCount: String(completedCount),
+          networkSize: String(networkSize),
           inviteeStatusHtml,
+          networkCtaHtml,
+          talentUrl,
         }
 
         // Load template, apply vars, send
@@ -455,11 +516,11 @@ export async function processVoucherNudges() {
           [voucher.inviter_id, resendId]
         )
 
-        console.log(`[VoucherNudge] Sent to ${voucher.voucher_name} (${totalPending}/${totalInvitees} pending across ${sectionsWithPending.length} functions)`)
+        console.log(`[VoucherNudge] Sent to ${voucher.voucher_name} (${totalPending}/${totalInvitees} pending, network=${networkSize})`)
         trackEvent(String(voucher.inviter_id), 'voucher_nudge_sent', {
           pending_count: totalPending,
           total_count: totalInvitees,
-          function_count: sectionsWithPending.length,
+          network_size: networkSize,
         })
 
         results.sent++
