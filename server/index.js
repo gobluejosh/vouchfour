@@ -11,6 +11,7 @@ import { sendVouchInviteEmail, sendLoginLinkEmail } from './lib/email.js'
 import { checkAndNotifyReadiness } from './lib/readiness.js'
 import { processNudges, processVoucherNudges } from './lib/nudge.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
+import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -585,6 +586,22 @@ const server = http.createServer(async (req, res) => {
           if (apolloRes.ok) {
             const apolloData = await apolloRes.json()
             const person = apolloData.person
+
+            // Fire-and-forget: save full Apollo response for enrichment pipeline
+            if (person && normalizedUrl) {
+              ;(async () => {
+                try {
+                  const pRes = await query('SELECT id, display_name FROM people WHERE linkedin_url = $1', [normalizedUrl])
+                  if (pRes.rows[0]) {
+                    await saveApolloData(pRes.rows[0].id, pRes.rows[0].display_name, apolloData)
+                    console.log(`[Email] Apollo data saved for enrichment: ${pRes.rows[0].display_name}`)
+                  }
+                } catch (err) {
+                  console.warn(`[Email] Failed to save Apollo enrichment data:`, err.message)
+                }
+              })()
+            }
+
             if (person?.email) {
               const confidence = person.email_status === 'verified' ? 95
                 : person.email_status === 'guessed' ? 65
@@ -1066,6 +1083,22 @@ Rules:
           }
         })()
 
+        // ── Fire-and-forget: enrich newly created people ──
+        ;(async () => {
+          await sleep(2000) // Let the dust settle after form submission
+          const toEnrich = vouchedPeople.filter(v => v.isNew).map(v => v.id)
+          if (toEnrich.length === 0) return
+          console.log(`[Enrich] Queuing enrichment for ${toEnrich.length} new people from vouch submission`)
+          for (const personId of toEnrich) {
+            try {
+              await enrichPerson(personId)
+            } catch (err) {
+              console.error(`[Enrich] Post-vouch enrichment failed for ${personId}:`, err.message)
+            }
+            await sleep(2000)
+          }
+        })()
+
         // Check readiness for all sponsors (people who vouched for this voucher)
         const sponsorsRes = await query(`
           SELECT DISTINCT voucher_id FROM vouches
@@ -1463,6 +1496,173 @@ Rules:
       res.end(JSON.stringify(results))
     } catch (err) {
       console.error('[/api/admin/send-nudges error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Enrichment trigger (no auth, tucked away) ───────────────────
+  if (req.method === 'POST' && req.url === '/api/enrich') {
+    try {
+      const body = await readBody(req)
+
+      // Mode 1: single person
+      if (body.person_id) {
+        const personId = Number(body.person_id)
+        if (!personId || isNaN(personId)) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Invalid person_id' }))
+          return
+        }
+        enrichPerson(personId).catch(err =>
+          console.error(`[Enrich] Failed for person ${personId}:`, err.message)
+        )
+        res.writeHead(200)
+        res.end(JSON.stringify({ status: 'started', person_id: personId }))
+        return
+      }
+
+      // Mode 2: batch all un-enriched
+      if (body.all === true) {
+        const unenrichedRes = await query(
+          'SELECT id FROM people WHERE enriched_at IS NULL ORDER BY created_at ASC'
+        )
+        const personIds = unenrichedRes.rows.map(r => r.id)
+        console.log(`[Enrich] Batch started: ${personIds.length} un-enriched people`)
+
+        enrichBatch(personIds).catch(err =>
+          console.error('[Enrich] Batch failed:', err.message)
+        )
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ status: 'started', count: personIds.length }))
+        return
+      }
+
+      res.writeHead(400)
+      res.end(JSON.stringify({ error: 'Provide person_id or { "all": true }' }))
+    } catch (err) {
+      console.error('[/api/enrich error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Network Brain query (session auth, tucked away) ────────────
+  if (req.method === 'POST' && req.url === '/api/network-brain') {
+    try {
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        return
+      }
+
+      const body = await readBody(req)
+      const question = body.question?.trim()
+      if (!question) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'question is required' }))
+        return
+      }
+
+      const userId = session.id
+      console.log(`[NetworkBrain] Query from ${session.display_name}: "${question.slice(0, 80)}"`)
+      const start = Date.now()
+
+      // Get user's full network (all functions)
+      const talent = await getTalentRecommendations(userId, null)
+
+      if (talent.length === 0) {
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          answer: 'Your network doesn\'t have enough data yet. Once your connections respond to their vouch invites, I\'ll be able to help you find the right people.',
+          people: [],
+        }))
+        return
+      }
+
+      // Pull enrichment summaries + structured fields for all network people
+      const personIds = talent.map(t => t.id)
+
+      const [enrichmentRes, structuredRes] = await Promise.all([
+        query(`
+          SELECT person_id, ai_summary FROM person_enrichment
+          WHERE person_id = ANY($1) AND source = 'claude'
+        `, [personIds]),
+        query(`
+          SELECT id, display_name, current_title, current_company, industry, linkedin_url
+          FROM people WHERE id = ANY($1)
+        `, [personIds]),
+      ])
+
+      const summaryMap = new Map()
+      for (const row of enrichmentRes.rows) summaryMap.set(row.person_id, row.ai_summary)
+
+      const structuredMap = new Map()
+      for (const row of structuredRes.rows) structuredMap.set(row.id, row)
+
+      // Build network context for Claude
+      const networkContext = talent.map(t => {
+        const s = structuredMap.get(t.id)
+        const summary = summaryMap.get(t.id) || ''
+        const parts = [`- ${t.display_name}`]
+        if (s?.current_title && s?.current_company) parts.push(`| ${s.current_title} at ${s.current_company}`)
+        else if (s?.current_company) parts.push(`| ${s.current_company}`)
+        if (s?.industry) parts.push(`| ${s.industry}`)
+        parts.push(`| Degree ${t.degree}, Score ${t.vouch_score}`)
+        if (summary) parts.push(`\n  Profile: ${summary}`)
+        return parts.join(' ')
+      }).join('\n')
+
+      // Call Claude (no web search — network data IS the context)
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1500,
+          system: `You are a professional network advisor. The user has a trusted vouch-based professional network. Below is data about every person in their network, including their role, company, industry, vouch score (higher = more trusted), degree of connection (1 = direct, 2 = one hop, 3 = two hops), and an AI-generated professional summary where available.
+
+Answer the user's question by recommending specific people from their network. Always reference people by name and explain why they're relevant. If no one in the network matches, say so honestly. Be concise and actionable.
+
+Network (${talent.length} people):
+${networkContext}`,
+          messages: [{ role: 'user', content: question }],
+        }),
+      })
+
+      const data = await claudeRes.json()
+      const answer = (data.content || [])
+        .filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('')
+
+      console.log(`[NetworkBrain] Response in ${Date.now() - start}ms | ${answer.length} chars`)
+
+      // Extract mentioned people for structured response
+      const mentionedPeople = talent.filter(t =>
+        answer.toLowerCase().includes(t.display_name.toLowerCase())
+      ).map(t => ({
+        id: t.id,
+        name: t.display_name,
+        linkedin_url: t.linkedin_url,
+        degree: t.degree,
+        vouch_score: t.vouch_score,
+        current_title: structuredMap.get(t.id)?.current_title || null,
+        current_company: structuredMap.get(t.id)?.current_company || null,
+      }))
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ answer, people: mentionedPeople }))
+    } catch (err) {
+      console.error('[/api/network-brain error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }
