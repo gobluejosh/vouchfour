@@ -1081,7 +1081,7 @@ export default function App() {
             fontSize: 13, fontWeight: 700, color: C.ink,
             marginBottom: 6, fontFamily: FONT,
           }}>
-            How your picks build your network
+            How your picks also build your own network
           </div>
           <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
             Each person you pick will be invited to vouch for their 4 all-time best{invitee?.jobFunction?.name ? ` ${invitee.jobFunction.name}` : ""} colleagues. The talent you will discover in your VouchFour network comes from this chain, so pick people who are genuinely great at what they do and whose judgment you trust.
