@@ -1607,7 +1607,7 @@ Rules:
       // Pull enrichment summaries + structured fields for all network people
       const personIds = talent.map(t => t.id)
 
-      const [enrichmentRes, structuredRes] = await Promise.all([
+      const [enrichmentRes, structuredRes, userProfileRes, userSummaryRes, userHistoryRes] = await Promise.all([
         query(`
           SELECT person_id, ai_summary FROM person_enrichment
           WHERE person_id = ANY($1) AND source = 'claude'
@@ -1616,6 +1616,19 @@ Rules:
           SELECT id, display_name, current_title, current_company, industry, linkedin_url
           FROM people WHERE id = ANY($1)
         `, [personIds]),
+        // User's own profile
+        query(`
+          SELECT id, display_name, current_title, current_company, location, industry, headline
+          FROM people WHERE id = $1
+        `, [userId]),
+        query(`
+          SELECT ai_summary FROM person_enrichment
+          WHERE person_id = $1 AND source = 'claude'
+        `, [userId]),
+        query(`
+          SELECT organization, title, is_current FROM employment_history
+          WHERE person_id = $1 ORDER BY start_date DESC NULLS LAST
+        `, [userId]),
       ])
 
       const summaryMap = new Map()
@@ -1623,6 +1636,23 @@ Rules:
 
       const structuredMap = new Map()
       for (const row of structuredRes.rows) structuredMap.set(row.id, row)
+
+      // Build user's own profile context
+      const userProfile = userProfileRes.rows[0]
+      const userSummary = userSummaryRes.rows[0]?.ai_summary || ''
+      const userHistory = userHistoryRes.rows || []
+      let userContext = ''
+      if (userProfile) {
+        const parts = [`Name: ${userProfile.display_name}`]
+        if (userProfile.current_title && userProfile.current_company) parts.push(`Current: ${userProfile.current_title} at ${userProfile.current_company}`)
+        if (userProfile.industry) parts.push(`Industry: ${userProfile.industry}`)
+        if (userProfile.location) parts.push(`Location: ${userProfile.location}`)
+        if (userHistory.length > 0) {
+          parts.push(`Career history: ${userHistory.map(j => `${j.title || 'Role'} at ${j.organization}${j.is_current ? ' (current)' : ''}`).join(' → ')}`)
+        }
+        if (userSummary) parts.push(`Profile: ${userSummary}`)
+        userContext = parts.join('\n')
+      }
 
       // Build network context for Claude
       const networkContext = talent.map(t => {
@@ -1648,9 +1678,14 @@ Rules:
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1500,
-          system: `You are a professional network advisor. The user has a trusted vouch-based professional network. Below is data about every person in their network, including their role, company, industry, vouch score (higher = more trusted), degree of connection (1 = direct, 2 = one hop, 3 = two hops), and an AI-generated professional summary where available.
+          system: `You are a professional network advisor. The user has a trusted vouch-based professional network.
 
-Answer the user's question by recommending specific people from their network. Always reference people by name and explain why they're relevant. If no one in the network matches, say so honestly. Be concise and actionable.
+About the user asking questions:
+${userContext}
+
+Below is data about every person in their network, including their role, company, industry, vouch score (higher = more trusted), degree of connection (1 = direct, 2 = one hop, 3 = two hops), and an AI-generated professional summary where available.
+
+Answer the user's question by recommending specific people from their network. Always reference people by name and explain why they're relevant. You know the user's background, so you can tailor recommendations based on shared experience, complementary skills, or relevant connections. If no one in the network matches, say so honestly. Be concise and actionable.
 
 Network (${talent.length} people):
 ${networkContext}`,
