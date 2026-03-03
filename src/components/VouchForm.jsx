@@ -908,7 +908,7 @@ export default function App() {
               padding: "0 4px", marginBottom: 14,
             }}>
               <div style={{ fontSize: 15, color: C.sub, lineHeight: 1.45, fontFamily: FONT }}>
-                <span style={{ fontWeight: 600, color: C.ink }}>{invitee.inviterName}</span> thinks you're one of the best {invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} they've ever worked with.
+                <span style={{ fontWeight: 600, color: C.ink }}>{invitee.inviterName}</span> vouched for you as one of the best {invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} they've ever worked with. Now they want to know:
               </div>
             </div>
           )}
@@ -1088,24 +1088,27 @@ export default function App() {
           </div>
         </div>
 
-        <div style={{
-          marginTop: 24, padding: "20px 22px",
-          background: "linear-gradient(135deg, #FDE6D0 0%, #D4F0E0 100%)",
-          borderRadius: 14, border: "1px solid rgba(255,255,255,0.4)",
-        }}>
+        {/* "Let's Build Something Better" — only show for self-invite users, not chain invitees */}
+        {(!invitee?.inviterName || invitee?.isSelfInvite) && (
           <div style={{
-            fontSize: 14, fontWeight: 700, color: C.ink,
-            marginBottom: 10, fontFamily: FONT,
+            marginTop: 24, padding: "20px 22px",
+            background: "linear-gradient(135deg, #FDE6D0 0%, #D4F0E0 100%)",
+            borderRadius: 14, border: "1px solid rgba(255,255,255,0.4)",
           }}>
-            Let's Build Something Better, Together
+            <div style={{
+              fontSize: 14, fontWeight: 700, color: C.ink,
+              marginBottom: 10, fontFamily: FONT,
+            }}>
+              Let's Build Something Better, Together
+            </div>
+            <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
+              I find LinkedIn to be both indispensable and disappointing. It was originally meant to map trusted professional relationships, but most of us now have thousands of connections — many of whom we barely even know.
+            </div>
+            <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT, marginTop: 10 }}>
+              I know I would really benefit from a tool which facilitates a path to the most exceptional, highly recommended, and trusted people one or two hops away in my professional network — without the noise and constant stream of humblebrag posts. If that appeals to you as well, we can build that, together, here.
+            </div>
           </div>
-          <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
-            I find LinkedIn to be both indispensable and disappointing. It was originally meant to map trusted professional relationships, but most of us now have thousands of connections — many of whom we barely even know.
-          </div>
-          <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT, marginTop: 10 }}>
-            I know I would really benefit from a tool which facilitates a path to the most exceptional, highly recommended, and trusted people one or two hops away in my professional network — without the noise and constant stream of humblebrag posts. If that appeals to you as well, we can build that, together, here.
-          </div>
-        </div>
+        )}
 
         <p style={{
           marginTop: 24, fontSize: 11, color: "#7C6FA0",
