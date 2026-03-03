@@ -1540,6 +1540,26 @@ Rules:
         return
       }
 
+      // Mode 3: re-enrich people missing Claude AI summaries
+      if (body.missing_summaries === true) {
+        const missingRes = await query(`
+          SELECT p.id FROM people p
+          LEFT JOIN person_enrichment pe ON pe.person_id = p.id AND pe.source = 'claude'
+          WHERE pe.ai_summary IS NULL OR pe.id IS NULL
+          ORDER BY p.created_at ASC
+        `)
+        const personIds = missingRes.rows.map(r => r.id)
+        console.log(`[Enrich] Re-enrich started: ${personIds.length} people missing AI summaries`)
+
+        enrichBatch(personIds).catch(err =>
+          console.error('[Enrich] Re-enrich batch failed:', err.message)
+        )
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ status: 'started', count: personIds.length, mode: 'missing_summaries' }))
+        return
+      }
+
       res.writeHead(400)
       res.end(JSON.stringify({ error: 'Provide person_id or { "all": true }' }))
     } catch (err) {

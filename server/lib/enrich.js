@@ -261,24 +261,26 @@ export async function enrichPerson(personId) {
 
     const userPrompt = promptParts.join('\n')
 
-    // 45-second timeout for Claude web search
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 45000)
+    // Retry loop for rate limits (up to 3 attempts with exponential backoff)
+    const MAX_RETRIES = 3
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 60000)
 
-    try {
-      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-        signal: controller.signal,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
-          tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
-          system: `You are a professional profile researcher. Synthesize a comprehensive professional summary paragraph about this person.
+      try {
+        const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+          signal: controller.signal,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1024,
+            tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+            system: `You are a professional profile researcher. Synthesize a comprehensive professional summary paragraph about this person.
 
 Include if available:
 - Current role and company
@@ -288,27 +290,50 @@ Include if available:
 - Recent professional activity or news
 
 Return a single paragraph of 3-6 sentences. Be factual — only include verifiable information. If you can't find much, keep it brief and honest. Do not include any preamble or labels — just the summary paragraph.`,
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
-      })
+            messages: [{ role: 'user', content: userPrompt }],
+          }),
+        })
 
-      const data = await claudeRes.json()
-      const aiSummary = (data.content || [])
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('')
+        const data = await claudeRes.json()
 
-      await query(`
-        INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
-        VALUES ($1, 'claude', $2, $3, NOW())
-        ON CONFLICT (person_id, source) DO UPDATE
-        SET raw_payload = EXCLUDED.raw_payload, ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
-      `, [personId, JSON.stringify(data), aiSummary || null])
+        // Rate limit? Back off and retry
+        if (data.type === 'error' && data.error?.type === 'rate_limit_error') {
+          const backoff = attempt * 20000 // 20s, 40s, 60s
+          console.warn(`[Enrich] Claude rate limited (attempt ${attempt}/${MAX_RETRIES}) | ${person.display_name} | retrying in ${backoff/1000}s`)
+          clearTimeout(timeout)
+          if (attempt < MAX_RETRIES) {
+            await sleep(backoff)
+            continue
+          }
+          // Final attempt failed — save error and move on
+          await query(`
+            INSERT INTO person_enrichment (person_id, source, raw_payload, enriched_at)
+            VALUES ($1, 'claude', $2, NOW())
+            ON CONFLICT (person_id, source) DO UPDATE
+            SET raw_payload = EXCLUDED.raw_payload, enriched_at = NOW()
+          `, [personId, JSON.stringify(data)])
+          steps.claude = 'rate_limited'
+          break
+        }
 
-      steps.claude = aiSummary ? 'ok' : 'empty'
-      console.log(`[Enrich] Claude ${Date.now() - start}ms | ${person.display_name} | ${(aiSummary || '').length} chars`)
-    } finally {
-      clearTimeout(timeout)
+        const aiSummary = (data.content || [])
+          .filter(b => b.type === 'text')
+          .map(b => b.text)
+          .join('')
+
+        await query(`
+          INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+          VALUES ($1, 'claude', $2, $3, NOW())
+          ON CONFLICT (person_id, source) DO UPDATE
+          SET raw_payload = EXCLUDED.raw_payload, ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+        `, [personId, JSON.stringify(data), aiSummary || null])
+
+        steps.claude = aiSummary ? 'ok' : 'empty'
+        console.log(`[Enrich] Claude ${Date.now() - start}ms | ${person.display_name} | ${(aiSummary || '').length} chars`)
+        break // Success — exit retry loop
+      } finally {
+        clearTimeout(timeout)
+      }
     }
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -329,7 +354,7 @@ Return a single paragraph of 3-6 sentences. Be factual — only include verifiab
 // ── Batch enrichment ───────────────────────────────────────────────────
 let enrichBatchRunning = false
 
-export async function enrichBatch(personIds, { delayMs = 3000 } = {}) {
+export async function enrichBatch(personIds, { delayMs = 5000 } = {}) {
   if (enrichBatchRunning) {
     console.log('[Enrich] Batch already running, skipping')
     return []
