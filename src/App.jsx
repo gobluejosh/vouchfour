@@ -4,6 +4,7 @@ import VouchForm from './components/VouchForm'
 import TalentPage from './components/TalentPage'
 import AdminPage from './components/AdminPage'
 import StartVouchPage from './components/StartVouchPage'
+import NetworkBrainPage from './components/NetworkBrainPage'
 
 export default function App() {
   const [page, setPage] = useState(() => {
@@ -12,6 +13,7 @@ export default function App() {
     if (path.startsWith('/talent/')) return 'talent';
     if (path === '/admin') return 'admin';
     if (path === '/start-vouch') return 'startVouch';
+    if (path === '/brain') return 'brain';
     return 'home';
   });
 
@@ -22,6 +24,7 @@ export default function App() {
       else if (path.startsWith('/talent/')) setPage('talent');
       else if (path === '/admin') setPage('admin');
       else if (path === '/start-vouch') setPage('startVouch');
+      else if (path === '/brain') setPage('brain');
       else setPage('home');
     };
     window.addEventListener('popstate', handlePop);
@@ -32,5 +35,6 @@ export default function App() {
   if (page === 'talent') return <TalentPage />;
   if (page === 'admin') return <AdminPage />;
   if (page === 'startVouch') return <StartVouchPage />;
+  if (page === 'brain') return <NetworkBrainPage />;
   return <HomePage />;
 }
