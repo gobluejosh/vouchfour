@@ -116,6 +116,7 @@ export async function enrichPerson(personId) {
     title: null,
     company: null,
     notablePastCompany: null,
+    employmentHistory: [],
     braveSnippets: [],
   }
 
@@ -165,7 +166,8 @@ export async function enrichPerson(personId) {
       const ap = apolloData.person
       context.title = ap.title || null
       context.company = ap.organization?.name || null
-      const pastJobs = (ap.employment_history || [])
+      context.employmentHistory = ap.employment_history || []
+      const pastJobs = context.employmentHistory
         .filter(e => !e.current)
         .sort((a, b) => (b.start_date || '').localeCompare(a.start_date || ''))
       context.notablePastCompany = pastJobs[0]?.organization_name || null
@@ -238,22 +240,29 @@ export async function enrichPerson(personId) {
     steps.brave = 'error'
   }
 
-  // ── Step C: Claude with web search ──────────────────────────────────
+  // ── Step C: Claude synthesis ────────────────────────────────────────
   try {
     const start = Date.now()
 
-    // Build prompt with accumulated context
+    // Build rich prompt from Apollo + Brave data (no web search needed — we have the data)
     let promptParts = [`Build a professional profile summary for: ${context.name}`]
     if (context.linkedinUrl) promptParts.push(`LinkedIn: ${context.linkedinUrl}`)
     if (context.title && context.company) promptParts.push(`Current role: ${context.title} at ${context.company}`)
     else if (context.company) promptParts.push(`Current company: ${context.company}`)
     else if (context.title) promptParts.push(`Current title: ${context.title}`)
-    if (context.notablePastCompany) promptParts.push(`Notable past company: ${context.notablePastCompany}`)
+
+    // Add full employment history from Apollo (already saved to DB)
+    if (context.employmentHistory && context.employmentHistory.length > 0) {
+      const historyStr = context.employmentHistory
+        .map(j => `- ${j.title || 'Unknown role'} at ${j.organization_name || 'Unknown'} (${j.start_date || '?'} – ${j.current ? 'Present' : j.end_date || '?'})`)
+        .join('\n')
+      promptParts.push(`\nCareer history:\n${historyStr}`)
+    }
 
     // Add Brave snippets as additional context
     if (context.braveSnippets.length > 0) {
       const snippetStr = context.braveSnippets
-        .slice(0, 8)
+        .slice(0, 12)
         .map(s => `- ${s.title}: ${s.description}`)
         .join('\n')
       promptParts.push(`\nRecent web mentions:\n${snippetStr}`)
@@ -265,7 +274,7 @@ export async function enrichPerson(personId) {
     const MAX_RETRIES = 3
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 60000)
+      const timeout = setTimeout(() => controller.abort(), 30000)
 
       try {
         const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
@@ -279,8 +288,7 @@ export async function enrichPerson(personId) {
           body: JSON.stringify({
             model: 'claude-sonnet-4-20250514',
             max_tokens: 1024,
-            tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
-            system: `You are a professional profile researcher. Synthesize a comprehensive professional summary paragraph about this person.
+            system: `You are a professional profile researcher. Synthesize a comprehensive professional summary paragraph about this person based on the structured data and web search results provided.
 
 Include if available:
 - Current role and company
@@ -289,7 +297,7 @@ Include if available:
 - Areas of expertise and what they're known for
 - Recent professional activity or news
 
-Return a single paragraph of 3-6 sentences. Be factual — only include verifiable information. If you can't find much, keep it brief and honest. Do not include any preamble or labels — just the summary paragraph.`,
+Return a single paragraph of 3-6 sentences. Be factual — only include information from the data provided. If there isn't much data, keep it brief and honest. Do not include any preamble or labels — just the summary paragraph.`,
             messages: [{ role: 'user', content: userPrompt }],
           }),
         })
@@ -298,7 +306,7 @@ Return a single paragraph of 3-6 sentences. Be factual — only include verifiab
 
         // Rate limit? Back off and retry
         if (data.type === 'error' && data.error?.type === 'rate_limit_error') {
-          const backoff = attempt * 20000 // 20s, 40s, 60s
+          const backoff = attempt * 15000 // 15s, 30s, 45s
           console.warn(`[Enrich] Claude rate limited (attempt ${attempt}/${MAX_RETRIES}) | ${person.display_name} | retrying in ${backoff/1000}s`)
           clearTimeout(timeout)
           if (attempt < MAX_RETRIES) {
