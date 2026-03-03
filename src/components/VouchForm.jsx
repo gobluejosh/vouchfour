@@ -389,7 +389,7 @@ function SingleContactForm({ index, onComplete }) {
             </button>
           )}
           {step !== "name" && (
-            <button onClick={() => { setStep("name"); setLiConfirmed(null); setEmailConfirmed(null); setLiSearched(false); setLiSuggestions([]); }} style={editBtnStyle}>
+            <button onClick={() => { setStep("name"); setLiConfirmed(null); setLinkedinInput(""); setEmailConfirmed(null); setLiSearched(false); setLiSuggestions([]); }} style={editBtnStyle}>
               Edit
             </button>
           )}
