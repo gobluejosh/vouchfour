@@ -2602,7 +2602,8 @@ What ${senderFirst} wants to ask:
               return `${BASE_URL}/person/${session.id}?token=${replyLoginToken}&reply_to=${draft.id}`
             })(),
           }
-          const subject = applyVariables(draft.draft_subject || template.subject, vars)
+          const rawSubject = applyVariables(draft.draft_subject || template.subject, vars)
+          const subject = `From ${sender.display_name}: ${rawSubject}`
           const bodyHtml = applyVariables(template.body_html, vars)
           const html = emailLayout(bodyHtml, draft.recipient_id)
 
