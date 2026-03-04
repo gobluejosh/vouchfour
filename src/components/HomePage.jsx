@@ -281,7 +281,7 @@ function IdentityForm({ onComplete }) {
             fontSize: 18, fontWeight: 700, color: "#1E1B4B",
             lineHeight: 1.3, fontFamily: FONT, marginBottom: 4,
           }}>
-            Trusted Recommendations. Not Connections.
+            Start building your trusted network:
           </div>
         </div>
 

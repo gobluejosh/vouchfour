@@ -407,10 +407,14 @@ export default function PersonPage() {
   // Quick Ask state
   const [askOpen, setAskOpen] = useState(false);
   const [askQuestion, setAskQuestion] = useState("");
+  const [knowsThem, setKnowsThem] = useState(null); // null = unanswered, true/false
+  const [knowsThemHow, setKnowsThemHow] = useState("");
+  const [intermediaryContext, setIntermediaryContext] = useState("");
   const [draftingLoading, setDraftingLoading] = useState(false);
   const [drafts, setDrafts] = useState(null);
   const [askId, setAskId] = useState(null);
   const [askError, setAskError] = useState(null);
+  const [replyContext, setReplyContext] = useState(null); // { sender_name, message_body, subject }
 
   // Auth flow
   useEffect(() => {
@@ -423,7 +427,11 @@ export default function PersonPage() {
         .then(d => {
           if (d.user) {
             setAuthState("authenticated");
-            window.history.replaceState({}, "", window.location.pathname);
+            // Preserve reply_to param through login, strip only the token
+            const kept = new URLSearchParams(window.location.search);
+            kept.delete("token");
+            const qs = kept.toString();
+            window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
           } else {
             setAuthState("unauthenticated");
           }
@@ -461,10 +469,55 @@ export default function PersonPage() {
       .finally(() => setLoading(false));
   }, [authState, personId]);
 
+  // Auto-open reply mode if ?reply_to= param present
+  // Fetches the original message context, then creates a blank reply draft
+  // so the user lands directly on the draft review panel (skips AI drafting)
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    const params = new URLSearchParams(window.location.search);
+    const replyTo = params.get("reply_to");
+    if (!replyTo) return;
+
+    // Clean the URL
+    window.history.replaceState({}, "", window.location.pathname);
+
+    (async () => {
+      try {
+        // 1. Fetch original message context
+        const ctxRes = await fetch(`/api/quick-ask/reply-context/${replyTo}`, { credentials: "include" });
+        if (!ctxRes.ok) return;
+        const ctx = await ctxRes.json();
+        setReplyContext(ctx);
+
+        // 2. Create blank reply draft (skip AI)
+        const draftRes = await fetch("/api/quick-ask/reply-draft", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reply_to_id: Number(replyTo) }),
+        });
+        if (!draftRes.ok) return;
+        const draftData = await draftRes.json();
+
+        // 3. Jump straight to draft review panel
+        setDrafts(draftData.drafts);
+        setAskId(draftData.ask_id);
+        setAskOpen(true);
+        setKnowsThem(true);
+      } catch (err) {
+        console.error("[reply mode error]", err);
+      }
+    })();
+  }, [authState]);
+
   // ── Quick Ask handlers ──────────────────────────────────────────────
   function handleAskCancel() {
     setAskOpen(false);
     setAskQuestion("");
+    setKnowsThem(null);
+    setKnowsThemHow("");
+    setIntermediaryContext("");
+    setReplyContext(null);
     setDrafts(null);
     setAskId(null);
     setAskError(null);
@@ -473,8 +526,22 @@ export default function PersonPage() {
 
   async function handleDraftAsk() {
     if (!askQuestion.trim() || !personId) return;
+    // For 2nd/3rd degree, require the "do you know them" answer
+    const needsContext = data?.degree >= 2;
+    if (needsContext && knowsThem === null) return;
+
     setDraftingLoading(true);
     setAskError(null);
+
+    // Build recipient context (only for 2nd+ degree; 1st degree handled by backend)
+    const recipient_context = {};
+    if (needsContext) {
+      recipient_context[personId] = {
+        knows_them: knowsThem || false,
+        relationship: knowsThem ? knowsThemHow : "",
+        intermediary_context: intermediaryContext,
+      };
+    }
 
     try {
       const res = await fetch("/api/quick-ask/draft", {
@@ -484,6 +551,7 @@ export default function PersonPage() {
         body: JSON.stringify({
           question: askQuestion.trim(),
           recipient_ids: [personId],
+          recipient_context,
         }),
       });
 
@@ -503,6 +571,10 @@ export default function PersonPage() {
   function handleAskDone() {
     setAskOpen(false);
     setAskQuestion("");
+    setKnowsThem(null);
+    setKnowsThemHow("");
+    setIntermediaryContext("");
+    setReplyContext(null);
     setDrafts(null);
     setAskId(null);
     setAskError(null);
@@ -716,6 +788,88 @@ export default function PersonPage() {
                     onFocus={e => { e.target.style.borderColor = C.accent; }}
                     onBlur={e => { e.target.style.borderColor = C.border; }}
                   />
+                  {/* Relationship context for 2nd/3rd degree (hidden in reply mode) */}
+                  {!replyContext && data?.degree >= 2 && (() => {
+                    const intermediaryFirst = data.intermediary_name?.split(" ")[0];
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        {data.intermediary_name && (
+                          <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginBottom: 8 }}>
+                            Connected to {personFirstName} via <strong style={{ color: C.ink }}>{data.intermediary_name}</strong>
+                          </div>
+                        )}
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
+                          Do you already know {personFirstName}?
+                        </div>
+                        <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                          {[
+                            { label: "No", val: false },
+                            { label: "Yes", val: true },
+                          ].map(opt => (
+                            <button
+                              key={opt.label}
+                              onClick={() => { setKnowsThem(opt.val); if (!opt.val) setKnowsThemHow(""); }}
+                              disabled={draftingLoading}
+                              style={{
+                                padding: "5px 14px",
+                                background: knowsThem === opt.val ? (opt.val ? C.accent : "#6B7280") : "#fff",
+                                color: knowsThem === opt.val ? "#fff" : C.sub,
+                                border: `1.5px solid ${knowsThem === opt.val ? (opt.val ? C.accent : "#6B7280") : C.border}`,
+                                borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                fontFamily: FONT, cursor: "pointer",
+                                transition: "all 0.15s",
+                              }}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        {knowsThem && (
+                          <input
+                            type="text"
+                            value={knowsThemHow}
+                            onChange={e => setKnowsThemHow(e.target.value)}
+                            placeholder={`How do you know ${personFirstName}? (e.g., worked together at Acme)`}
+                            disabled={draftingLoading}
+                            style={{
+                              width: "100%", padding: "8px 10px",
+                              fontSize: 13, fontFamily: FONT, color: C.ink,
+                              background: "#fff", border: `1.5px solid ${C.border}`,
+                              borderRadius: 6, boxSizing: "border-box",
+                              WebkitAppearance: "none",
+                              transition: "border-color 0.15s",
+                            }}
+                            onFocus={e => { e.target.style.borderColor = C.accent; }}
+                            onBlur={e => { e.target.style.borderColor = C.border; }}
+                          />
+                        )}
+                        {knowsThem === false && intermediaryFirst && (
+                          <>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6, marginTop: 10 }}>
+                              How do you know {intermediaryFirst}?
+                            </div>
+                            <input
+                              type="text"
+                              value={intermediaryContext}
+                              onChange={e => setIntermediaryContext(e.target.value)}
+                              placeholder={`e.g., ${intermediaryFirst} and I worked together at Google`}
+                              disabled={draftingLoading}
+                              style={{
+                                width: "100%", padding: "8px 10px",
+                                fontSize: 13, fontFamily: FONT, color: C.ink,
+                                background: "#fff", border: `1.5px solid ${C.border}`,
+                                borderRadius: 6, boxSizing: "border-box",
+                                WebkitAppearance: "none",
+                                transition: "border-color 0.15s",
+                              }}
+                              onFocus={e => { e.target.style.borderColor = C.accent; }}
+                              onBlur={e => { e.target.style.borderColor = C.border; }}
+                            />
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {askError && (
                     <div style={{
                       marginTop: 8, padding: "8px 12px",
@@ -752,17 +906,17 @@ export default function PersonPage() {
                     ) : (
                       <button
                         onClick={handleDraftAsk}
-                        disabled={!askQuestion.trim()}
+                        disabled={!askQuestion.trim() || (data?.degree >= 2 && knowsThem === null)}
                         style={{
                           padding: "8px 16px",
-                          background: askQuestion.trim() ? C.accent : "#C7D2FE",
+                          background: (askQuestion.trim() && !(data?.degree >= 2 && knowsThem === null)) ? C.accent : "#C7D2FE",
                           color: "#fff", border: "none", borderRadius: 8,
                           fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                          cursor: askQuestion.trim() ? "pointer" : "not-allowed",
+                          cursor: (askQuestion.trim() && !(data?.degree >= 2 && knowsThem === null)) ? "pointer" : "not-allowed",
                           transition: "background 0.15s",
                         }}
                       >
-                        Draft Message
+                        Draft email for review
                       </button>
                     )}
                   </div>
@@ -778,6 +932,7 @@ export default function PersonPage() {
                     askId={askId}
                     onDone={handleAskDone}
                     onCancel={handleAskCancel}
+                    replyContext={replyContext}
                   />
                 </div>
               )}

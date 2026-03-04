@@ -254,14 +254,14 @@ function PersonCard({ person, inAskMode, isSelected, onToggle }) {
 
 // ── People mentioned — avatar strip + expand ─────────────────────────
 
-function PeopleMentioned({ people, inAskMode, selectedPeople, onTogglePerson }) {
+function PeopleMentioned({ people, inAskMode, selectedPeople, onTogglePerson, style: outerStyle }) {
   const [expanded, setExpanded] = useState(false);
   if (!people || people.length === 0) return null;
 
   const showExpanded = expanded || inAskMode;
 
   return (
-    <div style={{ marginTop: 10 }}>
+    <div style={outerStyle}>
       {/* Collapsed avatar strip — hidden in ask mode */}
       {!inAskMode && (
         <button
@@ -437,6 +437,8 @@ export default function NetworkBrainPage() {
   // Quick Ask state
   const [askMode, setAskMode] = useState(null); // msg index of brain response in ask mode
   const [selectedPeople, setSelectedPeople] = useState(new Set());
+  const [recipientContext, setRecipientContext] = useState({}); // { personId: { knows_them: bool, relationship: string } }
+  const [showContextStep, setShowContextStep] = useState(false);
   const [drafts, setDrafts] = useState(null);
   const [askId, setAskId] = useState(null);
   const [draftingLoading, setDraftingLoading] = useState(false);
@@ -566,6 +568,8 @@ export default function NetworkBrainPage() {
   function handleEnterAskMode(msgIndex) {
     setAskMode(msgIndex);
     setSelectedPeople(new Set());
+    setRecipientContext({});
+    setShowContextStep(false);
     setDrafts(null);
     setAskId(null);
     setAskError(null);
@@ -575,6 +579,8 @@ export default function NetworkBrainPage() {
   function handleCancelAskMode() {
     setAskMode(null);
     setSelectedPeople(new Set());
+    setRecipientContext({});
+    setShowContextStep(false);
     setDrafts(null);
     setAskId(null);
     setAskError(null);
@@ -591,6 +597,43 @@ export default function NetworkBrainPage() {
       }
       return next;
     });
+  }
+
+  async function handleProceedToContext() {
+    // Check if any selected people are 2nd/3rd degree
+    const brainMsg = messages[askMode];
+    const selected2ndPlus = (brainMsg?.people || []).filter(
+      p => selectedPeople.has(p.id) && p.degree >= 2
+    );
+    if (selected2ndPlus.length > 0) {
+      // Fetch intermediary names for 2nd+ degree people
+      let intermediaries = {};
+      try {
+        const pathRes = await fetch("/api/vouch-paths", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipient_ids: selected2ndPlus.map(p => p.id) }),
+        });
+        if (pathRes.ok) intermediaries = await pathRes.json();
+      } catch (e) { /* non-critical */ }
+
+      // Initialize context for each 2nd+ degree person
+      const ctx = {};
+      selected2ndPlus.forEach(p => {
+        ctx[p.id] = {
+          knows_them: false,
+          relationship: "",
+          intermediary_context: "",
+          intermediary_name: intermediaries[p.id]?.intermediary_name || null,
+        };
+      });
+      setRecipientContext(ctx);
+      setShowContextStep(true);
+    } else {
+      // All 1st degree — skip context step, draft immediately
+      handleDraftMessages();
+    }
   }
 
   async function handleDraftMessages() {
@@ -611,6 +654,7 @@ export default function NetworkBrainPage() {
         body: JSON.stringify({
           question,
           recipient_ids: [...selectedPeople],
+          recipient_context: recipientContext,
         }),
       });
 
@@ -630,6 +674,8 @@ export default function NetworkBrainPage() {
   function handleAskDone() {
     setAskMode(null);
     setSelectedPeople(new Set());
+    setRecipientContext({});
+    setShowContextStep(false);
     setDrafts(null);
     setAskId(null);
     setAskError(null);
@@ -769,41 +815,65 @@ export default function NetworkBrainPage() {
                           }}>
                             {renderMarkdown(msg.text)}
                           </div>
-                          <PeopleMentioned
-                            people={msg.people}
-                            inAskMode={askMode === i}
-                            selectedPeople={selectedPeople}
-                            onTogglePerson={handleTogglePerson}
-                          />
-
-                          {/* Quick Ask UI */}
+                          {/* People mentioned + Quick Ask — unified card */}
                           {msg.people?.length > 0 && (
                             <>
-                              {/* "Ask them about this" button */}
                               {askMode === null && (
-                                <button
-                                  onClick={() => handleEnterAskMode(i)}
+                                <div
                                   style={{
-                                    display: "flex", alignItems: "center", gap: 6,
-                                    marginTop: 8, padding: "8px 14px",
-                                    background: "#fff", border: `1.5px solid ${C.border}`,
-                                    borderRadius: 10, fontSize: 13, fontWeight: 600,
-                                    color: C.accent, fontFamily: FONT,
-                                    cursor: "pointer", transition: "all 0.15s",
+                                    marginTop: 12,
+                                    background: "#FAFAF9",
+                                    border: `1.5px solid ${C.border}`,
+                                    borderRadius: 12,
+                                    overflow: "hidden",
                                   }}
-                                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.background = C.accentLight; }}
-                                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "#fff"; }}
                                 >
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                                    <polyline points="22,6 12,13 2,6" />
-                                  </svg>
-                                  Ask them about this
-                                </button>
+                                  {/* People strip inside the card */}
+                                  <div style={{ padding: "10px 14px" }}>
+                                    <PeopleMentioned
+                                      people={msg.people}
+                                      inAskMode={false}
+                                      selectedPeople={selectedPeople}
+                                      onTogglePerson={handleTogglePerson}
+                                      style={{}}
+                                    />
+                                  </div>
+                                  {/* CTA sub-box */}
+                                  <div
+                                    onClick={() => handleEnterAskMode(i)}
+                                    style={{
+                                      margin: "0 10px 10px",
+                                      padding: "10px 14px",
+                                      background: "linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)",
+                                      border: `1.5px solid #C7D2FE`,
+                                      borderRadius: 8, cursor: "pointer",
+                                      display: "flex", alignItems: "center", gap: 8,
+                                      transition: "all 0.15s",
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 8px rgba(79,70,229,0.12)"; }}
+                                    onMouseLeave={e => { e.currentTarget.style.borderColor = "#C7D2FE"; e.currentTarget.style.boxShadow = "none"; }}
+                                  >
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                      <polyline points="22,6 12,13 2,6" />
+                                    </svg>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: C.accent, fontFamily: FONT }}>
+                                      Select up to {msg.people.length === 1 ? "1 person" : "3 people"} to message
+                                    </span>
+                                  </div>
+                                </div>
                               )}
 
-                              {/* Ask mode: selection + draft controls */}
+                              {/* Ask mode: people selection + context + draft controls */}
                               {askMode === i && !drafts && (
+                                <div style={{ marginTop: 12 }}>
+                                  <PeopleMentioned
+                                    people={msg.people}
+                                    inAskMode={true}
+                                    selectedPeople={selectedPeople}
+                                    onTogglePerson={handleTogglePerson}
+                                    style={{}}
+                                  />
                                 <div style={{ marginTop: 10 }}>
                                   {draftingLoading ? (
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
@@ -814,6 +884,134 @@ export default function NetworkBrainPage() {
                                       <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
                                         Drafting personalized messages...
                                       </span>
+                                    </div>
+                                  ) : showContextStep ? (
+                                    /* Context step — ask about relationship with 2nd/3rd degree people */
+                                    <div style={{
+                                      background: "#FAFAF9", borderRadius: 12,
+                                      border: `1.5px solid ${C.border}`, padding: "14px 16px",
+                                    }}>
+                                      <div style={{
+                                        fontSize: 12, fontWeight: 700, color: C.sub,
+                                        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
+                                      }}>
+                                        Quick context for better drafts
+                                      </div>
+                                      {Object.keys(recipientContext).map(pid => {
+                                        const person = (msg.people || []).find(p => p.id === Number(pid));
+                                        if (!person) return null;
+                                        const ctx = recipientContext[pid];
+                                        const personFirst = person.name.split(" ")[0];
+                                        const intermediaryFirst = ctx.intermediary_name?.split(" ")[0];
+                                        return (
+                                          <div key={pid} style={{ marginBottom: 14 }}>
+                                            {ctx.intermediary_name && (
+                                              <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginBottom: 8 }}>
+                                                Connected to {personFirst} via <strong style={{ color: C.ink }}>{ctx.intermediary_name}</strong>
+                                              </div>
+                                            )}
+                                            <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
+                                              Do you already know {personFirst}?
+                                            </div>
+                                            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                                              {[
+                                                { label: "No", val: false },
+                                                { label: "Yes", val: true },
+                                              ].map(opt => (
+                                                <button
+                                                  key={opt.label}
+                                                  onClick={() => setRecipientContext(prev => ({
+                                                    ...prev,
+                                                    [pid]: { ...prev[pid], knows_them: opt.val, relationship: opt.val ? prev[pid]?.relationship || "" : "" },
+                                                  }))}
+                                                  style={{
+                                                    padding: "5px 14px",
+                                                    background: ctx.knows_them === opt.val ? (opt.val ? C.accent : "#6B7280") : "#fff",
+                                                    color: ctx.knows_them === opt.val ? "#fff" : C.sub,
+                                                    border: `1.5px solid ${ctx.knows_them === opt.val ? (opt.val ? C.accent : "#6B7280") : C.border}`,
+                                                    borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                                    fontFamily: FONT, cursor: "pointer",
+                                                    transition: "all 0.15s",
+                                                  }}
+                                                >
+                                                  {opt.label}
+                                                </button>
+                                              ))}
+                                            </div>
+                                            {ctx.knows_them && (
+                                              <input
+                                                type="text"
+                                                value={ctx.relationship}
+                                                onChange={e => setRecipientContext(prev => ({
+                                                  ...prev,
+                                                  [pid]: { ...prev[pid], relationship: e.target.value },
+                                                }))}
+                                                placeholder={`How do you know ${personFirst}? (e.g., worked together at Acme)`}
+                                                style={{
+                                                  width: "100%", padding: "8px 10px",
+                                                  fontSize: 13, fontFamily: FONT, color: C.ink,
+                                                  background: "#fff", border: `1.5px solid ${C.border}`,
+                                                  borderRadius: 6, boxSizing: "border-box",
+                                                  WebkitAppearance: "none",
+                                                  transition: "border-color 0.15s",
+                                                }}
+                                                onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                                onBlur={e => { e.target.style.borderColor = C.border; }}
+                                              />
+                                            )}
+                                            {!ctx.knows_them && intermediaryFirst && (
+                                              <>
+                                                <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6, marginTop: 10 }}>
+                                                  How do you know {intermediaryFirst}?
+                                                </div>
+                                                <input
+                                                  type="text"
+                                                  value={ctx.intermediary_context}
+                                                  onChange={e => setRecipientContext(prev => ({
+                                                    ...prev,
+                                                    [pid]: { ...prev[pid], intermediary_context: e.target.value },
+                                                  }))}
+                                                  placeholder={`e.g., ${intermediaryFirst} and I worked together at Google`}
+                                                  style={{
+                                                    width: "100%", padding: "8px 10px",
+                                                    fontSize: 13, fontFamily: FONT, color: C.ink,
+                                                    background: "#fff", border: `1.5px solid ${C.border}`,
+                                                    borderRadius: 6, boxSizing: "border-box",
+                                                    WebkitAppearance: "none",
+                                                    transition: "border-color 0.15s",
+                                                  }}
+                                                  onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                                  onBlur={e => { e.target.style.borderColor = C.border; }}
+                                                />
+                                              </>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                      <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                                        <button
+                                          onClick={() => { setShowContextStep(false); setRecipientContext({}); }}
+                                          style={{
+                                            padding: "8px 14px", background: "#F5F5F4",
+                                            color: C.sub, border: `1px solid ${C.border}`,
+                                            borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                            fontFamily: FONT, cursor: "pointer",
+                                          }}
+                                        >
+                                          Back
+                                        </button>
+                                        <button
+                                          onClick={handleDraftMessages}
+                                          style={{
+                                            padding: "8px 16px", background: C.accent,
+                                            color: "#fff", border: "none", borderRadius: 8,
+                                            fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                            cursor: "pointer", transition: "background 0.15s",
+                                          }}
+                                        >
+                                          Draft email for review
+                                        </button>
+                                      </div>
                                     </div>
                                   ) : (
                                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -829,7 +1027,7 @@ export default function NetworkBrainPage() {
                                         Cancel
                                       </button>
                                       <button
-                                        onClick={handleDraftMessages}
+                                        onClick={handleProceedToContext}
                                         disabled={selectedPeople.size === 0}
                                         style={{
                                           padding: "8px 16px",
@@ -840,7 +1038,7 @@ export default function NetworkBrainPage() {
                                           transition: "background 0.15s",
                                         }}
                                       >
-                                        Draft Messages ({selectedPeople.size})
+                                        Draft email for review ({selectedPeople.size})
                                       </button>
                                     </div>
                                   )}
@@ -853,6 +1051,7 @@ export default function NetworkBrainPage() {
                                       {askError}
                                     </div>
                                   )}
+                                </div>
                                 </div>
                               )}
 

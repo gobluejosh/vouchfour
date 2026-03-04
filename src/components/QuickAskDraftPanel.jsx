@@ -72,7 +72,10 @@ function VouchPath({ path }) {
 // ── Single draft card ────────────────────────────────────────────────────
 function DraftCard({ draft, sendingState, onEdit, onSend }) {
   const colors = DEGREE_COLORS[draft.degree] || DEGREE_COLORS[3];
-  const state = sendingState || "draft"; // draft | sending | sent | failed
+  const stateRaw = sendingState || "draft";
+  // sendingState can be a string ("draft"|"sending"|"sent") or { status, reason }
+  const state = typeof stateRaw === "object" ? stateRaw.status : stateRaw;
+  const failReason = typeof stateRaw === "object" ? stateRaw.reason : null;
   const isSent = state === "sent";
   const isSending = state === "sending";
   const isFailed = state === "failed";
@@ -200,7 +203,7 @@ function DraftCard({ draft, sendingState, onEdit, onSend }) {
 
       {isFailed && (
         <div style={{ marginTop: 10, fontSize: 12, color: C.error, fontFamily: FONT }}>
-          Failed to send — try again
+          Failed to send{failReason ? `: ${failReason}` : " — try again"}
         </div>
       )}
     </div>
@@ -208,7 +211,7 @@ function DraftCard({ draft, sendingState, onEdit, onSend }) {
 }
 
 // ── Main export: QuickAskDraftPanel ──────────────────────────────────────
-export default function QuickAskDraftPanel({ drafts, setDrafts, askId, onDone, onCancel }) {
+export default function QuickAskDraftPanel({ drafts, setDrafts, askId, onDone, onCancel, replyContext }) {
   const [sendingState, setSendingState] = useState({}); // { [draftId]: 'sending'|'sent'|'failed' }
   const [sendAllLoading, setSendAllLoading] = useState(false);
 
@@ -233,14 +236,18 @@ export default function QuickAskDraftPanel({ drafts, setDrafts, askId, onDone, o
         body: JSON.stringify({ ask_id: askId, recipient_row_ids: [draftId] }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        setSendingState(prev => ({ ...prev, [draftId]: { status: "failed", reason: data.error || "Send failed" } }));
+        return;
+      }
       const result = data.results?.[0];
       if (result?.status === "sent") {
         setSendingState(prev => ({ ...prev, [draftId]: "sent" }));
       } else {
-        setSendingState(prev => ({ ...prev, [draftId]: "failed" }));
+        setSendingState(prev => ({ ...prev, [draftId]: { status: "failed", reason: result?.reason || "Send failed" } }));
       }
     } catch {
-      setSendingState(prev => ({ ...prev, [draftId]: "failed" }));
+      setSendingState(prev => ({ ...prev, [draftId]: { status: "failed", reason: "Network error" } }));
     }
   };
 
@@ -259,11 +266,11 @@ export default function QuickAskDraftPanel({ drafts, setDrafts, askId, onDone, o
       });
       const data = await res.json();
       for (const result of (data.results || [])) {
-        setSendingState(prev => ({ ...prev, [result.id]: result.status === "sent" ? "sent" : "failed" }));
+        setSendingState(prev => ({ ...prev, [result.id]: result.status === "sent" ? "sent" : { status: "failed", reason: result.reason || "Send failed" } }));
       }
     } catch {
       for (const d of unsent) {
-        setSendingState(prev => ({ ...prev, [d.id]: "failed" }));
+        setSendingState(prev => ({ ...prev, [d.id]: { status: "failed", reason: "Network error" } }));
       }
     }
     setSendAllLoading(false);
@@ -281,15 +288,34 @@ export default function QuickAskDraftPanel({ drafts, setDrafts, askId, onDone, o
       marginTop: 12,
     }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: replyContext ? 10 : 14 }}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
           <polyline points="22,6 12,13 2,6" />
         </svg>
         <span style={{ fontSize: 15, fontWeight: 700, color: C.ink, fontFamily: FONT }}>
-          {allSent ? "Messages sent!" : "Review your messages"}
+          {allSent ? (replyContext ? "Reply sent!" : (drafts.length === 1 ? "Message sent!" : "Messages sent!")) : replyContext ? `Reply to ${replyContext.sender_first_name}` : (drafts.length === 1 ? "Review your message" : "Review your messages")}
         </span>
       </div>
+
+      {/* Original message (reply mode) */}
+      {replyContext && !allSent && (
+        <div style={{
+          marginBottom: 14, padding: "10px 14px",
+          background: "#FFFFFF", border: `1.5px solid ${C.border}`,
+          borderRadius: 10,
+        }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, color: "#6B7280",
+            textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6,
+          }}>
+            Message from {replyContext.sender_first_name}
+          </div>
+          <div style={{ fontSize: 14, color: C.ink, lineHeight: 1.5, fontFamily: FONT }}>
+            {replyContext.message_body}
+          </div>
+        </div>
+      )}
 
       {/* Draft cards */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

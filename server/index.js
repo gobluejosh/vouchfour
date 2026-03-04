@@ -44,15 +44,16 @@ setInterval(() => {
 }, 30 * 60 * 1000)
 
 // ─── Per-recipient daily email cap ─────────────────────────────────
-const DAILY_EMAIL_CAP = 3 // max emails per recipient per day
+const DAILY_EMAIL_CAP_DEFAULT = 10
 
 async function canEmailRecipient(recipientId) {
+  const cap = await getQuickAskLimit('daily_email_cap', DAILY_EMAIL_CAP_DEFAULT)
   const result = await query(
     `SELECT COUNT(*) AS cnt FROM sent_emails
      WHERE recipient_id = $1 AND sent_at > NOW() - INTERVAL '24 hours'`,
     [recipientId]
   )
-  return Number(result.rows[0].cnt) < DAILY_EMAIL_CAP
+  return Number(result.rows[0].cnt) < cap
 }
 
 // ─── Quick Ask rate limiting ─────────────────────────────────────
@@ -1587,6 +1588,19 @@ Rules:
         webMentions = webMentions.slice(0, 6)
       }
 
+      // For 2nd/3rd degree connections, get the intermediary name
+      const computedDegree = degreeRes.rows[0]?.degree ?? null
+      let intermediary_name = null
+      if (computedDegree >= 2) {
+        try {
+          const pathMap = await getVouchPaths(Number(session.id), [Number(personId)])
+          const path = pathMap.get(Number(personId))
+          if (path && path.length >= 2) {
+            intermediary_name = path[1].name // index 0 = sender, index 1 = first intermediary
+          }
+        } catch (e) { /* non-critical */ }
+      }
+
       res.writeHead(200)
       res.end(JSON.stringify({
         person: {
@@ -1601,7 +1615,8 @@ Rules:
           headline: person.headline,
           photo_url: person.photo_url,
         },
-        degree: degreeRes.rows[0]?.degree ?? null,
+        degree: computedDegree,
+        intermediary_name,
         ai_summary: summaryRes.rows[0]?.ai_summary || null,
         employment_history: historyRes.rows,
         web_mentions: webMentions,
@@ -2083,13 +2098,158 @@ ${networkContext}`,
     return
   }
 
+  // ─── Quick Ask: Reply context (for email CTA → person page) ─────
+  if (req.method === 'GET' && req.url.match(/^\/api\/quick-ask\/reply-context\/\d+$/)) {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const rowId = Number(req.url.split('/').pop())
+
+      const result = await query(
+        `SELECT qar.draft_subject, qar.draft_body, qar.recipient_id,
+                qa.question, qa.sender_id,
+                p.display_name AS sender_name
+         FROM quick_ask_recipients qar
+         JOIN quick_asks qa ON qa.id = qar.ask_id
+         JOIN people p ON p.id = qa.sender_id
+         WHERE qar.id = $1 AND qar.recipient_id = $2 AND qar.status = 'sent'`,
+        [rowId, session.id]
+      )
+
+      if (!result.rows[0]) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Message not found' })); return
+      }
+
+      const row = result.rows[0]
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        sender_name: row.sender_name,
+        sender_first_name: row.sender_name.split(' ')[0],
+        subject: row.draft_subject,
+        message_body: row.draft_body,
+        question: row.question,
+      }))
+    } catch (err) {
+      console.error('[/api/quick-ask/reply-context error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Quick Ask: Create reply draft (skip AI, blank fields) ──────
+  if (req.method === 'POST' && req.url === '/api/quick-ask/reply-draft') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const body = await readBody(req)
+      const { reply_to_id } = body
+
+      if (!reply_to_id) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'reply_to_id is required' })); return
+      }
+
+      // Load the original message — verify current user is the recipient
+      const origRes = await query(
+        `SELECT qar.recipient_id, qar.draft_body, qar.draft_subject,
+                qa.sender_id, qa.question,
+                p.display_name AS sender_name, p.current_title AS sender_title,
+                p.current_company AS sender_company, p.photo_url AS sender_photo,
+                p.email AS sender_email
+         FROM quick_ask_recipients qar
+         JOIN quick_asks qa ON qa.id = qar.ask_id
+         JOIN people p ON p.id = qa.sender_id
+         WHERE qar.id = $1 AND qar.recipient_id = $2 AND qar.status = 'sent'`,
+        [reply_to_id, session.id]
+      )
+
+      if (!origRes.rows[0]) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Original message not found' })); return
+      }
+
+      const orig = origRes.rows[0]
+      const senderId = orig.sender_id
+
+      // Create a quick_ask record for the reply
+      const askRes = await query(
+        `INSERT INTO quick_asks (sender_id, question) VALUES ($1, $2) RETURNING id`,
+        [session.id, `Reply to ${orig.sender_name}`]
+      )
+      const askId = askRes.rows[0].id
+
+      // Compute vouch path
+      const paths = await getVouchPaths(session.id, [senderId])
+      const vouchPath = paths.get(senderId) || [{ id: session.id, name: (await query('SELECT display_name FROM people WHERE id=$1', [session.id])).rows[0]?.display_name || 'You' }, { id: senderId, name: orig.sender_name }]
+      const degree = vouchPath.length - 1
+
+      // Create draft row with blank subject/body
+      const draftRes = await query(
+        `INSERT INTO quick_ask_recipients (ask_id, recipient_id, vouch_path, draft_subject, draft_body, knows_recipient)
+         VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
+        [askId, senderId, JSON.stringify(vouchPath), '', '']
+      )
+
+      const senderTitle = [orig.sender_title, orig.sender_company].filter(Boolean).join(' at ')
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        ask_id: askId,
+        drafts: [{
+          id: draftRes.rows[0].id,
+          recipient_id: senderId,
+          recipient_name: orig.sender_name,
+          recipient_title: senderTitle,
+          recipient_photo_url: orig.sender_photo || null,
+          vouch_path: vouchPath,
+          draft_subject: '',
+          draft_body: '',
+          no_email: !orig.sender_email,
+          degree,
+        }],
+      }))
+    } catch (err) {
+      console.error('[/api/quick-ask/reply-draft error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Vouch Paths: get intermediary names for selected people ────
+  if (req.method === 'POST' && req.url === '/api/vouch-paths') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const body = await readBody(req)
+      const { recipient_ids } = body
+      if (!Array.isArray(recipient_ids) || recipient_ids.length === 0) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'recipient_ids required' })); return
+      }
+      const pathMap = await getVouchPaths(session.id, recipient_ids.map(Number))
+      const result = {}
+      for (const rid of recipient_ids) {
+        const path = pathMap.get(Number(rid))
+        if (path && path.length >= 2) {
+          result[rid] = { intermediary_name: path[1].name, path: path.map(p => p.name) }
+        }
+      }
+      res.writeHead(200)
+      res.end(JSON.stringify(result))
+    } catch (err) {
+      console.error('[/api/vouch-paths error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Quick Ask: Draft outreach messages ─────────────────────────
   if (req.method === 'POST' && req.url === '/api/quick-ask/draft') {
     try {
       const session = await validateSession(req)
       if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
       const body = await readBody(req)
-      const { question, recipient_ids } = body
+      const { question, recipient_ids, recipient_context } = body
 
       if (!question || !Array.isArray(recipient_ids) || recipient_ids.length === 0) {
         res.writeHead(400); res.end(JSON.stringify({ error: 'question and recipient_ids required' })); return
@@ -2169,6 +2329,27 @@ ${networkContext}`,
         const chainText = vouchPath.map(p => p.name).join(' → ')
         const degree = vouchPath.length - 1
 
+        // Build relationship context for this recipient
+        const ctx = recipient_context?.[String(recipient.id)] || {}
+        let relationshipNote = ''
+        if (degree === 1) {
+          relationshipNote = `Relationship: The sender and recipient already know each other — they've directly vouched for one another in the VouchFour network. Write as if emailing someone you know, not a stranger.`
+        } else if (ctx.knows_them && ctx.relationship) {
+          relationshipNote = `Relationship: The sender already knows the recipient. Context from sender: "${ctx.relationship}". Write as if emailing someone they know, not a cold outreach.`
+        } else if (ctx.knows_them) {
+          relationshipNote = `Relationship: The sender already knows the recipient (no additional context provided). Write as if emailing someone they know, not a cold outreach.`
+        } else {
+          relationshipNote = `Relationship: The sender does not know the recipient personally. They are connected through the vouch chain shown above.`
+        }
+
+        // Add intermediary context if provided (how sender knows their mutual connection)
+        if (degree >= 2 && ctx.intermediary_context) {
+          const intermediaryName = vouchPath.length >= 2 ? vouchPath[1].name : null
+          if (intermediaryName) {
+            relationshipNote += `\nHow the sender knows ${intermediaryName}: "${ctx.intermediary_context}". You can mention this naturally to establish credibility (e.g., "${intermediaryName} and I ${ctx.intermediary_context}").`
+          }
+        }
+
         let draftSubject, draftBody
         try {
           const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
@@ -2181,16 +2362,25 @@ ${networkContext}`,
             body: JSON.stringify({
               model: 'claude-sonnet-4-20250514',
               max_tokens: 512,
-              system: `You are writing a brief, warm outreach email on behalf of one professional to another. They are connected through a vouch-based professional trust network called VouchFour.
+              system: `You are drafting a short professional email on behalf of one person to another. They are connected through VouchFour, a vouch-based professional network.
+
+CRITICAL — what the connection path means:
+- The "connection path" is a TRUST CHAIN, not an introduction. Nobody in the chain "connected" these people, "mentioned" anyone, or "recommended" reaching out.
+- The intermediary people in the chain have NOT been involved in this outreach at all. Do NOT say anyone "connected us", "put us in touch", "mentioned you", or "suggested I reach out."
+- For people who don't know each other: you can say something like "I found you through [intermediary]'s network" or "We're connected through [intermediary] on VouchFour" — but NEVER imply the intermediary took any action.
+- The sender knows the recipient's background from their VouchFour profile, NOT because anyone told them. Do NOT attribute knowledge of the recipient to the intermediary.
 
 Guidelines:
-- Write ONLY the email body (3-5 sentences). Short and personal.
-- Mention the connection naturally (e.g., "We're connected through [intermediary name]'s network" for 2nd degree, or "As a fellow member of [mutual person]'s VouchFour network" for 1st degree).
-- Reference the recipient's relevant background if it helps explain why they're being asked.
-- End with an open, easy-to-respond-to question — not a hard sell.
-- Tone: collegial, direct, like a real person wrote it. Not corporate, not robotic.
-- Do NOT include greetings like "Hi [name]" (that's added separately) or sign-offs like "Best regards".
-- Also generate a short subject line (max 60 chars).
+- Write ONLY the email body. 2-4 sentences max. Be concise and direct.
+- If the sender already knows the recipient, write like you're emailing a colleague — skip explaining the vouch connection and get straight to the ask.
+- If they don't know each other, briefly note the connection path (one short clause, not a whole sentence) and move to the ask.
+- Reference the recipient's background ONLY if it's directly relevant to the question being asked. Don't shoehorn in flattery.
+- State the sender's ACTUAL question — do not reinterpret, embellish, or add specifics the sender didn't ask about. If they asked "What was it like to work at X?", say exactly that. Do NOT invent sub-topics like "product strategy" or "team dynamics" that the sender never mentioned.
+- End with the ask itself or a simple next step. Keep it literal.
+- Tone: professional, direct, human. Like a real email from a busy professional. Not salesy, not overly warm, not corporate.
+- Do NOT include a greeting (e.g., "Hi [name]") or sign-off (e.g., "Best regards") — those are added separately.
+- Do NOT use filler phrases like "I hope this finds you well" or "I'd love to connect."
+- Generate a short, specific subject line (max 60 chars) — not generic.
 
 Format your response exactly as:
 SUBJECT: <subject line>
@@ -2203,6 +2393,7 @@ Recipient: ${recipient.display_name}, ${recipient.current_title || 'Professional
 Recipient background: ${recipientSummary}
 
 Connection path (${degree === 1 ? '1st degree — direct vouch' : degree + 'nd/rd degree'}): ${chainText}
+${relationshipNote}
 
 What ${senderFirst} wants to ask:
 "${question}"` }],
@@ -2223,10 +2414,11 @@ What ${senderFirst} wants to ask:
         }
 
         // Save the draft
+        const knowsRecipient = degree === 1 || (ctx.knows_them === true)
         const draftRes = await query(
-          `INSERT INTO quick_ask_recipients (ask_id, recipient_id, vouch_path, draft_subject, draft_body)
-           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-          [askId, recipient.id, JSON.stringify(vouchPath), draftSubject, draftBody]
+          `INSERT INTO quick_ask_recipients (ask_id, recipient_id, vouch_path, draft_subject, draft_body, knows_recipient)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [askId, recipient.id, JSON.stringify(vouchPath), draftSubject, draftBody, knowsRecipient]
         )
 
         drafts.push({
@@ -2368,14 +2560,22 @@ What ${senderFirst} wants to ask:
             results.push(result); continue
           }
 
-          // Build vouch chain HTML
+          // Build connection section — suppress for 1st degree or when sender knows recipient
           const vouchPath = draft.vouch_path || []
-          const chainParts = vouchPath.map((p, i) => {
-            const bold = `<strong style="color:#1C1917;">${p.name}</strong>`
-            if (i === 0) return bold
-            return `<span style="color:#4F46E5;font-size:13px;"> → </span>${bold}`
-          })
-          const vouchChainHtml = `<div style="font-size:14px;color:#44403C;line-height:1.8;">${chainParts.join('')}</div>`
+          const degree = vouchPath.length - 1
+          let connectionSection = ''
+          if (!draft.knows_recipient && degree >= 2) {
+            const chainParts = vouchPath.map((p, i) => {
+              const bold = `<strong style="color:#1C1917;">${p.name}</strong>`
+              if (i === 0) return bold
+              return `<span style="color:#4F46E5;font-size:13px;"> → </span>${bold}`
+            })
+            const vouchChainHtml = `<div style="font-size:14px;color:#44403C;line-height:1.8;">${chainParts.join('')}</div>`
+            connectionSection = `<div style="margin:16px 0;padding:16px 20px;background:#F8F7F6;border-radius:12px;border-left:4px solid #4F46E5;">
+  <div style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">How you're connected</div>
+  ${vouchChainHtml}
+</div>`
+          }
 
           // Convert draft body newlines to HTML
           const messageBody = draft.draft_body.replace(/\n/g, '<br/>')
@@ -2387,14 +2587,22 @@ What ${senderFirst} wants to ask:
             senderName: sender.display_name,
             senderFirstName: senderFirst,
             senderLastName: senderLast,
-            senderEmail: sender.email,
             recipientFirstName: recipientFirst,
             recipientName: draft.recipient_name,
-            vouchChainHtml,
+            connectionSection,
             messageBody,
-            profileUrl: `https://vouchfour.us/person/${session.id}`,
+            replyUrl: await (async () => {
+              // Generate a login token so recipient can authenticate via the CTA link
+              const replyLoginToken = crypto.randomUUID()
+              await query(
+                `INSERT INTO login_tokens (token, person_id, expires_at)
+                 VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
+                [replyLoginToken, draft.recipient_id]
+              )
+              return `${BASE_URL}/person/${session.id}?token=${replyLoginToken}&reply_to=${draft.id}`
+            })(),
           }
-          const subject = applyVariables(template.subject || draft.draft_subject, vars)
+          const subject = applyVariables(draft.draft_subject || template.subject, vars)
           const bodyHtml = applyVariables(template.body_html, vars)
           const html = emailLayout(bodyHtml, draft.recipient_id)
 
