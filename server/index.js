@@ -1628,6 +1628,87 @@ Rules:
     return
   }
 
+  // ─── Admin: enrichment review queue ──────────────────────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/admin/enrichment-queue')) {
+    if (!requireAdmin(req, res)) return
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`)
+      const status = url.searchParams.get('status') || 'all'
+
+      let whereClause = 'WHERE p.enriched_at IS NOT NULL'
+      const params = []
+      if (status !== 'all') {
+        params.push(status)
+        whereClause += ` AND p.review_status = $${params.length}`
+      }
+
+      const result = await query(`
+        SELECT
+          p.id, p.display_name, p.photo_url, p.current_title, p.current_company,
+          p.linkedin_url, p.enriched_at, p.review_status, p.review_notes, p.reviewed_at,
+          pe_compact.ai_summary AS compact_summary,
+          pe_claude.ai_summary AS ai_summary
+        FROM people p
+        LEFT JOIN person_enrichment pe_compact
+          ON pe_compact.person_id = p.id AND pe_compact.source = 'claude-compact'
+        LEFT JOIN person_enrichment pe_claude
+          ON pe_claude.person_id = p.id AND pe_claude.source = 'claude'
+        ${whereClause}
+        ORDER BY p.enriched_at DESC
+      `, params)
+
+      // Get counts for filter badges
+      const countsRes = await query(`
+        SELECT
+          COUNT(*) FILTER (WHERE review_status = 'pending') AS pending,
+          COUNT(*) FILTER (WHERE review_status = 'approved') AS approved,
+          COUNT(*) FILTER (WHERE review_status = 'flagged') AS flagged,
+          COUNT(*) AS total
+        FROM people WHERE enriched_at IS NOT NULL
+      `)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        people: result.rows,
+        counts: countsRes.rows[0],
+      }))
+    } catch (err) {
+      console.error('[/api/admin/enrichment-queue error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Admin: update enrichment review status ─────────────────────
+  if (req.method === 'PUT' && req.url === '/api/admin/enrichment-review') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const body = await readBody(req)
+      const { person_id, status, notes } = body
+
+      if (!person_id || !['approved', 'flagged', 'pending'].includes(status)) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'person_id and valid status (approved/flagged/pending) required' }))
+        return
+      }
+
+      await query(`
+        UPDATE people
+        SET review_status = $2, review_notes = $3, reviewed_at = NOW()
+        WHERE id = $1
+      `, [person_id, status, notes || null])
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true, person_id, status }))
+    } catch (err) {
+      console.error('[/api/admin/enrichment-review error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Enrichment trigger (no auth, tucked away) ───────────────────
   if (req.method === 'POST' && req.url === '/api/enrich') {
     try {

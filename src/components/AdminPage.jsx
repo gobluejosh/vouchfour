@@ -523,6 +523,35 @@ export default function AdminPage() {
             </div>
           ) : (
             <>
+              {/* Enrichment Review Link */}
+              <a
+                href="/admin/review"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  background: "#FFFFFF",
+                  borderRadius: 14,
+                  border: `1.5px solid ${C.border}`,
+                  padding: "16px 22px",
+                  marginBottom: 16,
+                  textDecoration: "none",
+                  transition: "border-color 0.15s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
+              >
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.ink, fontFamily: FONT }}>
+                    Enrichment Review
+                  </div>
+                  <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 2 }}>
+                    Review AI-generated profiles for accuracy
+                  </div>
+                </div>
+                <span style={{ fontSize: 18, color: C.sub }}>→</span>
+              </a>
+
               {/* Email Mode Toggle */}
               <Section title="Email Delivery">
                 <EmailToggle

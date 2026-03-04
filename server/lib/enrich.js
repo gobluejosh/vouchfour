@@ -409,7 +409,7 @@ IMPORTANT RULES:
   }
 
   // ── Finalize ────────────────────────────────────────────────────────
-  await query('UPDATE people SET enriched_at = NOW() WHERE id = $1', [personId])
+  await query('UPDATE people SET enriched_at = NOW(), review_status = $2 WHERE id = $1', [personId, 'pending'])
 
   console.log(`[Enrich] Complete | ${person.display_name} | apollo=${steps.apollo} brave=${steps.brave} claude=${steps.claude} | ${Date.now() - overallStart}ms`)
   return { personId, steps }
