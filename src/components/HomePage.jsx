@@ -611,6 +611,7 @@ function UserCard({ user, slug }) {
             name="brainQ"
             placeholder="Ask anything about your network..."
             autoComplete="off"
+            autoFocus
             style={{
               flex: 1, padding: "12px 14px",
               fontSize: 16, fontFamily: FONT,
@@ -761,7 +762,7 @@ export default function HomePage() {
           )}
         </div>
         <div style={{ fontSize: 15, color: "#374151", lineHeight: 1.6, marginLeft: 10 }}>
-          Not Connections. Trusted Recommendations.
+          Trusted Recommendations. Not Connections.
         </div>
       </div>
 
