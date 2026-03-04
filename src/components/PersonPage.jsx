@@ -398,6 +398,7 @@ export default function PersonPage() {
   const personId = Number(window.location.pathname.split("/person/")[1]) || 0;
 
   const [authState, setAuthState] = useState("checking");
+  const [authSlug, setAuthSlug] = useState(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -427,6 +428,7 @@ export default function PersonPage() {
         .then(d => {
           if (d.user) {
             setAuthState("authenticated");
+            if (d.user.linkedin) setAuthSlug(d.user.linkedin.split("/in/")[1]?.replace(/\/$/, ""));
             // Preserve reply_to param through login, strip only the token
             const kept = new URLSearchParams(window.location.search);
             kept.delete("token");
@@ -445,7 +447,10 @@ export default function PersonPage() {
         })
         .then(d => {
           setAuthState("authenticated");
-          if (d.user?.id) identify(d.user.id, { name: d.user.name });
+          if (d.user?.id) {
+            if (d.user.linkedin) setAuthSlug(d.user.linkedin.split("/in/")[1]?.replace(/\/$/, ""));
+            identify(d.user.id, { name: d.user.name });
+          }
         })
         .catch(() => setAuthState("unauthenticated"));
     }
@@ -665,7 +670,7 @@ export default function PersonPage() {
             <>
               {/* Back navigation */}
               <a
-                href="/talent"
+                href={authSlug ? `/talent/${authSlug}` : "/"}
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 4,
                   fontSize: 13, color: C.ink, fontWeight: 600,
