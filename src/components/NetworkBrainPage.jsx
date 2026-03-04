@@ -51,16 +51,6 @@ function Avatar({ name, size = 34, degree }) {
   );
 }
 
-function ExternalLinkIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-      <polyline points="15 3 21 3 21 9" />
-      <line x1="10" y1="14" x2="21" y2="3" />
-    </svg>
-  );
-}
-
 function SendIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -146,6 +136,31 @@ function renderInline(text) {
   });
 }
 
+// ── Photo avatar ──────────────────────────────────────────────────────
+
+function isPlaceholderPhoto(url) {
+  return url && url.includes("static.licdn.com");
+}
+
+function PhotoAvatar({ name, photoUrl, size = 36, degree }) {
+  const [imgError, setImgError] = useState(false);
+  if (photoUrl && !imgError && !isPlaceholderPhoto(photoUrl)) {
+    return (
+      <img
+        src={photoUrl}
+        alt={name}
+        onError={() => setImgError(true)}
+        style={{
+          width: size, height: size, borderRadius: size * 0.26,
+          objectFit: "cover", flexShrink: 0,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+        }}
+      />
+    );
+  }
+  return <Avatar name={name} size={size} degree={degree} />;
+}
+
 // ── Person card ────────────────────────────────────────────────────────
 
 function PersonCard({ person }) {
@@ -154,37 +169,96 @@ function PersonCard({ person }) {
 
   return (
     <a
-      href={person.linkedin_url}
-      target="_blank"
-      rel="noopener noreferrer"
+      href={`/person/${person.id}`}
       style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "8px 12px", background: colors.bg,
-        borderRadius: 10, border: `1.5px solid ${colors.border}`,
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 14px", background: colors.bg,
+        borderRadius: 12, border: `1.5px solid ${colors.border}`,
         textDecoration: "none", cursor: "pointer",
         transition: "box-shadow 0.15s",
       }}
     >
-      <Avatar name={person.name} size={32} degree={person.degree} />
+      <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={36} degree={person.degree} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontWeight: 600, fontSize: 13, color: C.ink, fontFamily: FONT }}>{person.name}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{person.name}</span>
           <span style={{
             fontSize: 9, fontWeight: 700, color: "#fff",
-            background: colors.badge, borderRadius: 3,
-            padding: "1px 4px", letterSpacing: 0.3,
+            background: colors.badge, borderRadius: 4,
+            padding: "1px 5px", letterSpacing: 0.3,
           }}>
             {DEGREE_LABELS[person.degree]}
           </span>
         </div>
         {subtitle && (
-          <div style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 12, color: C.ink, fontFamily: FONT, marginTop: 2, opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {subtitle}
           </div>
         )}
       </div>
-      <ExternalLinkIcon />
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+        <polyline points="9 18 15 12 9 6" />
+      </svg>
     </a>
+  );
+}
+
+// ── People mentioned — avatar strip + expand ─────────────────────────
+
+function PeopleMentioned({ people }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!people || people.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      {/* Always-visible avatar strip */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: "flex", alignItems: "center", gap: 0,
+          background: "none", border: "none", cursor: "pointer",
+          padding: "6px 0", fontFamily: FONT,
+        }}
+      >
+        {/* Stacked avatars */}
+        <div style={{ display: "flex", flexShrink: 0 }}>
+          {people.slice(0, 5).map((p, i) => (
+            <div
+              key={p.id}
+              style={{
+                marginLeft: i === 0 ? 0 : -8,
+                zIndex: people.length - i,
+                borderRadius: "50%",
+                border: "2px solid #fff",
+                lineHeight: 0,
+              }}
+            >
+              <PhotoAvatar name={p.name} photoUrl={p.photo_url} size={28} degree={p.degree} />
+            </div>
+          ))}
+        </div>
+        <span style={{
+          fontSize: 12, color: C.sub, fontWeight: 500,
+          marginLeft: 10, whiteSpace: "nowrap",
+        }}>
+          {people.length} {people.length === 1 ? "person" : "people"} mentioned
+        </span>
+        <svg
+          width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ marginLeft: 4, flexShrink: 0, transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {/* Expanded cards */}
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+          {people.map(p => <PersonCard key={p.id} person={p} />)}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -282,6 +356,7 @@ export default function NetworkBrainPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const bottomRef = useRef(null);
+  const lastBrainRef = useRef(null);
   const inputRef = useRef(null);
 
   // Auth flow on mount
@@ -318,9 +393,33 @@ export default function NetworkBrainPage() {
     }
   }, []);
 
-  // Scroll to bottom when messages change
+  // Auto-submit question from ?q= parameter (e.g. from homepage brain prompt)
+  const autoAskedRef = useRef(false);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (authState !== "authenticated" || autoAskedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get("q");
+    if (q?.trim()) {
+      autoAskedRef.current = true;
+      window.history.replaceState({}, "", window.location.pathname);
+      askQuestion(q.trim());
+    }
+  }, [authState]);
+
+  // Scroll behavior: when loading starts, scroll to loading indicator;
+  // when response arrives, scroll to top of latest brain response (offset for fixed header)
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    if (loading) {
+      // Scrolls down to show the thinking indicator
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else if (prevLoadingRef.current && lastBrainRef.current) {
+      // Just finished loading — scroll to the latest response with header offset
+      const el = lastBrainRef.current;
+      const y = el.getBoundingClientRect().top + window.scrollY - 96; // 80px header + 16px breathing room
+      window.scrollTo({ top: y, behavior: "smooth" });
+    }
+    prevLoadingRef.current = loading;
   }, [messages, loading]);
 
   async function askQuestion(question) {
@@ -387,34 +486,44 @@ export default function NetworkBrainPage() {
       display: "flex", flexDirection: "column", alignItems: "center",
       overflowX: "hidden",
     }}>
-      {/* Fixed header */}
+      {/* Fixed header — logo + back/brain branding */}
       <div style={{
         position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)",
         zIndex: 100, width: "100%", maxWidth: 900,
-        background: "#FFFFFF", padding: "12px 20px",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        borderBottom: `1px solid ${C.border}`,
+        background: "#FFFFFF", padding: "10px 20px 8px",
+        display: "flex", flexDirection: "column", gap: 4,
       }}>
-        <a href="/" style={{
-          fontWeight: 800, fontSize: 15, color: C.ink,
-          textDecoration: "none", fontFamily: FONT, letterSpacing: -0.3,
-        }}>VouchFour</a>
-        {user && (
-          <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT }}>
-            {user.name}
+        <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
+          Vouch<span style={{ color: C.accent }}>Four</span>
+        </a>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <a
+            href="#"
+            onClick={e => { e.preventDefault(); window.history.back(); }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none", flexShrink: 0, fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.ink} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            Back
+          </a>
+          <span style={{ color: C.border, fontSize: 14 }}>|</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <BrainIcon />
+            <span style={{ fontSize: 15, fontWeight: 700, color: C.ink, letterSpacing: -0.3 }}>Network Brain</span>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Main content */}
       <div style={{
         width: "100%", maxWidth: 900,
         background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
-        padding: "0 16px 120px", margin: "52px 0 0",
-        minHeight: "calc(100vh - 52px)",
+        padding: "0 16px 120px", margin: "80px 0 0",
+        minHeight: "calc(100vh - 80px)",
         display: "flex", flexDirection: "column",
       }}>
-        <div style={{ maxWidth: 520, margin: "0 auto", width: "100%", flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{ maxWidth: 480, margin: "0 auto", width: "100%", flex: 1, display: "flex", flexDirection: "column" }}>
 
           {/* Checking auth */}
           {authState === "checking" && (
@@ -437,18 +546,10 @@ export default function NetworkBrainPage() {
           {/* Authenticated — Brain UI */}
           {authState === "authenticated" && (
             <>
-              {/* Page header */}
-              <div style={{ textAlign: "center", paddingTop: 32, paddingBottom: 8 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 8 }}>
-                  <BrainIcon />
-                  <h1 style={{ fontSize: 22, fontWeight: 800, color: C.ink, margin: 0, letterSpacing: -0.5 }}>
-                    Network Brain
-                  </h1>
-                </div>
-                <p style={{ fontSize: 14, color: C.sub, lineHeight: 1.5, margin: 0 }}>
-                  Ask anything about your professional network
-                </p>
-              </div>
+              {/* Subtitle */}
+              <p style={{ fontSize: 14, color: C.sub, lineHeight: 1.5, margin: 0, textAlign: "center", paddingTop: 16, paddingBottom: 8 }}>
+                Ask anything about your professional network
+              </p>
 
               {/* Conversation area */}
               <div style={{ flex: 1, paddingTop: 16, paddingBottom: 16 }}>
@@ -483,45 +584,38 @@ export default function NetworkBrainPage() {
                 )}
 
                 {/* Messages */}
-                {messages.map((msg, i) => (
-                  <div key={i} style={{ marginBottom: 16 }}>
-                    {msg.role === "user" ? (
-                      /* User question bubble */
-                      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                        <div style={{
-                          background: C.accent, color: "#fff",
-                          padding: "10px 16px", borderRadius: "16px 16px 4px 16px",
-                          fontSize: 14, lineHeight: 1.5, fontFamily: FONT,
-                          maxWidth: "85%",
-                        }}>
-                          {msg.text}
-                        </div>
-                      </div>
-                    ) : (
-                      /* Brain answer */
-                      <div>
-                        <div style={{
-                          background: "#FFFFFF", border: `1px solid ${C.border}`,
-                          padding: "16px 18px", borderRadius: "4px 16px 16px 16px",
-                          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                        }}>
-                          {renderMarkdown(msg.text)}
-                        </div>
-                        {/* People cards */}
-                        {msg.people && msg.people.length > 0 && (
-                          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                            <div style={{ fontSize: 11, color: C.sub, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
-                              People mentioned
-                            </div>
-                            {msg.people.map(p => (
-                              <PersonCard key={p.id} person={p} />
-                            ))}
+                {messages.map((msg, i) => {
+                  const isLastBrain = msg.role === "brain" && i === messages.length - 1;
+                  return (
+                    <div key={i} ref={isLastBrain ? lastBrainRef : undefined} style={{ marginBottom: 16 }}>
+                      {msg.role === "user" ? (
+                        /* User question bubble */
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <div style={{
+                            background: C.accent, color: "#fff",
+                            padding: "10px 16px", borderRadius: "16px 16px 4px 16px",
+                            fontSize: 14, lineHeight: 1.5, fontFamily: FONT,
+                            maxWidth: "85%",
+                          }}>
+                            {msg.text}
                           </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                        </div>
+                      ) : (
+                        /* Brain answer */
+                        <div>
+                          <div style={{
+                            background: "#FFFFFF", border: `1px solid ${C.border}`,
+                            padding: "16px 18px", borderRadius: "4px 16px 16px 16px",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                          }}>
+                            {renderMarkdown(msg.text)}
+                          </div>
+                          <PeopleMentioned people={msg.people} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
 
                 {/* Loading indicator */}
                 {loading && (
@@ -531,7 +625,7 @@ export default function NetworkBrainPage() {
                       background: C.accent, animation: "pulse 1.2s infinite",
                     }} />
                     <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
-                      Thinking about your network...
+                      Thinking about your network — this usually takes about 10 seconds...
                     </span>
                     <style>{`@keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }`}</style>
                   </div>
@@ -550,7 +644,7 @@ export default function NetworkBrainPage() {
                 <form
                   onSubmit={handleSubmit}
                   style={{
-                    display: "flex", gap: 8, maxWidth: 520, margin: "0 auto",
+                    display: "flex", gap: 8, maxWidth: 480, margin: "0 auto",
                   }}
                 >
                   <input

@@ -1322,7 +1322,7 @@ Rules:
 
       res.writeHead(200)
       res.end(JSON.stringify({
-        user: { name: session.display_name, linkedin: linkedinUrl },
+        user: { id: session.id, name: session.display_name, linkedin: linkedinUrl },
         talent,
         myVouches,
         vouchTokens,
@@ -1335,6 +1335,132 @@ Rules:
       console.error('[/api/talent error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error', talent: [] }))
+    }
+    return
+  }
+
+  // ─── Person detail (auth required) ─────────────────────────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/person/')) {
+    try {
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        return
+      }
+
+      const personId = Number(req.url.split('/api/person/')[1])
+      if (!personId || isNaN(personId)) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Invalid person ID' }))
+        return
+      }
+
+      // Fetch person with all enrichment fields
+      const personRes = await query(`
+        SELECT id, display_name, linkedin_url, email, current_title, current_company,
+               location, seniority, industry, headline, photo_url, enriched_at
+        FROM people WHERE id = $1
+      `, [personId])
+
+      if (personRes.rows.length === 0) {
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Person not found' }))
+        return
+      }
+      const person = personRes.rows[0]
+
+      // Fetch AI summary, employment history, and brave web mentions in parallel
+      const [summaryRes, historyRes, braveRes, degreeRes] = await Promise.all([
+        query(`
+          SELECT ai_summary FROM person_enrichment
+          WHERE person_id = $1 AND source = 'claude'
+        `, [personId]),
+        query(`
+          SELECT organization, title, start_date, end_date, is_current
+          FROM employment_history
+          WHERE person_id = $1
+          ORDER BY is_current DESC, start_date DESC NULLS LAST
+        `, [personId]),
+        query(`
+          SELECT raw_payload FROM person_enrichment
+          WHERE person_id = $1 AND source = 'brave'
+        `, [personId]),
+        // Find connection degree relative to the requesting user
+        query(`
+          WITH degree1 AS (
+            SELECT DISTINCT vouchee_id AS person_id FROM vouches WHERE voucher_id = $1
+          ),
+          sponsors AS (
+            SELECT DISTINCT voucher_id FROM vouches WHERE vouchee_id = $1
+          ),
+          siblings AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM sponsors s JOIN vouches v ON v.voucher_id = s.voucher_id
+            WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+          ),
+          degree2 AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM degree1 d1 JOIN vouches v ON v.voucher_id = d1.person_id
+            WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+            UNION SELECT person_id FROM siblings
+          ),
+          degree3 AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM degree2 d2 JOIN vouches v ON v.voucher_id = d2.person_id
+            WHERE v.vouchee_id != $1
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree2)
+          )
+          SELECT CASE
+            WHEN $2 = $1 THEN 0
+            WHEN $2 IN (SELECT person_id FROM degree1) THEN 1
+            WHEN $2 IN (SELECT person_id FROM degree2) THEN 2
+            WHEN $2 IN (SELECT person_id FROM degree3) THEN 3
+            ELSE NULL
+          END AS degree
+        `, [session.id, personId]),
+      ])
+
+      // Extract brave web mentions (titles + descriptions from search results)
+      let webMentions = []
+      if (braveRes.rows.length > 0) {
+        const braveData = braveRes.rows[0].raw_payload
+        const allResults = [...(braveData.results1 || []), ...(braveData.results2 || [])]
+        const seen = new Set()
+        for (const r of allResults) {
+          if (seen.has(r.url)) continue
+          seen.add(r.url)
+          // Filter out generic LinkedIn/ZoomInfo/Apollo results
+          if (/linkedin\.com|zoominfo\.com|apollo\.io|rocketreach|signalhire/i.test(r.url)) continue
+          webMentions.push({ title: r.title || '', description: r.description || '', url: r.url || '' })
+        }
+        webMentions = webMentions.slice(0, 6)
+      }
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        person: {
+          id: person.id,
+          name: person.display_name,
+          linkedin_url: person.linkedin_url,
+          current_title: person.current_title,
+          current_company: person.current_company,
+          location: person.location,
+          industry: person.industry,
+          headline: person.headline,
+          photo_url: person.photo_url,
+        },
+        degree: degreeRes.rows[0]?.degree ?? null,
+        ai_summary: summaryRes.rows[0]?.ai_summary || null,
+        employment_history: historyRes.rows,
+        web_mentions: webMentions,
+        is_self: session.id === personId,
+      }))
+    } catch (err) {
+      console.error('[/api/person error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
     }
     return
   }
@@ -1609,11 +1735,12 @@ Rules:
 
       const [enrichmentRes, structuredRes, userProfileRes, userSummaryRes, userHistoryRes] = await Promise.all([
         query(`
-          SELECT person_id, ai_summary FROM person_enrichment
-          WHERE person_id = ANY($1) AND source = 'claude'
+          SELECT DISTINCT ON (person_id) person_id, ai_summary FROM person_enrichment
+          WHERE person_id = ANY($1) AND source IN ('claude-compact', 'claude') AND ai_summary IS NOT NULL
+          ORDER BY person_id, CASE source WHEN 'claude-compact' THEN 0 ELSE 1 END
         `, [personIds]),
         query(`
-          SELECT id, display_name, current_title, current_company, industry, linkedin_url
+          SELECT id, display_name, current_title, current_company, industry, linkedin_url, photo_url
           FROM people WHERE id = ANY($1)
         `, [personIds]),
         // User's own profile
@@ -1677,15 +1804,15 @@ Rules:
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1500,
+          max_tokens: 1000,
           system: `You are a professional network advisor. The user has a trusted vouch-based professional network.
 
 About the user asking questions:
 ${userContext}
 
-Below is data about every person in their network, including their role, company, industry, vouch score (higher = more trusted), degree of connection (1 = direct, 2 = one hop, 3 = two hops), and an AI-generated professional summary where available.
+Below is data about every person in their network, including their role, company, industry, vouch score (higher = more trusted), degree of connection (1 = direct, 2 = one hop, 3 = two hops), and a brief professional summary where available.
 
-Answer the user's question by recommending specific people from their network. Always reference people by name and explain why they're relevant. You know the user's background, so you can tailor recommendations based on shared experience, complementary skills, or relevant connections. If no one in the network matches, say so honestly. Be concise and actionable.
+Answer the user's question by recommending specific people from their network. Always reference people by name and explain why they're relevant. You know the user's background, so you can tailor recommendations based on shared experience, complementary skills, or relevant connections. If no one in the network matches, say so honestly. Keep responses to 2-4 short paragraphs. Use bullet points when listing multiple people. Be direct and actionable.
 
 Network (${talent.length} people):
 ${networkContext}`,
@@ -1712,6 +1839,7 @@ ${networkContext}`,
         vouch_score: t.vouch_score,
         current_title: structuredMap.get(t.id)?.current_title || null,
         current_company: structuredMap.get(t.id)?.current_company || null,
+        photo_url: structuredMap.get(t.id)?.photo_url || null,
       }))
 
       res.writeHead(200)

@@ -14,6 +14,13 @@ function namesMatch(stored, returned) {
   if (!stored || !returned) return false
   const a = stored.toLowerCase().split(/\s+/)
   const b = returned.toLowerCase().split(/\s+/)
+  // Require both first and last name to match (not just any single token)
+  if (a.length >= 2 && b.length >= 2) {
+    const firstMatch = a[0] === b[0] || a[0].length > 1 && b.includes(a[0])
+    const lastMatch = a[a.length - 1] === b[b.length - 1] || a[a.length - 1].length > 1 && b.includes(a[a.length - 1])
+    return firstMatch && lastMatch
+  }
+  // Fallback for single-name entries: require exact overlap
   return a.some(part => part.length > 1 && b.includes(part))
 }
 
@@ -288,7 +295,7 @@ export async function enrichPerson(personId) {
           body: JSON.stringify({
             model: 'claude-sonnet-4-20250514',
             max_tokens: 1024,
-            system: `You are a professional profile researcher. Synthesize a comprehensive professional summary paragraph about this person based on the structured data and web search results provided.
+            system: `Write a professional summary paragraph about this person.
 
 Include if available:
 - Current role and company
@@ -297,7 +304,13 @@ Include if available:
 - Areas of expertise and what they're known for
 - Recent professional activity or news
 
-Return a single paragraph of 3-6 sentences. Be factual — only include information from the data provided. If there isn't much data, keep it brief and honest. Do not include any preamble or labels — just the summary paragraph.`,
+IMPORTANT RULES:
+- Output ONLY the summary paragraph. No preamble, reasoning, labels, or commentary.
+- Never start with "Based on the search results" or similar meta-commentary.
+- The structured data (career history, title, company) is authoritative. Web mentions may reference other people with the same name — only include web mentions that clearly match the person's known role, company, or industry.
+- Do not include LinkedIn connection counts or other social media metrics.
+- If data is limited, write a shorter summary (2-3 sentences) with what you have. Do not pad with hedging language like "it is difficult to determine" or "without more information."
+- 3-6 sentences. Be factual and direct.`,
             messages: [{ role: 'user', content: userPrompt }],
           }),
         })
@@ -338,6 +351,40 @@ Return a single paragraph of 3-6 sentences. Be factual — only include informat
 
         steps.claude = aiSummary ? 'ok' : 'empty'
         console.log(`[Enrich] Claude ${Date.now() - start}ms | ${person.display_name} | ${(aiSummary || '').length} chars`)
+
+        // Generate compact summary for Network Brain context
+        if (aiSummary) {
+          try {
+            const compactRes = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify({
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 128,
+                system: 'Compress this professional summary into 1-2 sentences (max 40 words). Include: current role + company, 1-2 key career highlights. Drop: education, LinkedIn metrics, generic descriptors. Output ONLY the compressed summary, nothing else.',
+                messages: [{ role: 'user', content: aiSummary }],
+              }),
+            })
+            const compactData = await compactRes.json()
+            const compactSummary = (compactData.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+            if (compactSummary) {
+              await query(`
+                INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+                VALUES ($1, 'claude-compact', '{}', $2, NOW())
+                ON CONFLICT (person_id, source) DO UPDATE
+                SET ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+              `, [personId, compactSummary])
+              console.log(`[Enrich] Compact ${person.display_name} | ${compactSummary.length} chars`)
+            }
+          } catch (compactErr) {
+            console.warn(`[Enrich] Compact summary failed | ${person.display_name}:`, compactErr.message)
+          }
+        }
+
         break // Success — exit retry loop
       } finally {
         clearTimeout(timeout)

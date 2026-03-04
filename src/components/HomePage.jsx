@@ -536,7 +536,11 @@ function UserCard({ user, slug }) {
       borderRadius: 16, padding: "20px 22px",
       background: "#fff",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+      {/* Welcome + profile link */}
+      <a
+        href={user.id ? `/person/${user.id}` : "#"}
+        style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, textDecoration: "none" }}
+      >
         <div style={{
           width: 42, height: 42, borderRadius: 11,
           background: gradientForName(user.name), color: "#fff",
@@ -554,9 +558,15 @@ function UserCard({ user, slug }) {
           <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 1 }}>
             {user.email}
           </div>
+          {user.id && (
+            <div style={{ fontSize: 11, color: C.accent, fontWeight: 600, fontFamily: FONT, marginTop: 2 }}>
+              View your profile →
+            </div>
+          )}
         </div>
-      </div>
+      </a>
 
+      {/* Primary CTA — Talent Network */}
       <a
         href={`/talent/${slug}`}
         style={{
@@ -573,21 +583,76 @@ function UserCard({ user, slug }) {
         View Your Talent Network
       </a>
 
+      {/* Brain mini-prompt */}
+      <div style={{ marginTop: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 2 3.5 4 4 0 0 1-1 7.5v1a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2v-1a4 4 0 0 1-1-7.5A4 4 0 0 1 8 6a4 4 0 0 1 4-4z" />
+            <path d="M12 2v8" />
+            <path d="M8 6h8" />
+          </svg>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT }}>
+            Network Brain
+          </span>
+        </div>
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            const q = e.target.elements.brainQ.value.trim();
+            if (q) {
+              window.location.href = `/brain?q=${encodeURIComponent(q)}`;
+            } else {
+              window.location.href = "/brain";
+            }
+          }}
+          style={{ display: "flex", gap: 6 }}
+        >
+          <input
+            name="brainQ"
+            placeholder="Ask anything about your network..."
+            autoComplete="off"
+            style={{
+              flex: 1, padding: "10px 14px",
+              fontSize: 14, fontFamily: FONT,
+              color: C.ink, background: "#F9FAFB",
+              border: `1.5px solid ${C.border}`,
+              borderRadius: 10,
+              WebkitAppearance: "none",
+              transition: "border-color 0.15s",
+            }}
+            onFocus={e => { e.target.style.borderColor = C.accent; }}
+            onBlur={e => { e.target.style.borderColor = C.border; }}
+          />
+          <button
+            type="submit"
+            style={{
+              padding: "10px 12px",
+              background: C.accent, border: "none", borderRadius: 10,
+              cursor: "pointer", flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#fff",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 2 3.5 4 4 0 0 1-1 7.5v1a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2v-1a4 4 0 0 1-1-7.5A4 4 0 0 1 8 6a4 4 0 0 1 4-4z" />
+              <path d="M12 2v8" />
+              <path d="M8 6h8" />
+            </svg>
+          </button>
+        </form>
+      </div>
+
+      {/* Secondary vouch link */}
       <a
         href="/start-vouch"
         style={{
           display: "block", textAlign: "center",
-          marginTop: 8,
-          padding: "10px 20px",
-          background: "transparent", color: C.accent,
-          border: `1.5px solid ${C.border}`,
-          borderRadius: 12,
-          fontSize: 13, fontWeight: 600,
-          fontFamily: FONT, cursor: "pointer",
+          marginTop: 14, fontSize: 13, fontWeight: 600,
+          color: C.accent, fontFamily: FONT,
           textDecoration: "none",
         }}
       >
-        Keep building your network
+        Keep building your network →
       </a>
     </div>
     </div>

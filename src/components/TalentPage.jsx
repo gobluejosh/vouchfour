@@ -42,6 +42,37 @@ function Avatar({ name, size = 38, degree }) {
   );
 }
 
+function isPlaceholderPhoto(url) {
+  return url && url.includes("static.licdn.com");
+}
+
+function PhotoAvatar({ name, photoUrl, size = 42, degree }) {
+  const [imgError, setImgError] = useState(false);
+  if (photoUrl && !imgError && !isPlaceholderPhoto(photoUrl)) {
+    return (
+      <img
+        src={photoUrl}
+        alt={name}
+        onError={() => setImgError(true)}
+        style={{
+          width: size, height: size, borderRadius: size * 0.26,
+          objectFit: "cover", flexShrink: 0,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+        }}
+      />
+    );
+  }
+  return <Avatar name={name} size={size} degree={degree} />;
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
 function ExternalLinkIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -52,19 +83,28 @@ function ExternalLinkIcon() {
   );
 }
 
+function BrainIcon({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 2 3.5 4 4 0 0 1-1 7.5v1a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2v-1a4 4 0 0 1-1-7.5A4 4 0 0 1 8 6a4 4 0 0 1 4-4z" />
+      <path d="M12 2v8" />
+      <path d="M8 6h8" />
+    </svg>
+  );
+}
+
 function TalentCard({ talent }) {
   const colors = DEGREE_COLORS[talent.degree] || DEGREE_COLORS[3];
   const count = Number(talent.recommendation_count);
   const recText = count === 1
-    ? "Recommended by 1 person in your network"
-    : `Recommended by ${count} people in your network`;
+    ? "Recommended by 1 person"
+    : `Recommended by ${count} people`;
+  const subtitle = [talent.current_title, talent.current_company].filter(Boolean).join(" at ");
 
   return (
     <a
-      href={talent.linkedin_url}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={() => capture("talent_card_linkedin_clicked", { degree: talent.degree, is_cross_function: talent.is_cross_function })}
+      href={`/person/${talent.id}`}
+      onClick={() => capture("talent_card_clicked", { person_id: talent.id, degree: talent.degree, is_cross_function: talent.is_cross_function })}
       style={{
         display: "flex", alignItems: "center", gap: 12,
         padding: "12px 14px", background: colors.bg,
@@ -73,9 +113,9 @@ function TalentCard({ talent }) {
         transition: "box-shadow 0.15s",
       }}
     >
-      <Avatar name={talent.display_name} size={38} degree={talent.degree} />
+      <PhotoAvatar name={talent.display_name} photoUrl={talent.photo_url} size={42} degree={talent.degree} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontWeight: 600, fontSize: 15, color: C.ink, fontFamily: FONT }}>{talent.display_name}</span>
           <span style={{
             fontSize: 10, fontWeight: 700, color: "#fff",
@@ -85,11 +125,20 @@ function TalentCard({ talent }) {
             {DEGREE_LABELS[talent.degree]}
           </span>
         </div>
-        <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 2 }}>
+        {subtitle && (
+          <div style={{
+            fontSize: 12, color: C.ink, fontFamily: FONT, marginTop: 2,
+            opacity: 0.7,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {subtitle}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginTop: 2 }}>
           {recText}
         </div>
       </div>
-      <ExternalLinkIcon />
+      <ChevronRightIcon />
     </a>
   );
 }
@@ -414,7 +463,77 @@ export default function TalentPage() {
                 <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
                   {fullName}'s Trusted Talent Network
                 </div>
+                {user?.id && (
+                  <a
+                    href={`/person/${user.id}`}
+                    onClick={() => capture("own_profile_clicked", { source: "talent_page" })}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      fontSize: 12, color: C.accent, fontWeight: 600,
+                      fontFamily: FONT, textDecoration: "none",
+                      marginTop: 4,
+                    }}
+                  >
+                    View your profile →
+                  </a>
+                )}
               </div>
+
+              {/* Network Brain prompt */}
+              {!loading && talent.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <div style={{ color: C.sub, display: "flex", alignItems: "center" }}>
+                      <BrainIcon size={14} />
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT }}>
+                      Network Brain
+                    </span>
+                  </div>
+                  <form
+                    onSubmit={e => {
+                      e.preventDefault();
+                      const q = e.target.elements.brainQ.value.trim();
+                      capture("brain_cta_clicked", { source: "talent_page", has_query: !!q });
+                      if (q) {
+                        window.location.href = `/brain?q=${encodeURIComponent(q)}`;
+                      } else {
+                        window.location.href = "/brain";
+                      }
+                    }}
+                    style={{ display: "flex", gap: 6 }}
+                  >
+                    <input
+                      name="brainQ"
+                      placeholder="Ask anything about your network..."
+                      autoComplete="off"
+                      style={{
+                        flex: 1, padding: "10px 14px",
+                        fontSize: 14, fontFamily: FONT,
+                        color: C.ink, background: "#FFFFFF",
+                        border: `1.5px solid ${C.border}`,
+                        borderRadius: 10,
+                        WebkitAppearance: "none",
+                        transition: "border-color 0.15s",
+                      }}
+                      onFocus={e => { e.target.style.borderColor = C.accent; }}
+                      onBlur={e => { e.target.style.borderColor = C.border; }}
+                    />
+                    <button
+                      type="submit"
+                      style={{
+                        padding: "10px 12px",
+                        background: C.accent, border: "none", borderRadius: 10,
+                        cursor: "pointer", flexShrink: 0,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        color: "#fff",
+                      }}
+                    >
+                      <BrainIcon size={18} />
+                    </button>
+                  </form>
+                </div>
+              )}
 
               {/* Job function filter */}
               {!loading && reachableFunctions.length === 1 && (
