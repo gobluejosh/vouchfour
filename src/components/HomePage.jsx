@@ -672,16 +672,32 @@ export default function HomePage() {
   const [error, setError] = useState(null);
   const [identitySubmitting, setIdentitySubmitting] = useState(false);
 
-  // Check for existing session on mount
+  // Check for existing session (or validate login token) on mount
   useEffect(() => {
-    fetch("/api/auth/session", { credentials: "include" })
-      .then(res => {
-        if (res.ok) return res.json();
-        throw new Error("No session");
-      })
-      .then(data => setUser(data.user))
-      .catch(() => {})
-      .finally(() => setSessionChecked(true));
+    const params = new URLSearchParams(window.location.search);
+    const loginToken = params.get("token");
+
+    if (loginToken) {
+      fetch(`/api/auth/validate?token=${loginToken}`, { credentials: "include" })
+        .then(res => res.json())
+        .then(data => {
+          if (data.user) {
+            setUser(data.user);
+            window.history.replaceState({}, "", window.location.pathname);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setSessionChecked(true));
+    } else {
+      fetch("/api/auth/session", { credentials: "include" })
+        .then(res => {
+          if (res.ok) return res.json();
+          throw new Error("No session");
+        })
+        .then(data => setUser(data.user))
+        .catch(() => {})
+        .finally(() => setSessionChecked(true));
+    }
   }, []);
 
   function getSlug() {
