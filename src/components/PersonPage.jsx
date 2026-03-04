@@ -139,8 +139,11 @@ function PathAvatar({ name, photoUrl, size = 24 }) {
   );
 }
 
-function RecommendationPath({ path }) {
+function RecommendationPath({ path, degree, degreeMismatch }) {
   if (!path || path.length < 2) return null;
+
+  const degreeLabel = degree != null ? (DEGREE_LABELS[degree] || `${degree}°`) : null;
+  const showMismatchText = degreeMismatch && degreeLabel;
 
   return (
     <div style={{ marginTop: 14, marginBottom: 4 }}>
@@ -193,12 +196,14 @@ function RecommendationPath({ path }) {
           );
         })}
       </div>
-      <div style={{
-        fontSize: 10, color: "#9CA3AF", fontFamily: FONT,
-        marginTop: 5, fontStyle: "italic",
-      }}>
-        Each recommendation: one of their top 4
-      </div>
+      {showMismatchText && (
+        <div style={{
+          fontSize: 10, color: "#9CA3AF", fontFamily: FONT,
+          marginTop: 5, fontStyle: "italic",
+        }}>
+          {degreeLabel} degree by forward recommendation
+        </div>
+      )}
     </div>
   );
 }
@@ -801,7 +806,7 @@ export default function PersonPage() {
                 </div>
 
                 {/* Recommendation path */}
-                <RecommendationPath path={data.vouch_path} />
+                <RecommendationPath path={data.vouch_path} degree={data.degree} degreeMismatch={data.degree_mismatch} />
 
                 {/* Action buttons */}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

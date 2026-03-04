@@ -1589,14 +1589,18 @@ Rules:
       }
 
       // Compute vouch path with photo URLs and recommendation directions
+      // Uses bidirectional BFS for path display. Flags degree_mismatch when the
+      // path hop count doesn't match the degree (e.g. 1-hop reverse path for a 3rd degree person).
       const computedDegree = degreeRes.rows[0]?.degree ?? null
       let intermediary_name = null
       let vouch_path = null
+      let degree_mismatch = false
       if (computedDegree >= 1) {
         try {
           const pathMap = await getVouchPaths(Number(session.id), [Number(personId)])
           const rawPath = pathMap.get(Number(personId))
           if (rawPath && rawPath.length >= 2) {
+            degree_mismatch = (rawPath.length - 1) !== computedDegree
             intermediary_name = rawPath.length >= 3 ? rawPath[1].name : null
 
             // Load photo URLs + vouch directions for path members
@@ -1643,6 +1647,7 @@ Rules:
           photo_url: person.photo_url,
         },
         degree: computedDegree,
+        degree_mismatch,
         intermediary_name,
         vouch_path,
         ai_summary: summaryRes.rows[0]?.ai_summary || null,

@@ -235,7 +235,7 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
  * @param {number[]} recipientIds
  * @returns {Promise<Map<number, Array<{id: number, name: string}>>>}
  */
-export async function getVouchPaths(senderId, recipientIds) {
+export async function getVouchPaths(senderId, recipientIds, { directional = false } = {}) {
   // Load all vouches + names in one query
   const vouchRes = await query('SELECT voucher_id, vouchee_id FROM vouches')
   const nameRes = await query('SELECT id, display_name FROM people WHERE id = ANY($1)',
@@ -244,7 +244,7 @@ export async function getVouchPaths(senderId, recipientIds) {
   const nameMap = new Map()
   for (const row of nameRes.rows) nameMap.set(row.id, row.display_name)
 
-  // Build bidirectional adjacency list
+  // Build adjacency list (directional = forward-only, default = bidirectional)
   const adj = new Map()
   const addEdge = (a, b) => {
     if (!adj.has(a)) adj.set(a, new Set())
@@ -252,7 +252,7 @@ export async function getVouchPaths(senderId, recipientIds) {
   }
   for (const { voucher_id, vouchee_id } of vouchRes.rows) {
     addEdge(voucher_id, vouchee_id)
-    addEdge(vouchee_id, voucher_id)
+    if (!directional) addEdge(vouchee_id, voucher_id)
   }
 
   // BFS from sender, tracking parent pointers
