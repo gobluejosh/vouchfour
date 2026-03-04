@@ -1588,15 +1588,42 @@ Rules:
         webMentions = webMentions.slice(0, 6)
       }
 
-      // For 2nd/3rd degree connections, get the intermediary name
+      // Compute vouch path with photo URLs and recommendation directions
       const computedDegree = degreeRes.rows[0]?.degree ?? null
       let intermediary_name = null
-      if (computedDegree >= 2) {
+      let vouch_path = null
+      if (computedDegree >= 1) {
         try {
           const pathMap = await getVouchPaths(Number(session.id), [Number(personId)])
-          const path = pathMap.get(Number(personId))
-          if (path && path.length >= 2) {
-            intermediary_name = path[1].name // index 0 = sender, index 1 = first intermediary
+          const rawPath = pathMap.get(Number(personId))
+          if (rawPath && rawPath.length >= 2) {
+            intermediary_name = rawPath.length >= 3 ? rawPath[1].name : null
+
+            // Load photo URLs + vouch directions for path members
+            const pathIds = rawPath.map(p => p.id)
+            const [photoRes2, vouchDirRes] = await Promise.all([
+              query('SELECT id, photo_url FROM people WHERE id = ANY($1)', [pathIds]),
+              query(
+                'SELECT DISTINCT voucher_id, vouchee_id FROM vouches WHERE voucher_id = ANY($1) AND vouchee_id = ANY($1)',
+                [pathIds]
+              ),
+            ])
+
+            const photoMap = new Map()
+            for (const row of photoRes2.rows) photoMap.set(row.id, row.photo_url)
+
+            const vouchSet = new Set()
+            for (const row of vouchDirRes.rows) vouchSet.add(`${row.voucher_id}->${row.vouchee_id}`)
+
+            vouch_path = rawPath.map((p, i) => {
+              const node = { id: p.id, name: p.name, photo_url: photoMap.get(p.id) || null }
+              if (i < rawPath.length - 1) {
+                const nextId = rawPath[i + 1].id
+                node.recommends_next = vouchSet.has(`${p.id}->${nextId}`)
+                node.recommended_by_next = vouchSet.has(`${nextId}->${p.id}`)
+              }
+              return node
+            })
           }
         } catch (e) { /* non-critical */ }
       }
@@ -1617,6 +1644,7 @@ Rules:
         },
         degree: computedDegree,
         intermediary_name,
+        vouch_path,
         ai_summary: summaryRes.rows[0]?.ai_summary || null,
         employment_history: historyRes.rows,
         web_mentions: webMentions,

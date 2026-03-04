@@ -109,6 +109,100 @@ function BriefcaseIcon() {
   );
 }
 
+// ── Recommendation path visualization ─────────────────────────────────
+
+function PathAvatar({ name, photoUrl, size = 24 }) {
+  const [err, setErr] = useState(false);
+  const isPlaceholder = photoUrl && photoUrl.includes("static.licdn.com");
+  if (photoUrl && !err && !isPlaceholder) {
+    return (
+      <img
+        src={photoUrl}
+        alt={name}
+        onError={() => setErr(true)}
+        style={{
+          width: size, height: size, borderRadius: size * 0.3,
+          objectFit: "cover", flexShrink: 0,
+        }}
+      />
+    );
+  }
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: size * 0.3,
+      background: gradientForName(name), color: "#fff",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: size * 0.38, fontWeight: 700, fontFamily: FONT, flexShrink: 0,
+    }}>
+      {initialsForName(name)}
+    </div>
+  );
+}
+
+function RecommendationPath({ path }) {
+  if (!path || path.length < 2) return null;
+
+  return (
+    <div style={{ marginTop: 14, marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        {path.map((node, i) => {
+          const isFirst = i === 0;
+          const isLast = i === path.length - 1;
+          const prev = i > 0 ? path[i - 1] : null;
+
+          return (
+            <div key={node.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {prev && (() => {
+                const forward = prev.recommends_next;
+                const reverse = prev.recommended_by_next;
+                return (
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 2,
+                    fontSize: 11, color: C.sub, fontFamily: FONT, fontWeight: 500,
+                    whiteSpace: "nowrap",
+                  }}>
+                    {!forward && reverse && (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="15 6 9 12 15 18" />
+                      </svg>
+                    )}
+                    recommends
+                    {forward && (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="9 6 15 12 9 18" />
+                      </svg>
+                    )}
+                    {!forward && !reverse && (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="9 6 15 12 9 18" />
+                      </svg>
+                    )}
+                  </span>
+                );
+              })()}
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <PathAvatar name={node.name} photoUrl={node.photo_url} size={24} />
+                <span style={{
+                  fontSize: 12, fontWeight: isFirst || isLast ? 600 : 400,
+                  color: C.ink, fontFamily: FONT,
+                }}>
+                  {isFirst ? "You" : node.name.split(" ")[0]}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{
+        fontSize: 10, color: "#9CA3AF", fontFamily: FONT,
+        marginTop: 5, fontStyle: "italic",
+      }}>
+        Each recommendation: one of their top 4
+      </div>
+    </div>
+  );
+}
+
 // ── Login prompt ───────────────────────────────────────────────────────
 
 function LoginPrompt() {
@@ -706,25 +800,11 @@ export default function PersonPage() {
                   </div>
                 </div>
 
+                {/* Recommendation path */}
+                <RecommendationPath path={data.vouch_path} />
+
                 {/* Action buttons */}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {person.linkedin_url && (
-                    <a
-                      href={person.linkedin_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 6,
-                        padding: "8px 14px",
-                        background: "#FFFFFF", border: `1.5px solid ${C.border}`,
-                        borderRadius: 8, fontSize: 13, fontWeight: 600,
-                        color: C.ink, fontFamily: FONT,
-                        textDecoration: "none", cursor: "pointer",
-                      }}
-                    >
-                      View on LinkedIn <ExternalLinkIcon size={12} color={C.ink} />
-                    </a>
-                  )}
                   {data.is_self && !editingProfile && (
                     <button
                       onClick={() => setEditingProfile(true)}
@@ -1016,10 +1096,29 @@ export default function PersonPage() {
                   boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                 }}>
                   <div style={{
-                    fontSize: 11, fontWeight: 700, color: C.sub,
-                    textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    marginBottom: 12,
                   }}>
-                    Career History
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, color: C.sub,
+                      textTransform: "uppercase", letterSpacing: 0.5,
+                    }}>
+                      Career History
+                    </div>
+                    {person.linkedin_url && (
+                      <a
+                        href={person.linkedin_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          fontSize: 12, fontWeight: 600, color: C.sub,
+                          fontFamily: FONT, textDecoration: "none",
+                        }}
+                      >
+                        LinkedIn <ExternalLinkIcon size={11} color={C.sub} />
+                      </a>
+                    )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                     {data.employment_history.map((job, i) => {
