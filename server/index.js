@@ -1339,6 +1339,130 @@ Rules:
     return
   }
 
+  // ─── Update own profile (auth required) ────────────────────────────
+  if (req.method === 'PUT' && req.url.startsWith('/api/person/')) {
+    try {
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        return
+      }
+
+      const personId = Number(req.url.split('/api/person/')[1])
+      if (!personId || isNaN(personId)) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Invalid person ID' }))
+        return
+      }
+
+      // Only allow editing your own profile
+      if (session.id !== personId) {
+        res.writeHead(403)
+        res.end(JSON.stringify({ error: 'Can only edit your own profile' }))
+        return
+      }
+
+      const body = await readBody(req)
+
+      // Profile info update (name, linkedin_url, email)
+      if (body.type === 'profile') {
+        const updates = []
+        const params = []
+        let idx = 1
+
+        if (body.display_name !== undefined) {
+          updates.push(`display_name = $${idx++}`)
+          params.push(body.display_name.trim())
+        }
+        if (body.linkedin_url !== undefined) {
+          const normalized = normalizeLinkedInUrl(body.linkedin_url.trim())
+          updates.push(`linkedin_url = $${idx++}`)
+          params.push(normalized || body.linkedin_url.trim())
+        }
+        if (body.email !== undefined) {
+          updates.push(`email = $${idx++}`)
+          params.push(body.email.trim().toLowerCase() || null)
+        }
+
+        if (updates.length === 0) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'No fields to update' }))
+          return
+        }
+
+        params.push(personId)
+        await query(
+          `UPDATE people SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${idx}`,
+          params
+        )
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+
+      // AI summary update
+      if (body.type === 'summary') {
+        const newSummary = (body.ai_summary || '').trim()
+        if (!newSummary) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Summary cannot be empty' }))
+          return
+        }
+
+        await query(`
+          INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+          VALUES ($1, 'claude', '{"manual_edit": true}', $2, NOW())
+          ON CONFLICT (person_id, source) DO UPDATE
+          SET ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+        `, [personId, newSummary])
+
+        // Also generate updated compact summary
+        try {
+          const compactRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': process.env.ANTHROPIC_API_KEY,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 128,
+              system: 'Compress this professional summary into 1-2 sentences (max 40 words). Include: current role + company, 1-2 key career highlights. Drop: education, LinkedIn metrics, generic descriptors. Output ONLY the compressed summary, nothing else.',
+              messages: [{ role: 'user', content: newSummary }],
+            }),
+          })
+          const compactData = await compactRes.json()
+          const compactSummary = (compactData.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+          if (compactSummary) {
+            await query(`
+              INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+              VALUES ($1, 'claude-compact', '{}', $2, NOW())
+              ON CONFLICT (person_id, source) DO UPDATE
+              SET ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+            `, [personId, compactSummary])
+          }
+        } catch (compactErr) {
+          console.warn(`[Profile] Compact summary regen failed for ${personId}:`, compactErr.message)
+        }
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+
+      res.writeHead(400)
+      res.end(JSON.stringify({ error: 'Invalid update type. Use "profile" or "summary".' }))
+    } catch (err) {
+      console.error('[/api/person PUT error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Person detail (auth required) ─────────────────────────────────
   if (req.method === 'GET' && req.url.startsWith('/api/person/')) {
     try {
@@ -1444,6 +1568,7 @@ Rules:
           id: person.id,
           name: person.display_name,
           linkedin_url: person.linkedin_url,
+          email: Number(session.id) === Number(personId) ? (person.email || null) : undefined,
           current_title: person.current_title,
           current_company: person.current_company,
           location: person.location,
@@ -1455,7 +1580,7 @@ Rules:
         ai_summary: summaryRes.rows[0]?.ai_summary || null,
         employment_history: historyRes.rows,
         web_mentions: webMentions,
-        is_self: session.id === personId,
+        is_self: Number(session.id) === Number(personId),
       }))
     } catch (err) {
       console.error('[/api/person error]', err)

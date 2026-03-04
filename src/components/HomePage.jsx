@@ -585,16 +585,16 @@ function UserCard({ user, slug }) {
 
       {/* Brain mini-prompt */}
       <div style={{ marginTop: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 2 3.5 4 4 0 0 1-1 7.5v1a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2v-1a4 4 0 0 1-1-7.5A4 4 0 0 1 8 6a4 4 0 0 1 4-4z" />
-            <path d="M12 2v8" />
-            <path d="M8 6h8" />
+        <a href="/brain" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 8, textDecoration: "none" }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+            <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+            <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
           </svg>
-          <span style={{ fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.accent, fontFamily: FONT }}>
             Network Brain
           </span>
-        </div>
+        </a>
         <form
           onSubmit={e => {
             e.preventDefault();
@@ -613,7 +613,7 @@ function UserCard({ user, slug }) {
             autoComplete="off"
             style={{
               flex: 1, padding: "10px 14px",
-              fontSize: 14, fontFamily: FONT,
+              fontSize: 16, fontFamily: FONT,
               color: C.ink, background: "#F9FAFB",
               border: `1.5px solid ${C.border}`,
               borderRadius: 10,
@@ -634,9 +634,9 @@ function UserCard({ user, slug }) {
             }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 2 3.5 4 4 0 0 1-1 7.5v1a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2v-1a4 4 0 0 1-1-7.5A4 4 0 0 1 8 6a4 4 0 0 1 4-4z" />
-              <path d="M12 2v8" />
-              <path d="M8 6h8" />
+              <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+              <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+              <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
             </svg>
           </button>
         </form>

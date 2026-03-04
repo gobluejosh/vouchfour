@@ -86,9 +86,15 @@ function ExternalLinkIcon() {
 function BrainIcon({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 2 3.5 4 4 0 0 1-1 7.5v1a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2v-1a4 4 0 0 1-1-7.5A4 4 0 0 1 8 6a4 4 0 0 1 4-4z" />
-      <path d="M12 2v8" />
-      <path d="M8 6h8" />
+      <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+      <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+      <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
+      <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
+      <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+      <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+      <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
+      <path d="M6 18a4 4 0 0 1-1.967-.516" />
+      <path d="M19.967 17.484A4 4 0 0 1 18 18" />
     </svg>
   );
 }
@@ -283,7 +289,7 @@ function LoginPrompt() {
           autoComplete="off"
           style={{
             flex: 1, padding: "12px 14px",
-            fontSize: 15, border: `1.5px solid ${C.border}`,
+            fontSize: 16, border: `1.5px solid ${C.border}`,
             borderRadius: 10, fontFamily: FONT,
             color: C.ink, background: "#fff",
             WebkitAppearance: "none",
@@ -482,14 +488,14 @@ export default function TalentPage() {
               {/* Network Brain prompt */}
               {!loading && talent.length > 0 && (
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                    <div style={{ color: C.sub, display: "flex", alignItems: "center" }}>
+                  <a href="/brain" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 8, textDecoration: "none" }}>
+                    <div style={{ color: C.accent, display: "flex", alignItems: "center" }}>
                       <BrainIcon size={14} />
                     </div>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: C.accent, fontFamily: FONT }}>
                       Network Brain
                     </span>
-                  </div>
+                  </a>
                   <form
                     onSubmit={e => {
                       e.preventDefault();

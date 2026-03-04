@@ -192,6 +192,205 @@ function LoginPrompt() {
   );
 }
 
+// ── Pencil icon ───────────────────────────────────────────────────────
+
+function PencilIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="m15 5 4 4" />
+    </svg>
+  );
+}
+
+// ── Profile Edit Form ─────────────────────────────────────────────────
+
+function ProfileEditForm({ person, onSave, onCancel }) {
+  const [name, setName] = useState(person.name || "");
+  const [linkedin, setLinkedin] = useState(person.linkedin_url || "");
+  const [email, setEmail] = useState(person.email || "");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState(null);
+
+  async function handleSave() {
+    if (!name.trim()) { setFormError("Name is required"); return; }
+    setSaving(true);
+    setFormError(null);
+    try {
+      const res = await fetch(`/api/person/${person.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          type: "profile",
+          display_name: name.trim(),
+          linkedin_url: linkedin.trim(),
+          email: email.trim(),
+        }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      onSave({ name: name.trim(), linkedin_url: linkedin.trim(), email: email.trim() });
+    } catch {
+      setFormError("Failed to save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputStyle = {
+    width: "100%", padding: "10px 12px",
+    fontSize: 14, fontFamily: FONT, color: C.ink,
+    background: "#fff", border: `1.5px solid ${C.border}`,
+    borderRadius: 8, boxSizing: "border-box",
+    WebkitAppearance: "none",
+  };
+
+  const labelStyle = {
+    display: "block", fontSize: 11, fontWeight: 600,
+    color: C.sub, marginBottom: 4, fontFamily: FONT,
+  };
+
+  return (
+    <div style={{
+      background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+      border: `1.5px solid ${C.accent}`, marginBottom: 16,
+      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, color: C.accent,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
+      }}>
+        Edit Profile
+      </div>
+
+      <div style={{ marginBottom: 10 }}>
+        <label style={labelStyle}>Name</label>
+        <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
+      </div>
+      <div style={{ marginBottom: 10 }}>
+        <label style={labelStyle}>LinkedIn URL</label>
+        <input value={linkedin} onChange={e => setLinkedin(e.target.value)} placeholder="https://linkedin.com/in/..." style={inputStyle} />
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={labelStyle}>Email</label>
+        <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="you@example.com" style={inputStyle} />
+      </div>
+
+      {formError && <div style={{ fontSize: 12, color: "#DC2626", marginBottom: 10, fontFamily: FONT }}>{formError}</div>}
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            padding: "8px 18px", background: C.accent, color: "#fff",
+            border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600,
+            fontFamily: FONT, cursor: saving ? "default" : "pointer",
+            opacity: saving ? 0.6 : 1,
+          }}
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+        <button
+          onClick={onCancel}
+          style={{
+            padding: "8px 18px", background: "#F5F5F4", color: C.sub,
+            border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13,
+            fontWeight: 600, fontFamily: FONT, cursor: "pointer",
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Summary Edit Form ─────────────────────────────────────────────────
+
+function SummaryEditForm({ summary, personId, onSave, onCancel }) {
+  const [text, setText] = useState(summary || "");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState(null);
+
+  async function handleSave() {
+    if (!text.trim()) { setFormError("Summary cannot be empty"); return; }
+    setSaving(true);
+    setFormError(null);
+    try {
+      const res = await fetch(`/api/person/${personId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ type: "summary", ai_summary: text.trim() }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      onSave(text.trim());
+    } catch {
+      setFormError("Failed to save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{
+      background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+      border: `1.5px solid ${C.accent}`, marginBottom: 16,
+      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, color: C.accent,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+      }}>
+        Edit Professional Summary
+      </div>
+      <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginBottom: 10, lineHeight: 1.5 }}>
+        This summary is shown on your profile and used by Network Brain.
+      </div>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={6}
+        style={{
+          width: "100%", padding: "10px 12px",
+          fontSize: 14, fontFamily: FONT, color: C.ink,
+          background: "#fff", border: `1.5px solid ${C.border}`,
+          borderRadius: 8, resize: "vertical", lineHeight: 1.6,
+          boxSizing: "border-box",
+        }}
+      />
+
+      {formError && <div style={{ fontSize: 12, color: "#DC2626", marginTop: 8, fontFamily: FONT }}>{formError}</div>}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            padding: "8px 18px", background: C.accent, color: "#fff",
+            border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600,
+            fontFamily: FONT, cursor: saving ? "default" : "pointer",
+            opacity: saving ? 0.6 : 1,
+          }}
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+        <button
+          onClick={onCancel}
+          style={{
+            padding: "8px 18px", background: "#F5F5F4", color: C.sub,
+            border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13,
+            fontWeight: 600, fontFamily: FONT, cursor: "pointer",
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main PersonPage ────────────────────────────────────────────────────
 
 export default function PersonPage() {
@@ -201,6 +400,8 @@ export default function PersonPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [editingSummary, setEditingSummary] = useState(false);
 
   // Auth flow
   useEffect(() => {
@@ -371,44 +572,108 @@ export default function PersonPage() {
                   </div>
                 </div>
 
-                {/* LinkedIn button */}
-                {person.linkedin_url && (
-                  <a
-                    href={person.linkedin_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      padding: "8px 14px",
-                      background: "#FFFFFF", border: `1.5px solid ${C.border}`,
-                      borderRadius: 8, fontSize: 13, fontWeight: 600,
-                      color: C.ink, fontFamily: FONT,
-                      textDecoration: "none", cursor: "pointer",
-                    }}
-                  >
-                    View on LinkedIn <ExternalLinkIcon size={12} color={C.ink} />
-                  </a>
-                )}
+                {/* Action buttons */}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {person.linkedin_url && (
+                    <a
+                      href={person.linkedin_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        padding: "8px 14px",
+                        background: "#FFFFFF", border: `1.5px solid ${C.border}`,
+                        borderRadius: 8, fontSize: 13, fontWeight: 600,
+                        color: C.ink, fontFamily: FONT,
+                        textDecoration: "none", cursor: "pointer",
+                      }}
+                    >
+                      View on LinkedIn <ExternalLinkIcon size={12} color={C.ink} />
+                    </a>
+                  )}
+                  {data.is_self && !editingProfile && (
+                    <button
+                      onClick={() => setEditingProfile(true)}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        padding: "8px 14px",
+                        background: "#FFFFFF", border: `1.5px solid ${C.border}`,
+                        borderRadius: 8, fontSize: 13, fontWeight: 600,
+                        color: C.sub, fontFamily: FONT, cursor: "pointer",
+                      }}
+                    >
+                      <PencilIcon size={12} /> Edit Profile
+                    </button>
+                  )}
+                </div>
               </div>
 
+              {/* Profile edit form (inline, replaces hero area visually) */}
+              {editingProfile && (
+                <ProfileEditForm
+                  person={person}
+                  onSave={(updated) => {
+                    setData(prev => ({
+                      ...prev,
+                      person: {
+                        ...prev.person,
+                        name: updated.name,
+                        linkedin_url: updated.linkedin_url,
+                        email: updated.email,
+                      },
+                    }));
+                    setEditingProfile(false);
+                  }}
+                  onCancel={() => setEditingProfile(false)}
+                />
+              )}
+
               {/* AI Summary */}
-              {data.ai_summary && (
+              {editingSummary ? (
+                <SummaryEditForm
+                  summary={data.ai_summary}
+                  personId={person.id}
+                  onSave={(newSummary) => {
+                    setData(prev => ({ ...prev, ai_summary: newSummary }));
+                    setEditingSummary(false);
+                  }}
+                  onCancel={() => setEditingSummary(false)}
+                />
+              ) : data.ai_summary ? (
                 <div style={{
                   background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
                   border: `1px solid ${C.border}`, marginBottom: 16,
                   boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                 }}>
                   <div style={{
-                    fontSize: 11, fontWeight: 700, color: C.sub,
-                    textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    marginBottom: 8,
                   }}>
-                    Professional Summary
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, color: C.sub,
+                      textTransform: "uppercase", letterSpacing: 0.5,
+                    }}>
+                      Professional Summary
+                    </div>
+                    {data.is_self && (
+                      <button
+                        onClick={() => setEditingSummary(true)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          background: "none", border: "none", cursor: "pointer",
+                          fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT,
+                          padding: "2px 6px", borderRadius: 4,
+                        }}
+                      >
+                        <PencilIcon size={11} /> Edit
+                      </button>
+                    )}
                   </div>
                   <p style={{ fontSize: 14, lineHeight: 1.7, color: C.ink, margin: 0, fontFamily: FONT }}>
                     {data.ai_summary}
                   </p>
                 </div>
-              )}
+              ) : null}
 
               {/* Career History */}
               {data.employment_history && data.employment_history.length > 0 && (
