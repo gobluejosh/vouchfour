@@ -139,14 +139,24 @@ function PathAvatar({ name, photoUrl, size = 24 }) {
   );
 }
 
-function RecommendationPath({ path, degree, degreeMismatch }) {
+function RecommendationPath({ path, degree, degreeMismatch, canAsk, personFirstName, askOpen, onAskClick }) {
   if (!path || path.length < 2) return null;
 
   const degreeLabel = degree != null ? (DEGREE_LABELS[degree] || `${degree}°`) : null;
   const showMismatchText = degreeMismatch && degreeLabel;
 
   return (
-    <div style={{ marginTop: 14, marginBottom: 4 }}>
+    <div style={{
+      marginTop: 14, marginBottom: 8,
+      background: "#FAFAF9", border: `1px solid ${C.border}`,
+      borderRadius: 10, padding: "10px 14px",
+    }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700, color: C.sub,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+      }}>
+        Recommendation Pathway
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         {path.map((node, i) => {
           const isFirst = i === 0;
@@ -158,29 +168,12 @@ function RecommendationPath({ path, degree, degreeMismatch }) {
               {prev && (() => {
                 const forward = prev.recommends_next;
                 const reverse = prev.recommended_by_next;
+                // Arrow direction: forward vouch = →, reverse vouch = ←, fallback = →
+                const pointsLeft = !forward && reverse;
                 return (
-                  <span style={{
-                    display: "inline-flex", alignItems: "center", gap: 2,
-                    fontSize: 11, color: C.sub, fontFamily: FONT, fontWeight: 500,
-                    whiteSpace: "nowrap",
-                  }}>
-                    {!forward && reverse && (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="15 6 9 12 15 18" />
-                      </svg>
-                    )}
-                    recommends
-                    {forward && (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="9 6 15 12 9 18" />
-                      </svg>
-                    )}
-                    {!forward && !reverse && (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="9 6 15 12 9 18" />
-                      </svg>
-                    )}
-                  </span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points={pointsLeft ? "15 6 9 12 15 18" : "9 6 15 12 9 18"} />
+                  </svg>
                 );
               })()}
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -199,10 +192,29 @@ function RecommendationPath({ path, degree, degreeMismatch }) {
       {showMismatchText && (
         <div style={{
           fontSize: 10, color: "#9CA3AF", fontFamily: FONT,
-          marginTop: 5, fontStyle: "italic",
+          marginTop: 6, fontStyle: "italic",
         }}>
           {degreeLabel} degree by forward recommendation
         </div>
+      )}
+      {canAsk && !askOpen && (
+        <button
+          onClick={onAskClick}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "6px 12px", marginTop: 10,
+            background: "#FFFFFF", border: `1.5px solid ${C.border}`,
+            borderRadius: 7, fontSize: 12, fontWeight: 600,
+            color: C.accent, fontFamily: FONT, cursor: "pointer",
+            transition: "all 0.15s",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+            <polyline points="22,6 12,13 2,6" />
+          </svg>
+          Ask {personFirstName}
+        </button>
       )}
     </div>
   );
@@ -805,12 +817,16 @@ export default function PersonPage() {
                   </div>
                 </div>
 
-                {/* Recommendation path */}
-                <RecommendationPath path={data.vouch_path} degree={data.degree} degreeMismatch={data.degree_mismatch} />
+                {/* Recommendation pathway box (includes Ask button) */}
+                <RecommendationPath
+                  path={data.vouch_path} degree={data.degree} degreeMismatch={data.degree_mismatch}
+                  canAsk={canAsk} personFirstName={personFirstName} askOpen={askOpen}
+                  onAskClick={() => setAskOpen(true)}
+                />
 
-                {/* Action buttons */}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {data.is_self && !editingProfile && (
+                {/* Action buttons (self-view only) */}
+                {data.is_self && !editingProfile && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
                       onClick={() => setEditingProfile(true)}
                       style={{
@@ -823,27 +839,8 @@ export default function PersonPage() {
                     >
                       <PencilIcon size={12} /> Edit Profile
                     </button>
-                  )}
-                  {canAsk && !askOpen && (
-                    <button
-                      onClick={() => setAskOpen(true)}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 6,
-                        padding: "8px 14px",
-                        background: "#FFFFFF", border: `1.5px solid ${C.border}`,
-                        borderRadius: 8, fontSize: 13, fontWeight: 600,
-                        color: C.accent, fontFamily: FONT, cursor: "pointer",
-                        transition: "all 0.15s",
-                      }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                        <polyline points="22,6 12,13 2,6" />
-                      </svg>
-                      Ask {personFirstName}
-                    </button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
 
               {/* Quick Ask inline form */}
