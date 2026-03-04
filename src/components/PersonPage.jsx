@@ -665,8 +665,7 @@ export default function PersonPage() {
             <>
               {/* Back navigation */}
               <a
-                href="#"
-                onClick={e => { e.preventDefault(); window.history.back(); }}
+                href="/talent"
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 4,
                   fontSize: 13, color: C.ink, fontWeight: 600,
@@ -674,7 +673,7 @@ export default function PersonPage() {
                   paddingTop: 20, paddingBottom: 4,
                 }}
               >
-                <BackIcon /> Back
+                <BackIcon /> Talent Network
               </a>
 
               {/* Hero section */}
