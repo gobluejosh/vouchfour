@@ -165,7 +165,7 @@ function LoginPrompt() {
           autoComplete="off"
           style={{
             flex: 1, padding: "12px 14px",
-            fontSize: 15, border: `1.5px solid ${C.border}`,
+            fontSize: 16, border: `1.5px solid ${C.border}`,
             borderRadius: 10, fontFamily: FONT,
             color: C.ink, background: "#fff",
             WebkitAppearance: "none",
@@ -240,7 +240,7 @@ function ProfileEditForm({ person, onSave, onCancel }) {
 
   const inputStyle = {
     width: "100%", padding: "10px 12px",
-    fontSize: 14, fontFamily: FONT, color: C.ink,
+    fontSize: 16, fontFamily: FONT, color: C.ink,
     background: "#fff", border: `1.5px solid ${C.border}`,
     borderRadius: 8, boxSizing: "border-box",
     WebkitAppearance: "none",
@@ -355,7 +355,7 @@ function SummaryEditForm({ summary, personId, onSave, onCancel }) {
         rows={6}
         style={{
           width: "100%", padding: "10px 12px",
-          fontSize: 14, fontFamily: FONT, color: C.ink,
+          fontSize: 16, fontFamily: FONT, color: C.ink,
           background: "#fff", border: `1.5px solid ${C.border}`,
           borderRadius: 8, resize: "vertical", lineHeight: 1.6,
           boxSizing: "border-box",
@@ -783,7 +783,7 @@ export default function PersonPage() {
                     disabled={draftingLoading}
                     style={{
                       width: "100%", padding: "10px 12px",
-                      fontSize: 14, fontFamily: FONT, color: C.ink,
+                      fontSize: 16, fontFamily: FONT, color: C.ink,
                       background: "#fff", border: `1.5px solid ${C.border}`,
                       borderRadius: 8, resize: "vertical", lineHeight: 1.5,
                       boxSizing: "border-box", WebkitAppearance: "none",
@@ -837,7 +837,7 @@ export default function PersonPage() {
                             disabled={draftingLoading}
                             style={{
                               width: "100%", padding: "8px 10px",
-                              fontSize: 13, fontFamily: FONT, color: C.ink,
+                              fontSize: 16, fontFamily: FONT, color: C.ink,
                               background: "#fff", border: `1.5px solid ${C.border}`,
                               borderRadius: 6, boxSizing: "border-box",
                               WebkitAppearance: "none",
@@ -860,7 +860,7 @@ export default function PersonPage() {
                               disabled={draftingLoading}
                               style={{
                                 width: "100%", padding: "8px 10px",
-                                fontSize: 13, fontFamily: FONT, color: C.ink,
+                                fontSize: 16, fontFamily: FONT, color: C.ink,
                                 background: "#fff", border: `1.5px solid ${C.border}`,
                                 borderRadius: 6, boxSizing: "border-box",
                                 WebkitAppearance: "none",

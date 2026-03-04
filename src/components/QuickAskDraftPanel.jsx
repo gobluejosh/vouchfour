@@ -141,7 +141,7 @@ function DraftCard({ draft, sendingState, onEdit, onSend }) {
             disabled={isSending || isSent}
             style={{
               width: "100%", padding: "8px 10px", marginTop: 4,
-              fontSize: 14, border: `1.5px solid ${C.border}`,
+              fontSize: 16, border: `1.5px solid ${C.border}`,
               borderRadius: 8, fontFamily: FONT, color: C.ink,
               background: "#fff", WebkitAppearance: "none",
               transition: "border-color 0.15s",
@@ -163,7 +163,7 @@ function DraftCard({ draft, sendingState, onEdit, onSend }) {
             rows={4}
             style={{
               width: "100%", padding: "8px 10px", marginTop: 4,
-              fontSize: 14, border: `1.5px solid ${C.border}`,
+              fontSize: 16, border: `1.5px solid ${C.border}`,
               borderRadius: 8, fontFamily: FONT, color: C.ink,
               background: "#fff", WebkitAppearance: "none",
               resize: "vertical", lineHeight: 1.5,

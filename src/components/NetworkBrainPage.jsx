@@ -949,7 +949,7 @@ export default function NetworkBrainPage() {
                                                 placeholder={`How do you know ${personFirst}? (e.g., worked together at Acme)`}
                                                 style={{
                                                   width: "100%", padding: "8px 10px",
-                                                  fontSize: 13, fontFamily: FONT, color: C.ink,
+                                                  fontSize: 16, fontFamily: FONT, color: C.ink,
                                                   background: "#fff", border: `1.5px solid ${C.border}`,
                                                   borderRadius: 6, boxSizing: "border-box",
                                                   WebkitAppearance: "none",
@@ -974,7 +974,7 @@ export default function NetworkBrainPage() {
                                                   placeholder={`e.g., ${intermediaryFirst} and I worked together at Google`}
                                                   style={{
                                                     width: "100%", padding: "8px 10px",
-                                                    fontSize: 13, fontFamily: FONT, color: C.ink,
+                                                    fontSize: 16, fontFamily: FONT, color: C.ink,
                                                     background: "#fff", border: `1.5px solid ${C.border}`,
                                                     borderRadius: 6, boxSizing: "border-box",
                                                     WebkitAppearance: "none",
