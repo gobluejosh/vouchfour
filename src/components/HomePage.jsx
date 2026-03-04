@@ -281,7 +281,7 @@ function IdentityForm({ onComplete }) {
             fontSize: 18, fontWeight: 700, color: "#1E1B4B",
             lineHeight: 1.3, fontFamily: FONT, marginBottom: 4,
           }}>
-            Build your trusted talent network
+            Trusted Recommendations. Not Connections.
           </div>
         </div>
 
@@ -612,16 +612,16 @@ function UserCard({ user, slug }) {
             placeholder="Ask anything about your network..."
             autoComplete="off"
             style={{
-              flex: 1, padding: "10px 14px",
+              flex: 1, padding: "12px 14px",
               fontSize: 16, fontFamily: FONT,
-              color: C.ink, background: "#F9FAFB",
+              color: C.ink, background: "#fff",
               border: `1.5px solid ${C.border}`,
               borderRadius: 10,
               WebkitAppearance: "none",
-              transition: "border-color 0.15s",
+              transition: "border-color 0.15s, box-shadow 0.15s",
             }}
-            onFocus={e => { e.target.style.borderColor = C.accent; }}
-            onBlur={e => { e.target.style.borderColor = C.border; }}
+            onFocus={e => { e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(37,99,235,0.12)"; }}
+            onBlur={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "none"; }}
           />
           <button
             type="submit"

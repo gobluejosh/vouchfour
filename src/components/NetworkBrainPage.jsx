@@ -328,7 +328,10 @@ function LoginPrompt() {
             borderRadius: 10, fontFamily: FONT,
             color: C.ink, background: "#fff",
             WebkitAppearance: "none",
+            transition: "border-color 0.15s, box-shadow 0.15s",
           }}
+          onFocus={e => { e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(37,99,235,0.12)"; }}
+          onBlur={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "none"; }}
         />
         <button
           type="submit"
@@ -664,13 +667,14 @@ export default function NetworkBrainPage() {
                       flex: 1, padding: "14px 16px",
                       fontSize: 16, border: `1.5px solid ${C.border}`,
                       borderRadius: 14, fontFamily: FONT,
-                      color: C.ink, background: "#FFFFFF",
+                      color: C.ink, background: "#fff",
                       WebkitAppearance: "none",
                       boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
                       outline: "none",
+                      transition: "border-color 0.15s, box-shadow 0.15s",
                     }}
-                    onFocus={e => e.target.style.borderColor = C.accent}
-                    onBlur={e => e.target.style.borderColor = C.border}
+                    onFocus={e => { e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(37,99,235,0.12)"; }}
+                    onBlur={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
                   />
                   <button
                     type="submit"

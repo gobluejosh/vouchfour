@@ -7,21 +7,68 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
-// ── Name mismatch guard (the "Lee Mayer" case) ────────────────────────
+// ── Name mismatch guard (the "Lee Mayer" / "Brian Egan" cases) ─────────
 // Apollo sometimes returns a different person for a LinkedIn URL.
-// We require at least one name token overlap to accept the data.
+// We require both first and last name to match (with fuzzy handling
+// for nicknames, hyphens, and close spellings).
+
+const NICKNAMES = {
+  jim: 'james', james: 'jim', alex: 'alexander', alexander: 'alex',
+  greg: 'gregory', gregory: 'greg', bill: 'william', william: 'bill',
+  bob: 'robert', robert: 'bob', mike: 'michael', michael: 'mike',
+  dan: 'daniel', daniel: 'dan', ben: 'benjamin', benjamin: 'ben',
+  jon: 'jonathan', jonathan: 'jon', chris: 'christopher', christopher: 'chris',
+  matt: 'matthew', matthew: 'matt', nick: 'nicholas', nicholas: 'nick',
+  tom: 'thomas', thomas: 'tom', joe: 'joseph', joseph: 'joe',
+  art: 'arthur', arthur: 'art', ed: 'edward', edward: 'ed',
+  ted: 'theodore', theodore: 'ted', kate: 'katherine', katherine: 'kate',
+  liz: 'elizabeth', elizabeth: 'liz', beth: 'elizabeth',
+  rick: 'richard', richard: 'rick', dick: 'richard',
+  steve: 'steven', steven: 'steve', steph: 'stephanie', stephanie: 'steph',
+  tony: 'anthony', anthony: 'tony', dave: 'david', david: 'dave',
+  sam: 'samuel', samuel: 'sam', pat: 'patrick', patrick: 'pat',
+  jen: 'jennifer', jennifer: 'jen', jenn: 'jennifer',
+  rob: 'robert', will: 'william', tim: 'timothy', timothy: 'tim',
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
+  for (let i = 0; i <= m; i++) dp[i][0] = i
+  for (let j = 0; j <= n; j++) dp[0][j] = j
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+  return dp[m][n]
+}
+
+function tokenMatch(t1, t2) {
+  if (t1 === t2) return true
+  if (NICKNAMES[t1] === t2 || NICKNAMES[t2] === t1) return true
+  // Prefix match (len ≥ 3): "Art"→"Arthur", "Ben"→"Benjamin"
+  if (t1.length >= 3 && t2.startsWith(t1)) return true
+  if (t2.length >= 3 && t1.startsWith(t2)) return true
+  // Levenshtein ≤ 1 for names > 4 chars: "Zagozdan"→"Zagozdon", "Atieh"→"Atiah"
+  if (t1.length > 4 && t2.length > 4 && levenshtein(t1, t2) <= 1) return true
+  return false
+}
+
 function namesMatch(stored, returned) {
   if (!stored || !returned) return false
-  const a = stored.toLowerCase().split(/\s+/)
-  const b = returned.toLowerCase().split(/\s+/)
-  // Require both first and last name to match (not just any single token)
+  // Split on spaces AND hyphens so "Corder-Paul" → ["corder","paul"]
+  const tokenize = s => s.toLowerCase().split(/[\s-]+/).filter(t => t.length > 0)
+  const a = tokenize(stored)
+  const b = tokenize(returned)
+
   if (a.length >= 2 && b.length >= 2) {
-    const firstMatch = a[0] === b[0] || a[0].length > 1 && b.includes(a[0])
-    const lastMatch = a[a.length - 1] === b[b.length - 1] || a[a.length - 1].length > 1 && b.includes(a[a.length - 1])
+    const firstMatch = tokenMatch(a[0], b[0]) || b.some(t => tokenMatch(a[0], t))
+    const lastMatch = tokenMatch(a[a.length - 1], b[b.length - 1]) || b.some(t => tokenMatch(a[a.length - 1], t))
     return firstMatch && lastMatch
   }
-  // Fallback for single-name entries: require exact overlap
-  return a.some(part => part.length > 1 && b.includes(part))
+  // Fallback for single-name entries
+  return a.some(t1 => t1.length > 1 && b.some(t2 => tokenMatch(t1, t2)))
 }
 
 // ── Extract structured fields from Apollo person object ────────────────
