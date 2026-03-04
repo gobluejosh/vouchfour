@@ -939,10 +939,10 @@ export default function HomePage() {
               </div>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 2 }}>
-                  Confidential vouches
+                  Ask your network anything
                 </div>
                 <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, fontFamily: FONT }}>
-                  People vouch freely because their individual picks stay private. You see who was vouched for, but not by whom.
+                  The Network Brain finds the right people in your trusted circle for any question — and helps you reach out.
                 </div>
               </div>
               <div>
