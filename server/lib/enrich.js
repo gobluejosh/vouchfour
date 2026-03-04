@@ -168,8 +168,8 @@ export async function enrichPerson(personId) {
       console.log(`[Enrich] Apollo skipped | ${person.display_name} | no API key or LinkedIn URL`)
     }
 
-    // Extract context for downstream steps
-    if (apolloData?.person) {
+    // Extract context for downstream steps (only if Apollo data was saved or cached — skip on name mismatch)
+    if (apolloData?.person && steps.apollo !== 'name_mismatch') {
       const ap = apolloData.person
       context.title = ap.title || null
       context.company = ap.organization?.name || null
@@ -178,6 +178,15 @@ export async function enrichPerson(personId) {
         .filter(e => !e.current)
         .sort((a, b) => (b.start_date || '').localeCompare(a.start_date || ''))
       context.notablePastCompany = pastJobs[0]?.organization_name || null
+    }
+
+    // Fall back to DB fields if Apollo didn't provide context (e.g. name mismatch or skipped)
+    if (!context.title || !context.company) {
+      const dbRes = await query('SELECT current_title, current_company FROM people WHERE id = $1', [personId])
+      if (dbRes.rows[0]) {
+        context.title = context.title || dbRes.rows[0].current_title || null
+        context.company = context.company || dbRes.rows[0].current_company || null
+      }
     }
   } catch (err) {
     console.error(`[Enrich] Apollo error | ${person.display_name}:`, err.message)
