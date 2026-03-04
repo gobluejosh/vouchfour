@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
+import QuickAskDraftPanel from "./QuickAskDraftPanel.jsx";
 
 const C = {
   ink: "#171717",
@@ -169,21 +170,27 @@ function PhotoAvatar({ name, photoUrl, size = 36, degree }) {
 
 // ── Person card ────────────────────────────────────────────────────────
 
-function PersonCard({ person }) {
+function PersonCard({ person, inAskMode, isSelected, onToggle }) {
   const colors = DEGREE_COLORS[person.degree] || DEGREE_COLORS[3];
   const subtitle = [person.current_title, person.current_company].filter(Boolean).join(" at ");
 
-  return (
-    <a
-      href={`/person/${person.id}`}
-      style={{
-        display: "flex", alignItems: "center", gap: 12,
-        padding: "10px 14px", background: colors.bg,
-        borderRadius: 12, border: `1.5px solid ${colors.border}`,
-        textDecoration: "none", cursor: "pointer",
-        transition: "box-shadow 0.15s",
-      }}
-    >
+  const inner = (
+    <>
+      {inAskMode && (
+        <div style={{
+          width: 20, height: 20, borderRadius: 6,
+          border: `2px solid ${isSelected ? C.accent : C.border}`,
+          background: isSelected ? C.accent : "#fff",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0, transition: "all 0.15s",
+        }}>
+          {isSelected && (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+        </div>
+      )}
       <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={36} degree={person.degree} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -202,66 +209,125 @@ function PersonCard({ person }) {
           </div>
         )}
       </div>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-        <polyline points="9 18 15 12 9 6" />
-      </svg>
+      {!inAskMode && (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      )}
+    </>
+  );
+
+  if (inAskMode) {
+    return (
+      <div
+        onClick={() => onToggle?.(person.id)}
+        style={{
+          display: "flex", alignItems: "center", gap: 12,
+          padding: "10px 14px",
+          background: isSelected ? C.accentLight : colors.bg,
+          borderRadius: 12,
+          border: `1.5px solid ${isSelected ? C.accent : colors.border}`,
+          cursor: "pointer",
+          transition: "all 0.15s",
+        }}
+      >
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <a
+      href={`/person/${person.id}`}
+      style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 14px", background: colors.bg,
+        borderRadius: 12, border: `1.5px solid ${colors.border}`,
+        textDecoration: "none", cursor: "pointer",
+        transition: "box-shadow 0.15s",
+      }}
+    >
+      {inner}
     </a>
   );
 }
 
 // ── People mentioned — avatar strip + expand ─────────────────────────
 
-function PeopleMentioned({ people }) {
+function PeopleMentioned({ people, inAskMode, selectedPeople, onTogglePerson }) {
   const [expanded, setExpanded] = useState(false);
   if (!people || people.length === 0) return null;
 
+  const showExpanded = expanded || inAskMode;
+
   return (
     <div style={{ marginTop: 10 }}>
-      {/* Always-visible avatar strip */}
-      <button
-        onClick={() => setExpanded(e => !e)}
-        style={{
-          display: "flex", alignItems: "center", gap: 0,
-          background: "none", border: "none", cursor: "pointer",
-          padding: "6px 0", fontFamily: FONT,
-        }}
-      >
-        {/* Stacked avatars */}
-        <div style={{ display: "flex", flexShrink: 0 }}>
-          {people.slice(0, 5).map((p, i) => (
-            <div
-              key={p.id}
-              style={{
-                marginLeft: i === 0 ? 0 : -8,
-                zIndex: people.length - i,
-                borderRadius: "50%",
-                border: "2px solid #fff",
-                lineHeight: 0,
-              }}
-            >
-              <PhotoAvatar name={p.name} photoUrl={p.photo_url} size={28} degree={p.degree} />
-            </div>
-          ))}
-        </div>
-        <span style={{
-          fontSize: 12, color: C.sub, fontWeight: 500,
-          marginLeft: 10, whiteSpace: "nowrap",
-        }}>
-          {people.length} {people.length === 1 ? "person" : "people"} mentioned
-        </span>
-        <svg
-          width="14" height="14" viewBox="0 0 24 24" fill="none"
-          stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-          style={{ marginLeft: 4, flexShrink: 0, transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}
+      {/* Collapsed avatar strip — hidden in ask mode */}
+      {!inAskMode && (
+        <button
+          onClick={() => setExpanded(e => !e)}
+          style={{
+            display: "flex", alignItems: "center", gap: 0,
+            background: "none", border: "none", cursor: "pointer",
+            padding: "6px 0", fontFamily: FONT,
+          }}
         >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
+          {/* Stacked avatars */}
+          <div style={{ display: "flex", flexShrink: 0 }}>
+            {people.slice(0, 5).map((p, i) => (
+              <div
+                key={p.id}
+                style={{
+                  marginLeft: i === 0 ? 0 : -8,
+                  zIndex: people.length - i,
+                  borderRadius: "50%",
+                  border: "2px solid #fff",
+                  lineHeight: 0,
+                }}
+              >
+                <PhotoAvatar name={p.name} photoUrl={p.photo_url} size={28} degree={p.degree} />
+              </div>
+            ))}
+          </div>
+          <span style={{
+            fontSize: 12, color: C.sub, fontWeight: 500,
+            marginLeft: 10, whiteSpace: "nowrap",
+          }}>
+            {people.length} {people.length === 1 ? "person" : "people"} mentioned
+          </span>
+          <svg
+            width="14" height="14" viewBox="0 0 24 24" fill="none"
+            stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ marginLeft: 4, flexShrink: 0, transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+      )}
+
+      {/* Ask mode header */}
+      {inAskMode && (
+        <div style={{
+          fontSize: 12, fontWeight: 600, color: C.sub,
+          textTransform: "uppercase", letterSpacing: 0.5,
+          marginBottom: 8,
+        }}>
+          Select up to 3 people to message
+        </div>
+      )}
 
       {/* Expanded cards */}
-      {expanded && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
-          {people.map(p => <PersonCard key={p.id} person={p} />)}
+      {showExpanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: inAskMode ? 0 : 6 }}>
+          {people.map(p => (
+            <PersonCard
+              key={p.id}
+              person={p}
+              inAskMode={inAskMode}
+              isSelected={selectedPeople?.has(p.id)}
+              onToggle={onTogglePerson}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -368,6 +434,14 @@ export default function NetworkBrainPage() {
   const lastBrainRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Quick Ask state
+  const [askMode, setAskMode] = useState(null); // msg index of brain response in ask mode
+  const [selectedPeople, setSelectedPeople] = useState(new Set());
+  const [drafts, setDrafts] = useState(null);
+  const [askId, setAskId] = useState(null);
+  const [draftingLoading, setDraftingLoading] = useState(false);
+  const [askError, setAskError] = useState(null);
+
   // Auth flow on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -434,6 +508,9 @@ export default function NetworkBrainPage() {
   async function askQuestion(question) {
     if (!question.trim() || loading) return;
 
+    // Reset Quick Ask if active
+    if (askMode !== null) handleCancelAskMode();
+
     const q = question.trim();
     setInput("");
     setError(null);
@@ -483,6 +560,79 @@ export default function NetworkBrainPage() {
   function handleSubmit(e) {
     e.preventDefault();
     askQuestion(input);
+  }
+
+  // ── Quick Ask handlers ────────────────────────────────────────────
+  function handleEnterAskMode(msgIndex) {
+    setAskMode(msgIndex);
+    setSelectedPeople(new Set());
+    setDrafts(null);
+    setAskId(null);
+    setAskError(null);
+    setDraftingLoading(false);
+  }
+
+  function handleCancelAskMode() {
+    setAskMode(null);
+    setSelectedPeople(new Set());
+    setDrafts(null);
+    setAskId(null);
+    setAskError(null);
+    setDraftingLoading(false);
+  }
+
+  function handleTogglePerson(personId) {
+    setSelectedPeople(prev => {
+      const next = new Set(prev);
+      if (next.has(personId)) {
+        next.delete(personId);
+      } else if (next.size < 3) {
+        next.add(personId);
+      }
+      return next;
+    });
+  }
+
+  async function handleDraftMessages() {
+    if (askMode === null || selectedPeople.size === 0) return;
+
+    // The user question is in the message before the brain response
+    const userMsg = messages[askMode - 1];
+    const question = userMsg?.text || "";
+
+    setDraftingLoading(true);
+    setAskError(null);
+
+    try {
+      const res = await fetch("/api/quick-ask/draft", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          recipient_ids: [...selectedPeople],
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to draft messages");
+
+      setDrafts(data.drafts);
+      setAskId(data.ask_id);
+      capture("quick_ask_drafted", { recipient_count: data.drafts.length });
+    } catch (err) {
+      setAskError(err.message);
+    } finally {
+      setDraftingLoading(false);
+    }
+  }
+
+  function handleAskDone() {
+    setAskMode(null);
+    setSelectedPeople(new Set());
+    setDrafts(null);
+    setAskId(null);
+    setAskError(null);
   }
 
   const firstName = user?.name?.split(" ")[0] || "";
@@ -619,7 +769,105 @@ export default function NetworkBrainPage() {
                           }}>
                             {renderMarkdown(msg.text)}
                           </div>
-                          <PeopleMentioned people={msg.people} />
+                          <PeopleMentioned
+                            people={msg.people}
+                            inAskMode={askMode === i}
+                            selectedPeople={selectedPeople}
+                            onTogglePerson={handleTogglePerson}
+                          />
+
+                          {/* Quick Ask UI */}
+                          {msg.people?.length > 0 && (
+                            <>
+                              {/* "Ask them about this" button */}
+                              {askMode === null && (
+                                <button
+                                  onClick={() => handleEnterAskMode(i)}
+                                  style={{
+                                    display: "flex", alignItems: "center", gap: 6,
+                                    marginTop: 8, padding: "8px 14px",
+                                    background: "#fff", border: `1.5px solid ${C.border}`,
+                                    borderRadius: 10, fontSize: 13, fontWeight: 600,
+                                    color: C.accent, fontFamily: FONT,
+                                    cursor: "pointer", transition: "all 0.15s",
+                                  }}
+                                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.background = C.accentLight; }}
+                                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "#fff"; }}
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                    <polyline points="22,6 12,13 2,6" />
+                                  </svg>
+                                  Ask them about this
+                                </button>
+                              )}
+
+                              {/* Ask mode: selection + draft controls */}
+                              {askMode === i && !drafts && (
+                                <div style={{ marginTop: 10 }}>
+                                  {draftingLoading ? (
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
+                                      <div style={{
+                                        width: 8, height: 8, borderRadius: "50%",
+                                        background: C.accent, animation: "pulse 1.2s infinite",
+                                      }} />
+                                      <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
+                                        Drafting personalized messages...
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                      <button
+                                        onClick={handleCancelAskMode}
+                                        style={{
+                                          padding: "8px 14px", background: "#F5F5F4",
+                                          color: C.sub, border: `1px solid ${C.border}`,
+                                          borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                          fontFamily: FONT, cursor: "pointer",
+                                        }}
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        onClick={handleDraftMessages}
+                                        disabled={selectedPeople.size === 0}
+                                        style={{
+                                          padding: "8px 16px",
+                                          background: selectedPeople.size > 0 ? C.accent : "#C7D2FE",
+                                          color: "#fff", border: "none", borderRadius: 8,
+                                          fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                          cursor: selectedPeople.size > 0 ? "pointer" : "not-allowed",
+                                          transition: "background 0.15s",
+                                        }}
+                                      >
+                                        Draft Messages ({selectedPeople.size})
+                                      </button>
+                                    </div>
+                                  )}
+                                  {askError && (
+                                    <div style={{
+                                      marginTop: 8, padding: "8px 12px",
+                                      background: "#FEF2F2", borderRadius: 8,
+                                      fontSize: 13, color: "#DC2626", fontFamily: FONT,
+                                    }}>
+                                      {askError}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Draft review panel */}
+                              {askMode === i && drafts && (
+                                <QuickAskDraftPanel
+                                  drafts={drafts}
+                                  setDrafts={setDrafts}
+                                  askId={askId}
+                                  onDone={handleAskDone}
+                                  onCancel={handleCancelAskMode}
+                                />
+                              )}
+                            </>
+                          )}
                         </div>
                       )}
                     </div>

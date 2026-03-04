@@ -27,6 +27,7 @@ const TEMPLATE_LABELS = {
   you_were_vouched: "You Were Vouched (Legacy)",
   role_network: "Role Network (Legacy)",
   role_ready: "Role Ready (Legacy)",
+  quick_ask: "Quick Ask",
 };
 
 function adminFetch(url, secret, options = {}) {
@@ -332,6 +333,9 @@ export default function AdminPage() {
             nudge_2_delay_days: settings.nudge_2_delay_days,
             nudge_network_threshold: settings.nudge_network_threshold,
             voucher_nudge_delay_days: settings.voucher_nudge_delay_days,
+            quick_ask_max_recipients: settings.quick_ask_max_recipients,
+            quick_ask_max_sends_per_week: settings.quick_ask_max_sends_per_week,
+            quick_ask_max_receives_per_week: settings.quick_ask_max_receives_per_week,
           },
         }),
       });
@@ -682,6 +686,36 @@ export default function AdminPage() {
                     )}
                   </div>
                 </details>
+              </Section>
+
+              {/* Quick Ask Limits */}
+              <Section title="Quick Ask Limits">
+                <p style={{ fontSize: 12, color: C.sub, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+                  Rate limits for the Quick Ask outreach feature. Controls how many messages
+                  users can send and receive through the network.
+                </p>
+                <InputRow
+                  label="Max recipients per ask"
+                  description="Maximum people a user can message in a single ask"
+                  type="number"
+                  value={settings.quick_ask_max_recipients || ""}
+                  onChange={v => setSettings(s => ({ ...s, quick_ask_max_recipients: v }))}
+                />
+                <InputRow
+                  label="Max sends per week (sender)"
+                  description="Maximum asks a user can send per rolling 7-day window"
+                  type="number"
+                  value={settings.quick_ask_max_sends_per_week || ""}
+                  onChange={v => setSettings(s => ({ ...s, quick_ask_max_sends_per_week: v }))}
+                />
+                <InputRow
+                  label="Max receives per week (recipient)"
+                  description="Maximum asks a person can receive per rolling 7-day window"
+                  type="number"
+                  value={settings.quick_ask_max_receives_per_week || ""}
+                  onChange={v => setSettings(s => ({ ...s, quick_ask_max_receives_per_week: v }))}
+                />
+                <SaveButton onClick={saveSettings} saving={savingSettings} saved={savedSettings} />
               </Section>
 
               {/* Degree Coefficients */}

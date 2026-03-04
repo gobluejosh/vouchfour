@@ -222,3 +222,89 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
 
   return result.rows.filter(r => r.degree <= maxDegree)
 }
+
+/**
+ * Find the shortest vouch path from sender to each recipient.
+ * Uses BFS through the vouches table with bidirectional edges
+ * (a vouch link = trust in both directions for path display).
+ *
+ * Returns a Map of recipientId → [{id, name}, ...] from sender to recipient.
+ * Missing entries mean no path exists within 3 hops.
+ *
+ * @param {number} senderId
+ * @param {number[]} recipientIds
+ * @returns {Promise<Map<number, Array<{id: number, name: string}>>>}
+ */
+export async function getVouchPaths(senderId, recipientIds) {
+  // Load all vouches + names in one query
+  const vouchRes = await query('SELECT voucher_id, vouchee_id FROM vouches')
+  const nameRes = await query('SELECT id, display_name FROM people WHERE id = ANY($1)',
+    [[senderId, ...recipientIds]])
+
+  const nameMap = new Map()
+  for (const row of nameRes.rows) nameMap.set(row.id, row.display_name)
+
+  // Build bidirectional adjacency list
+  const adj = new Map()
+  const addEdge = (a, b) => {
+    if (!adj.has(a)) adj.set(a, new Set())
+    adj.get(a).add(b)
+  }
+  for (const { voucher_id, vouchee_id } of vouchRes.rows) {
+    addEdge(voucher_id, vouchee_id)
+    addEdge(vouchee_id, voucher_id)
+  }
+
+  // BFS from sender, tracking parent pointers
+  const recipientSet = new Set(recipientIds)
+  const parent = new Map() // personId → parentPersonId
+  const visited = new Set([senderId])
+  let frontier = [senderId]
+  const found = new Map() // recipientId → path
+  const MAX_DEPTH = 3
+
+  for (let depth = 0; depth < MAX_DEPTH && frontier.length > 0; depth++) {
+    const nextFrontier = []
+    for (const node of frontier) {
+      for (const neighbor of (adj.get(node) || [])) {
+        if (visited.has(neighbor)) continue
+        visited.add(neighbor)
+        parent.set(neighbor, node)
+        nextFrontier.push(neighbor)
+
+        if (recipientSet.has(neighbor) && !found.has(neighbor)) {
+          // Reconstruct path
+          const path = []
+          let cur = neighbor
+          while (cur !== undefined) {
+            path.unshift({ id: cur, name: nameMap.get(cur) || `Person #${cur}` })
+            cur = parent.get(cur)
+          }
+          found.set(neighbor, path)
+        }
+      }
+    }
+    frontier = nextFrontier
+    // Early exit if all recipients found
+    if (found.size === recipientSet.size) break
+  }
+
+  // Bulk-load any names we're missing from the paths
+  const allPathIds = new Set()
+  for (const path of found.values()) {
+    for (const node of path) allPathIds.add(node.id)
+  }
+  const missingIds = [...allPathIds].filter(id => !nameMap.has(id))
+  if (missingIds.length > 0) {
+    const extraNames = await query('SELECT id, display_name FROM people WHERE id = ANY($1)', [missingIds])
+    for (const row of extraNames.rows) nameMap.set(row.id, row.display_name)
+    // Patch names in paths
+    for (const path of found.values()) {
+      for (const node of path) {
+        if (nameMap.has(node.id)) node.name = nameMap.get(node.id)
+      }
+    }
+  }
+
+  return found
+}

@@ -6,8 +6,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { query, getClient } from './lib/db.js'
 import { normalizeLinkedInUrl } from './lib/linkedin.js'
-import { getTalentRecommendations } from './lib/graph.js'
-import { sendVouchInviteEmail, sendLoginLinkEmail } from './lib/email.js'
+import { getTalentRecommendations, getVouchPaths } from './lib/graph.js'
+import { sendVouchInviteEmail, sendLoginLinkEmail, sendEmail, loadTemplate, applyVariables, emailLayout, isUnsubscribed, getRecipient } from './lib/email.js'
 import { checkAndNotifyReadiness } from './lib/readiness.js'
 import { processNudges, processVoucherNudges } from './lib/nudge.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
@@ -53,6 +53,31 @@ async function canEmailRecipient(recipientId) {
     [recipientId]
   )
   return Number(result.rows[0].cnt) < DAILY_EMAIL_CAP
+}
+
+// ─── Quick Ask rate limiting ─────────────────────────────────────
+async function getQuickAskLimit(key, defaultVal = 3) {
+  const result = await query('SELECT value FROM app_settings WHERE key = $1', [key])
+  return Number(result.rows[0]?.value) || defaultVal
+}
+
+async function countSenderAsksThisWeek(senderId) {
+  const result = await query(
+    `SELECT COUNT(*) AS cnt FROM quick_ask_recipients
+     WHERE ask_id IN (SELECT id FROM quick_asks WHERE sender_id = $1)
+       AND status = 'sent' AND sent_at > NOW() - INTERVAL '7 days'`,
+    [senderId]
+  )
+  return Number(result.rows[0].cnt)
+}
+
+async function countRecipientReceivesThisWeek(recipientId) {
+  const result = await query(
+    `SELECT COUNT(*) AS cnt FROM quick_ask_recipients
+     WHERE recipient_id = $1 AND status = 'sent' AND sent_at > NOW() - INTERVAL '7 days'`,
+    [recipientId]
+  )
+  return Number(result.rows[0].cnt)
 }
 
 // Static file serving for production
@@ -2052,6 +2077,368 @@ ${networkContext}`,
       res.end(JSON.stringify({ answer, people: mentionedPeople }))
     } catch (err) {
       console.error('[/api/network-brain error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Quick Ask: Draft outreach messages ─────────────────────────
+  if (req.method === 'POST' && req.url === '/api/quick-ask/draft') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const body = await readBody(req)
+      const { question, recipient_ids } = body
+
+      if (!question || !Array.isArray(recipient_ids) || recipient_ids.length === 0) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'question and recipient_ids required' })); return
+      }
+
+      const maxRecipients = await getQuickAskLimit('quick_ask_max_recipients')
+      if (recipient_ids.length > maxRecipients) {
+        res.writeHead(400); res.end(JSON.stringify({ error: `Maximum ${maxRecipients} recipients per ask` })); return
+      }
+
+      // Check sender rate limit
+      const maxSends = await getQuickAskLimit('quick_ask_max_sends_per_week')
+      const senderCount = await countSenderAsksThisWeek(session.id)
+      if (senderCount >= maxSends) {
+        res.writeHead(429); res.end(JSON.stringify({ error: `You've reached your limit of ${maxSends} asks this week. Try again next week.`, asks_remaining: 0 })); return
+      }
+
+      // Check sender has email on file (needed for reply-to)
+      const senderRes = await query(
+        `SELECT p.id, p.display_name, p.email, p.current_title, p.current_company, p.photo_url,
+                pe.ai_summary
+         FROM people p
+         LEFT JOIN person_enrichment pe ON pe.person_id = p.id AND pe.source = 'claude'
+         WHERE p.id = $1`, [session.id])
+      const sender = senderRes.rows[0]
+      if (!sender?.email) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'You need an email address on your profile before sending asks. Update it on your profile page.' })); return
+      }
+
+      // Check recipient rate limits + load profiles
+      const recipientProfiles = []
+      const recipientsAtLimit = []
+      for (const rid of recipient_ids) {
+        const maxReceives = await getQuickAskLimit('quick_ask_max_receives_per_week')
+        const recvCount = await countRecipientReceivesThisWeek(rid)
+        if (recvCount >= maxReceives) {
+          recipientsAtLimit.push(rid)
+          continue
+        }
+        const rRes = await query(
+          `SELECT p.id, p.display_name, p.email, p.current_title, p.current_company, p.photo_url,
+                  pe.ai_summary
+           FROM people p
+           LEFT JOIN person_enrichment pe ON pe.person_id = p.id AND pe.source = 'claude'
+           WHERE p.id = $1`, [rid])
+        if (rRes.rows[0]) recipientProfiles.push(rRes.rows[0])
+      }
+
+      if (recipientProfiles.length === 0) {
+        res.writeHead(429); res.end(JSON.stringify({ error: 'All selected recipients have reached their receive limit this week.', recipients_at_limit: recipientsAtLimit })); return
+      }
+
+      // Compute vouch paths
+      const paths = await getVouchPaths(session.id, recipientProfiles.map(r => r.id))
+
+      // Create the ask record
+      const askRes = await query(
+        'INSERT INTO quick_asks (sender_id, question) VALUES ($1, $2) RETURNING id',
+        [session.id, question]
+      )
+      const askId = askRes.rows[0].id
+
+      // Draft messages via Claude for each recipient
+      const drafts = []
+      const senderFirst = sender.display_name.split(' ')[0]
+      const senderSummary = (sender.ai_summary || '').split('.').slice(0, 2).join('.') + '.'
+
+      for (const recipient of recipientProfiles) {
+        const vouchPath = paths.get(recipient.id) || [
+          { id: sender.id, name: sender.display_name },
+          { id: recipient.id, name: recipient.display_name }
+        ]
+        const recipientFirst = recipient.display_name.split(' ')[0]
+        const recipientSummary = (recipient.ai_summary || '').split('.').slice(0, 2).join('.') + '.'
+
+        // Build chain text for the prompt
+        const chainText = vouchPath.map(p => p.name).join(' → ')
+        const degree = vouchPath.length - 1
+
+        let draftSubject, draftBody
+        try {
+          const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': ANTHROPIC_API_KEY,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 512,
+              system: `You are writing a brief, warm outreach email on behalf of one professional to another. They are connected through a vouch-based professional trust network called VouchFour.
+
+Guidelines:
+- Write ONLY the email body (3-5 sentences). Short and personal.
+- Mention the connection naturally (e.g., "We're connected through [intermediary name]'s network" for 2nd degree, or "As a fellow member of [mutual person]'s VouchFour network" for 1st degree).
+- Reference the recipient's relevant background if it helps explain why they're being asked.
+- End with an open, easy-to-respond-to question — not a hard sell.
+- Tone: collegial, direct, like a real person wrote it. Not corporate, not robotic.
+- Do NOT include greetings like "Hi [name]" (that's added separately) or sign-offs like "Best regards".
+- Also generate a short subject line (max 60 chars).
+
+Format your response exactly as:
+SUBJECT: <subject line>
+BODY:
+<message body>`,
+              messages: [{ role: 'user', content: `Sender: ${sender.display_name}, ${sender.current_title || 'Professional'} at ${sender.current_company || 'N/A'}
+Sender background: ${senderSummary}
+
+Recipient: ${recipient.display_name}, ${recipient.current_title || 'Professional'} at ${recipient.current_company || 'N/A'}
+Recipient background: ${recipientSummary}
+
+Connection path (${degree === 1 ? '1st degree — direct vouch' : degree + 'nd/rd degree'}): ${chainText}
+
+What ${senderFirst} wants to ask:
+"${question}"` }],
+            }),
+          })
+          const data = await claudeRes.json()
+          const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+
+          // Parse SUBJECT and BODY
+          const subjectMatch = text.match(/SUBJECT:\s*(.+)/i)
+          const bodyMatch = text.match(/BODY:\s*([\s\S]+)/i)
+          draftSubject = subjectMatch ? subjectMatch[1].trim() : `Quick question from ${senderFirst} via your network`
+          draftBody = bodyMatch ? bodyMatch[1].trim() : `I'm reaching out through our VouchFour network (connected via ${chainText}). ${question}`
+        } catch (err) {
+          console.warn(`[Quick Ask] Claude draft failed for recipient ${recipient.id}:`, err.message)
+          draftSubject = `Quick question from ${senderFirst} via your network`
+          draftBody = `I'm reaching out through our VouchFour network (connected via ${chainText}). ${question}`
+        }
+
+        // Save the draft
+        const draftRes = await query(
+          `INSERT INTO quick_ask_recipients (ask_id, recipient_id, vouch_path, draft_subject, draft_body)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          [askId, recipient.id, JSON.stringify(vouchPath), draftSubject, draftBody]
+        )
+
+        drafts.push({
+          id: draftRes.rows[0].id,
+          recipient_id: recipient.id,
+          recipient_name: recipient.display_name,
+          recipient_title: [recipient.current_title, recipient.current_company].filter(Boolean).join(' at '),
+          recipient_photo_url: recipient.photo_url || null,
+          vouch_path: vouchPath,
+          draft_subject: draftSubject,
+          draft_body: draftBody,
+          no_email: !recipient.email,
+          degree,
+        })
+      }
+
+      trackEvent(session.id, 'quick_ask_drafted', { ask_id: askId, recipient_count: drafts.length })
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        ask_id: askId,
+        drafts,
+        recipients_at_limit: recipientsAtLimit,
+        asks_remaining_this_week: maxSends - senderCount - 1,
+      }))
+    } catch (err) {
+      console.error('[/api/quick-ask/draft error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Quick Ask: Edit a draft ──────────────────────────────────────
+  if (req.method === 'PUT' && req.url.match(/^\/api\/quick-ask\/draft\/\d+$/)) {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const draftId = Number(req.url.split('/').pop())
+      const body = await readBody(req)
+
+      // Verify ownership
+      const check = await query(
+        `SELECT qar.id, qar.status FROM quick_ask_recipients qar
+         JOIN quick_asks qa ON qa.id = qar.ask_id
+         WHERE qar.id = $1 AND qa.sender_id = $2`, [draftId, session.id])
+      if (!check.rows[0]) { res.writeHead(404); res.end(JSON.stringify({ error: 'Draft not found' })); return }
+      if (check.rows[0].status !== 'draft') { res.writeHead(400); res.end(JSON.stringify({ error: 'Cannot edit a sent message' })); return }
+
+      await query(
+        'UPDATE quick_ask_recipients SET draft_subject = COALESCE($2, draft_subject), draft_body = COALESCE($3, draft_body) WHERE id = $1',
+        [draftId, body.draft_subject || null, body.draft_body || null]
+      )
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true }))
+    } catch (err) {
+      console.error('[/api/quick-ask/draft/:id error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Quick Ask: Send drafted messages ─────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/quick-ask/send') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const body = await readBody(req)
+      const { ask_id, recipient_row_ids } = body
+
+      if (!ask_id) { res.writeHead(400); res.end(JSON.stringify({ error: 'ask_id required' })); return }
+
+      // Load drafts for this ask, verify ownership
+      let draftsQuery = `
+        SELECT qar.*, qa.sender_id, qa.question,
+               p.display_name AS recipient_name, p.email AS recipient_email
+        FROM quick_ask_recipients qar
+        JOIN quick_asks qa ON qa.id = qar.ask_id
+        JOIN people p ON p.id = qar.recipient_id
+        WHERE qar.ask_id = $1 AND qa.sender_id = $2 AND qar.status = 'draft'`
+      const params = [ask_id, session.id]
+      if (Array.isArray(recipient_row_ids) && recipient_row_ids.length > 0) {
+        draftsQuery += ` AND qar.id = ANY($3)`
+        params.push(recipient_row_ids)
+      }
+      const draftsRes = await query(draftsQuery, params)
+
+      if (draftsRes.rows.length === 0) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'No drafts found to send' })); return
+      }
+
+      // Re-check sender rate limit
+      const maxSends = await getQuickAskLimit('quick_ask_max_sends_per_week')
+      const senderCount = await countSenderAsksThisWeek(session.id)
+      if (senderCount >= maxSends) {
+        res.writeHead(429); res.end(JSON.stringify({ error: 'Weekly send limit reached' })); return
+      }
+
+      // Load sender info for template
+      const senderRes = await query('SELECT display_name, email FROM people WHERE id = $1', [session.id])
+      const sender = senderRes.rows[0]
+      const senderParts = sender.display_name.split(' ')
+      const senderFirst = senderParts[0]
+      const senderLast = senderParts.slice(1).join(' ')
+
+      const results = []
+
+      for (const draft of draftsRes.rows) {
+        const result = { id: draft.id, recipient_id: draft.recipient_id, status: 'failed', reason: null }
+
+        try {
+          // Check recipient rate limit
+          const maxReceives = await getQuickAskLimit('quick_ask_max_receives_per_week')
+          const recvCount = await countRecipientReceivesThisWeek(draft.recipient_id)
+          if (recvCount >= maxReceives) {
+            result.reason = 'Recipient has reached their receive limit this week'
+            results.push(result); continue
+          }
+
+          // Check unsubscribed
+          if (await isUnsubscribed(draft.recipient_id)) {
+            result.reason = 'Recipient has unsubscribed from emails'
+            await query("UPDATE quick_ask_recipients SET status = 'failed' WHERE id = $1", [draft.id])
+            results.push(result); continue
+          }
+
+          // Check daily email cap
+          if (!(await canEmailRecipient(draft.recipient_id))) {
+            result.reason = 'Recipient daily email limit reached, try tomorrow'
+            results.push(result); continue
+          }
+
+          // Check recipient has email
+          if (!draft.recipient_email) {
+            result.reason = 'No email address on file for this person'
+            await query("UPDATE quick_ask_recipients SET status = 'failed' WHERE id = $1", [draft.id])
+            results.push(result); continue
+          }
+
+          // Build vouch chain HTML
+          const vouchPath = draft.vouch_path || []
+          const chainParts = vouchPath.map((p, i) => {
+            const bold = `<strong style="color:#1C1917;">${p.name}</strong>`
+            if (i === 0) return bold
+            return `<span style="color:#4F46E5;font-size:13px;"> → </span>${bold}`
+          })
+          const vouchChainHtml = `<div style="font-size:14px;color:#44403C;line-height:1.8;">${chainParts.join('')}</div>`
+
+          // Convert draft body newlines to HTML
+          const messageBody = draft.draft_body.replace(/\n/g, '<br/>')
+
+          // Load and populate email template
+          const template = await loadTemplate('quick_ask')
+          const recipientFirst = draft.recipient_name.split(' ')[0]
+          const vars = {
+            senderName: sender.display_name,
+            senderFirstName: senderFirst,
+            senderLastName: senderLast,
+            senderEmail: sender.email,
+            recipientFirstName: recipientFirst,
+            recipientName: draft.recipient_name,
+            vouchChainHtml,
+            messageBody,
+            profileUrl: `https://vouchfour.us/person/${session.id}`,
+          }
+          const subject = applyVariables(template.subject || draft.draft_subject, vars)
+          const bodyHtml = applyVariables(template.body_html, vars)
+          const html = emailLayout(bodyHtml, draft.recipient_id)
+
+          // Send via Resend
+          const recipientEmail = await getRecipient(draft.recipient_email)
+          const emailResult = await sendEmail({
+            to: recipientEmail,
+            subject,
+            html,
+            personId: draft.recipient_id,
+            templateKey: 'quick_ask',
+          })
+
+          // Record in sent_emails
+          await query(
+            `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
+             VALUES ($1, 'quick_ask', $2, $3)`,
+            [draft.recipient_id, ask_id, emailResult?.id || null]
+          )
+
+          // Update draft status
+          await query(
+            "UPDATE quick_ask_recipients SET status = 'sent', sent_at = NOW() WHERE id = $1",
+            [draft.id]
+          )
+
+          result.status = 'sent'
+          trackEvent(session.id, 'quick_ask_sent', {
+            ask_id, recipient_id: draft.recipient_id,
+            degree: (draft.vouch_path || []).length - 1,
+          })
+        } catch (sendErr) {
+          console.error(`[Quick Ask] Send failed for draft ${draft.id}:`, sendErr.message)
+          result.reason = 'Email delivery failed'
+          await query("UPDATE quick_ask_recipients SET status = 'failed' WHERE id = $1", [draft.id])
+        }
+
+        results.push(result)
+      }
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ results }))
+    } catch (err) {
+      console.error('[/api/quick-ask/send error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }

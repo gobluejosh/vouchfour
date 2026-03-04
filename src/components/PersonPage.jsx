@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
+import QuickAskDraftPanel from "./QuickAskDraftPanel.jsx";
 
 const C = {
   ink: "#171717",
@@ -403,6 +404,14 @@ export default function PersonPage() {
   const [editingProfile, setEditingProfile] = useState(false);
   const [editingSummary, setEditingSummary] = useState(false);
 
+  // Quick Ask state
+  const [askOpen, setAskOpen] = useState(false);
+  const [askQuestion, setAskQuestion] = useState("");
+  const [draftingLoading, setDraftingLoading] = useState(false);
+  const [drafts, setDrafts] = useState(null);
+  const [askId, setAskId] = useState(null);
+  const [askError, setAskError] = useState(null);
+
   // Auth flow
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -452,8 +461,57 @@ export default function PersonPage() {
       .finally(() => setLoading(false));
   }, [authState, personId]);
 
+  // ── Quick Ask handlers ──────────────────────────────────────────────
+  function handleAskCancel() {
+    setAskOpen(false);
+    setAskQuestion("");
+    setDrafts(null);
+    setAskId(null);
+    setAskError(null);
+    setDraftingLoading(false);
+  }
+
+  async function handleDraftAsk() {
+    if (!askQuestion.trim() || !personId) return;
+    setDraftingLoading(true);
+    setAskError(null);
+
+    try {
+      const res = await fetch("/api/quick-ask/draft", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: askQuestion.trim(),
+          recipient_ids: [personId],
+        }),
+      });
+
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Failed to draft message");
+
+      setDrafts(d.drafts);
+      setAskId(d.ask_id);
+      capture("quick_ask_drafted", { recipient_count: d.drafts.length, source: "person_page" });
+    } catch (err) {
+      setAskError(err.message);
+    } finally {
+      setDraftingLoading(false);
+    }
+  }
+
+  function handleAskDone() {
+    setAskOpen(false);
+    setAskQuestion("");
+    setDrafts(null);
+    setAskId(null);
+    setAskError(null);
+  }
+
   const person = data?.person;
   const subtitle = [person?.current_title, person?.current_company].filter(Boolean).join(" at ");
+  const canAsk = data && !data.is_self && data.degree >= 1 && data.degree <= 3;
+  const personFirstName = person?.name?.split(" ")[0] || "them";
 
   return (
     <div style={{
@@ -605,8 +663,124 @@ export default function PersonPage() {
                       <PencilIcon size={12} /> Edit Profile
                     </button>
                   )}
+                  {canAsk && !askOpen && (
+                    <button
+                      onClick={() => setAskOpen(true)}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        padding: "8px 14px",
+                        background: "#FFFFFF", border: `1.5px solid ${C.border}`,
+                        borderRadius: 8, fontSize: 13, fontWeight: 600,
+                        color: C.accent, fontFamily: FONT, cursor: "pointer",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                        <polyline points="22,6 12,13 2,6" />
+                      </svg>
+                      Ask {personFirstName}
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {/* Quick Ask inline form */}
+              {askOpen && !drafts && (
+                <div style={{
+                  background: "#FAFAF9", borderRadius: 14,
+                  border: `1.5px solid ${C.accent}`, padding: "14px 16px",
+                  marginBottom: 16,
+                }}>
+                  <div style={{
+                    fontSize: 11, fontWeight: 700, color: C.accent,
+                    textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
+                  }}>
+                    Ask {personFirstName}
+                  </div>
+                  <textarea
+                    value={askQuestion}
+                    onChange={e => setAskQuestion(e.target.value)}
+                    placeholder={`What would you like to ask ${personFirstName}?`}
+                    rows={3}
+                    autoFocus
+                    disabled={draftingLoading}
+                    style={{
+                      width: "100%", padding: "10px 12px",
+                      fontSize: 14, fontFamily: FONT, color: C.ink,
+                      background: "#fff", border: `1.5px solid ${C.border}`,
+                      borderRadius: 8, resize: "vertical", lineHeight: 1.5,
+                      boxSizing: "border-box", WebkitAppearance: "none",
+                      transition: "border-color 0.15s",
+                    }}
+                    onFocus={e => { e.target.style.borderColor = C.accent; }}
+                    onBlur={e => { e.target.style.borderColor = C.border; }}
+                  />
+                  {askError && (
+                    <div style={{
+                      marginTop: 8, padding: "8px 12px",
+                      background: "#FEF2F2", borderRadius: 8,
+                      fontSize: 13, color: "#DC2626", fontFamily: FONT,
+                    }}>
+                      {askError}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button
+                      onClick={handleAskCancel}
+                      disabled={draftingLoading}
+                      style={{
+                        padding: "8px 14px", background: "#F5F5F4",
+                        color: C.sub, border: `1px solid ${C.border}`,
+                        borderRadius: 8, fontSize: 13, fontWeight: 600,
+                        fontFamily: FONT, cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    {draftingLoading ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 8px" }}>
+                        <div style={{
+                          width: 8, height: 8, borderRadius: "50%",
+                          background: C.accent, animation: "pulse 1.2s infinite",
+                        }} />
+                        <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
+                          Drafting message...
+                        </span>
+                        <style>{`@keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }`}</style>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={handleDraftAsk}
+                        disabled={!askQuestion.trim()}
+                        style={{
+                          padding: "8px 16px",
+                          background: askQuestion.trim() ? C.accent : "#C7D2FE",
+                          color: "#fff", border: "none", borderRadius: 8,
+                          fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                          cursor: askQuestion.trim() ? "pointer" : "not-allowed",
+                          transition: "background 0.15s",
+                        }}
+                      >
+                        Draft Message
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Ask draft panel */}
+              {askOpen && drafts && (
+                <div style={{ marginBottom: 16 }}>
+                  <QuickAskDraftPanel
+                    drafts={drafts}
+                    setDrafts={setDrafts}
+                    askId={askId}
+                    onDone={handleAskDone}
+                    onCancel={handleAskCancel}
+                  />
+                </div>
+              )}
 
               {/* Profile edit form (inline, replaces hero area visually) */}
               {editingProfile && (
