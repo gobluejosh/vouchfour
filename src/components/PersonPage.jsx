@@ -176,15 +176,30 @@ function RecommendationPath({ path, degree, degreeMismatch, canAsk, personFirstN
                   </svg>
                 );
               })()}
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <PathAvatar name={node.name} photoUrl={node.photo_url} size={24} />
-                <span style={{
-                  fontSize: 12, fontWeight: isFirst || isLast ? 600 : 400,
-                  color: C.ink, fontFamily: FONT,
+              {(!isFirst && !isLast) ? (
+                <a href={`/person/${node.id}`} style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  textDecoration: "none", cursor: "pointer",
                 }}>
-                  {isFirst ? "You" : node.name.split(" ")[0]}
-                </span>
-              </div>
+                  <PathAvatar name={node.name} photoUrl={node.photo_url} size={24} />
+                  <span style={{
+                    fontSize: 12, fontWeight: 400,
+                    color: C.accent, fontFamily: FONT,
+                  }}>
+                    {node.name.split(" ")[0]}
+                  </span>
+                </a>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <PathAvatar name={node.name} photoUrl={node.photo_url} size={24} />
+                  <span style={{
+                    fontSize: 12, fontWeight: 600,
+                    color: C.ink, fontFamily: FONT,
+                  }}>
+                    {isFirst ? "You" : node.name.split(" ")[0]}
+                  </span>
+                </div>
+              )}
             </div>
           );
         })}
