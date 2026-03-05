@@ -903,17 +903,33 @@ export default function App() {
                       if (!sel.value) return;
                       const jf = JSON.parse(sel.value);
                       try {
+                        const controller = new AbortController();
+                        const timeout = setTimeout(() => controller.abort(), 15000);
                         const res = await fetch("/api/start-vouch", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           credentials: "include",
                           body: JSON.stringify({ jobFunctionId: jf.id }),
+                          signal: controller.signal,
                         });
+                        clearTimeout(timeout);
                         const data = await res.json();
                         if (!res.ok) throw new Error(data.error || "Failed");
                         window.location.href = `/vouch?token=${data.token}&ready=1`;
                       } catch (err) {
                         alert(err.message);
+                        try {
+                          fetch('/api/client-error', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify({
+                              message: err.message, stack: err.stack,
+                              context: 'vouch_success_start_vouch',
+                              url: window.location.href, userAgent: navigator.userAgent,
+                            }),
+                          }).catch(() => {})
+                        } catch {}
                       }
                     }}
                     style={{

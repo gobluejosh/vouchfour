@@ -736,18 +736,36 @@ export default function TalentPage() {
                         if (!selectedNextFn || startingVouch) return;
                         setStartingVouch(true);
                         try {
+                          const controller = new AbortController();
+                          const timeout = setTimeout(() => controller.abort(), 15000);
                           const res = await fetch("/api/start-vouch", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             credentials: "include",
                             body: JSON.stringify({ jobFunctionId: Number(selectedNextFn) }),
+                            signal: controller.signal,
                           });
+                          clearTimeout(timeout);
                           const data = await res.json();
                           if (!res.ok) throw new Error(data.error || "Failed");
                           window.location.href = `/vouch?token=${data.token}`;
                         } catch (err) {
                           console.error("[TalentPage] Start vouch error:", err);
                           setStartingVouch(false);
+                          try {
+                            fetch('/api/client-error', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              credentials: 'include',
+                              body: JSON.stringify({
+                                message: err.message,
+                                stack: err.stack,
+                                context: 'talent_page_start_vouch',
+                                url: window.location.href,
+                                userAgent: navigator.userAgent,
+                              }),
+                            }).catch(() => {})
+                          } catch {}
                         }
                       }}
                       style={{
