@@ -52,6 +52,9 @@ function PreVouchWelcome({ user, slug }) {
         boxShadow: "0 12px 40px rgba(99,102,241,0.20), 0 4px 16px rgba(236,72,153,0.12)",
       }}>
         <div style={{ borderRadius: 12, padding: "20px 22px", background: "#fff" }}>
+          <div style={{ fontSize: 14, color: C.sub, fontFamily: FONT, marginBottom: 6 }}>
+            Hi, {user?.name?.split(" ")[0] || "there"}!
+          </div>
           <div style={{ fontSize: 17, fontWeight: 700, color: C.ink, fontFamily: FONT, lineHeight: 1.4 }}>
             {inviterFirstName && jobFunction?.name
               ? <>{inviterFirstName} vouched for you as one of their 4 all-time best {jobFunction.name.toLowerCase()} colleagues.</>
@@ -78,7 +81,7 @@ function PreVouchWelcome({ user, slug }) {
 
               {/* People faces (top 5) */}
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
-                {preview.highlighted.slice(0, 7).map(p => {
+                {preview.highlighted.slice(0, 6).map(p => {
                   const isPlaceholder = p.photoUrl && p.photoUrl.includes("static.licdn.com");
                   return (
                     <a
