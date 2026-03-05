@@ -22,7 +22,7 @@ const TEMPLATE_LABELS = {
   nudge_2: "Nudge 2 (Final Reminder)",
   voucher_nudge: "Voucher Nudge (Ask to Reach Out)",
   login_link: "Login Link",
-  talent_ready: "Talent Ready",
+  talent_ready: "Talent Ready (Deprecated)",
   please_vouch: "Please Vouch (Legacy)",
   you_were_vouched: "You Were Vouched (Legacy)",
   role_network: "Role Network (Legacy)",
@@ -325,8 +325,6 @@ export default function AdminPage() {
         method: "PUT",
         body: JSON.stringify({
           settings: {
-            readiness_threshold_pct: settings.readiness_threshold_pct,
-            readiness_threshold_min: settings.readiness_threshold_min,
             cross_function_discount: settings.cross_function_discount,
             sibling_coefficient: settings.sibling_coefficient,
             nudge_1_delay_days: settings.nudge_1_delay_days,
@@ -563,29 +561,6 @@ export default function AdminPage() {
                   onToggle={toggleEmailMode}
                   saving={savingToggle}
                 />
-              </Section>
-
-              {/* Readiness Thresholds */}
-              <Section title="Readiness Thresholds">
-                <p style={{ fontSize: 12, color: C.sub, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
-                  A user's talent network becomes "ready" when enough of the people they vouched for
-                  have responded with their own vouches. The threshold is met when either condition is satisfied.
-                </p>
-                <InputRow
-                  label="Minimum responses"
-                  description="Absolute minimum number of completed responses"
-                  type="number"
-                  value={settings.readiness_threshold_min || ""}
-                  onChange={v => setSettings(s => ({ ...s, readiness_threshold_min: v }))}
-                />
-                <InputRow
-                  label="Response percentage"
-                  description="Percentage of invited recommenders who have responded"
-                  type="number"
-                  value={settings.readiness_threshold_pct || ""}
-                  onChange={v => setSettings(s => ({ ...s, readiness_threshold_pct: v }))}
-                />
-                <SaveButton onClick={saveSettings} saving={savingSettings} saved={savedSettings} />
               </Section>
 
               {/* Network Scoring */}

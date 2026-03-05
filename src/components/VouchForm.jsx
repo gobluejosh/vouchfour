@@ -630,11 +630,33 @@ export default function App() {
   const [tokenError, setTokenError] = useState(null);
   const [tokenLoading, setTokenLoading] = useState(!!token);
 
-  // Validate token on mount
+  // Validate token on mount — try to create session and redirect pre-vouch users to homepage
   useEffect(() => {
     if (!token) return;
     (async () => {
       try {
+        // Try to create a session from the vouch invite token
+        const sessionRes = await fetch(`/api/auth/vouch-session?token=${token}`, { credentials: "include" });
+        if (sessionRes.ok) {
+          const sessionData = await sessionRes.json();
+          // If this is a new pre-vouch user, redirect to homepage for the welcome experience
+          // Skip redirect if they clicked the CTA from the welcome page (?ready=1)
+          const urlParams = new URLSearchParams(window.location.search);
+          const ready = urlParams.get("ready");
+          if (!sessionData.isUpdate && !sessionData.user.has_vouched && !ready) {
+            sessionStorage.setItem("vouchfour_vouchToken", token);
+            if (sessionData.inviterName) {
+              sessionStorage.setItem("vouchfour_inviterName", sessionData.inviterName);
+            }
+            if (sessionData.jobFunction) {
+              sessionStorage.setItem("vouchfour_jobFunction", JSON.stringify(sessionData.jobFunction));
+            }
+            window.location.href = "/";
+            return;
+          }
+        }
+
+        // For returning/update users, or if vouch-session fails, continue with existing form flow
         const res = await fetch(`/api/vouch-invite/${token}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Invalid invite');
@@ -817,24 +839,79 @@ export default function App() {
               borderRadius: 14, border: "1.5px solid rgba(0,0,0,0.06)",
               padding: "18px 18px 22px", marginBottom: 28,
             }}>
-              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 8, marginTop: 0 }}>
+              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 12, marginTop: 0 }}>
                 {jobFnShort
-                  ? `The ${jobFnShort} you recommended will each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`
-                  : `The professionals you recommended will each receive an email letting them know you think highly of their work... and we'll send you one too when your talent network results are ready.`}
+                  ? `The ${jobFnShort} you recommended will each receive an email letting them know you think highly of their work.`
+                  : `The professionals you recommended will each receive an email letting them know you think highly of their work.`}
               </p>
-              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 20 }}>
-                In the meantime, let's keep building your network by vouching for your best colleagues in a different function.
+              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 20, marginTop: 0 }}>
+                Let's keep building your network by vouching for your best colleagues in another function:
               </p>
 
-              <div style={{ textAlign: "center" }}>
-                <a href="/start-vouch" style={{
-                  display: "inline-block", padding: "14px 28px",
-                  background: C.accent, color: "#fff", borderRadius: 10,
-                  fontSize: 15, fontWeight: 600, textDecoration: "none",
-                  fontFamily: FONT,
-                }}>
-                  Keep building your network
-                </a>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* Function dropdown + vouch button */}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <select
+                    id="success-function-select"
+                    defaultValue=""
+                    style={{
+                      flex: 1, padding: "12px 14px", fontSize: 16, fontFamily: FONT,
+                      borderRadius: 10, border: `1.5px solid rgba(0,0,0,0.2)`,
+                      background: "#fff", color: C.ink, appearance: "none",
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center",
+                      paddingRight: 32, cursor: "pointer",
+                    }}
+                  >
+                    <option value="" disabled>Choose a function…</option>
+                    {[
+                      { id: 1, name: "Engineering", slug: "engineering" },
+                      { id: 2, name: "Product Management", slug: "product" },
+                      { id: 3, name: "Marketing", slug: "marketing" },
+                      { id: 6, name: "Data / Analytics", slug: "data" },
+                      { id: 5, name: "Design (Product/UX)", slug: "design" },
+                      { id: 14, name: "General Management", slug: "general-management" },
+                      { id: 11, name: "Executive", slug: "executive" },
+                      { id: 8, name: "Operations", slug: "operations" },
+                      { id: 4, name: "Sales", slug: "sales" },
+                      { id: 10, name: "Customer Success", slug: "customer-success" },
+                      { id: 7, name: "Finance / Accounting", slug: "finance" },
+                      { id: 9, name: "People / HR", slug: "people-hr" },
+                      { id: 13, name: "Legal", slug: "legal" },
+                      { id: 12, name: "Investor", slug: "investor" },
+                    ].filter(jf => jf.slug !== invitee?.jobFunction?.slug).map(jf => (
+                      <option key={jf.id} value={JSON.stringify(jf)}>{jf.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={async () => {
+                      const sel = document.getElementById("success-function-select");
+                      if (!sel.value) return;
+                      const jf = JSON.parse(sel.value);
+                      try {
+                        const res = await fetch("/api/start-vouch", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          credentials: "include",
+                          body: JSON.stringify({ jobFunctionId: jf.id }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || "Failed");
+                        window.location.href = `/vouch?token=${data.token}&ready=1`;
+                      } catch (err) {
+                        alert(err.message);
+                      }
+                    }}
+                    style={{
+                      padding: "12px 20px", background: C.accent, color: "#fff",
+                      border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600,
+                      fontFamily: FONT, cursor: "pointer", whiteSpace: "nowrap",
+                    }}
+                  >
+                    Vouch →
+                  </button>
+                </div>
+
               </div>
             </div>
 
@@ -866,6 +943,22 @@ export default function App() {
                   </div>
                 </div>
               ))}
+              {(() => {
+                const li = invitee?.linkedin;
+                const slugMatch = li && li.match(/\/in\/([^/]+)/);
+                const talentSlug = slugMatch ? slugMatch[1] : null;
+                return talentSlug ? (
+                  <a href={`/talent/${talentSlug}`} style={{
+                    display: "block", textAlign: "center", padding: "12px 28px",
+                    marginTop: 14, background: "rgba(255,255,255,0.5)", color: C.accent,
+                    border: `1.5px solid ${C.accent}`, borderRadius: 10,
+                    fontSize: 14, fontWeight: 600, textDecoration: "none",
+                    fontFamily: FONT,
+                  }}>
+                    View Your Talent Network
+                  </a>
+                ) : null;
+              })()}
             </div>
 
             <p style={{
@@ -902,17 +995,6 @@ export default function App() {
 
        <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
         <div style={{ marginBottom: 20 }}>
-          {/* Job function context card — chain invites only */}
-          {invitee?.jobFunction && invitee.inviterName && !invitee.isSelfInvite && (
-            <div style={{
-              padding: "0 4px", marginBottom: 14,
-            }}>
-              <div style={{ fontSize: 15, color: C.sub, lineHeight: 1.45, fontFamily: FONT }}>
-                <span style={{ fontWeight: 600, color: C.ink }}>{invitee.inviterName}</span> vouched for you as one of the best {invitee.jobFunction.practitionerLabel || invitee.jobFunction.name} they've ever worked with. Now they want to know:
-              </div>
-            </div>
-          )}
-
           <div style={{ display: "flex", gap: 6 }}>
             {[0,1,2,3].map(i => (
               <div key={i} style={{
@@ -1081,34 +1163,13 @@ export default function App() {
             fontSize: 13, fontWeight: 700, color: C.ink,
             marginBottom: 6, fontFamily: FONT,
           }}>
-            How your picks also build your own network
+            Your Picks Build Your Network
           </div>
           <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
             Each person you pick will be invited to vouch for their 4 all-time best{invitee?.jobFunction?.name ? ` ${invitee.jobFunction.name}` : ""} colleagues. The talent you will discover in your VouchFour network comes from this chain, so pick people who are genuinely great at what they do and whose judgment you trust.
           </div>
         </div>
 
-        {/* "Let's Build Something Better" — only show for self-invite users, not chain invitees */}
-        {(!invitee?.inviterName || invitee?.isSelfInvite) && (
-          <div style={{
-            marginTop: 24, padding: "20px 22px",
-            background: "linear-gradient(135deg, #FDE6D0 0%, #D4F0E0 100%)",
-            borderRadius: 14, border: "1px solid rgba(255,255,255,0.4)",
-          }}>
-            <div style={{
-              fontSize: 14, fontWeight: 700, color: C.ink,
-              marginBottom: 10, fontFamily: FONT,
-            }}>
-              Let's Build Something Better, Together
-            </div>
-            <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT }}>
-              I find LinkedIn to be both indispensable and disappointing. It was originally meant to map trusted professional relationships, but most of us now have thousands of connections — many of whom we barely even know.
-            </div>
-            <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, fontFamily: FONT, marginTop: 10 }}>
-              I know I would really benefit from a tool which facilitates a path to the most exceptional, highly recommended, and trusted people one or two hops away in my professional network — without the noise and constant stream of humblebrag posts. If that appeals to you as well, we can build that, together, here.
-            </div>
-          </div>
-        )}
 
         <p style={{
           marginTop: 24, fontSize: 11, color: "#7C6FA0",

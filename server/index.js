@@ -8,7 +8,6 @@ import { query, getClient } from './lib/db.js'
 import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations, getVouchPaths } from './lib/graph.js'
 import { sendVouchInviteEmail, sendLoginLinkEmail, sendEmail, loadTemplate, applyVariables, emailLayout, isUnsubscribed, getRecipient } from './lib/email.js'
-import { checkAndNotifyReadiness } from './lib/readiness.js'
 import { processNudges, processVoucherNudges } from './lib/nudge.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
 import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
@@ -182,7 +181,8 @@ async function validateSession(req) {
   const sessionToken = getSessionToken(req)
   if (!sessionToken) return null
   const result = await query(
-    `SELECT s.person_id, p.id, p.display_name, p.linkedin_url, p.email
+    `SELECT s.person_id, p.id, p.display_name, p.linkedin_url, p.email,
+            p.current_title, p.current_company, p.photo_url
      FROM sessions s JOIN people p ON p.id = s.person_id
      WHERE s.token = $1 AND s.expires_at > NOW()`,
     [sessionToken]
@@ -1073,7 +1073,7 @@ Rules:
         res.writeHead(200)
         res.end(JSON.stringify({ ok: true, personId: voucherId }))
 
-        // ── Post-commit: send invite emails + check readiness ──
+        // ── Post-commit: send invite emails + trigger enrichment ──
 
         const jobFunction = { id: invite.jf_id, name: invite.jf_name, slug: invite.jf_slug, practitionerLabel: invite.jf_practitioner_label }
         const inviterFullName = invite.display_name
@@ -1125,17 +1125,6 @@ Rules:
           }
         })()
 
-        // Check readiness for all sponsors (people who vouched for this voucher)
-        const sponsorsRes = await query(`
-          SELECT DISTINCT voucher_id FROM vouches
-          WHERE vouchee_id = $1 AND job_function_id = $2
-        `, [voucherId, jobFunctionId])
-
-        for (const sponsor of sponsorsRes.rows) {
-          checkAndNotifyReadiness(sponsor.voucher_id, jobFunctionId).catch(err =>
-            console.error('[Readiness] Post-vouch check failed:', err.message)
-          )
-        }
 
       }
     } catch (err) {
@@ -2776,7 +2765,7 @@ What ${senderFirst} wants to ask:
         SELECT vi.id, vi.status, vi.invitee_id, vi.inviter_id, vi.job_function_id,
                p.display_name, p.linkedin_url, p.email,
                inviter.display_name AS inviter_name,
-               jf.id AS jf_id, jf.name AS jf_name, jf.slug AS jf_slug
+               jf.id AS jf_id, jf.name AS jf_name, jf.slug AS jf_slug, jf.practitioner_label AS jf_practitioner_label
         FROM vouch_invites vi
         JOIN people p ON p.id = vi.invitee_id
         JOIN people inviter ON inviter.id = vi.inviter_id
@@ -2835,7 +2824,7 @@ What ${senderFirst} wants to ask:
           has_vouched: vouchCheck.rows[0].has_vouched,
         },
         inviterName: isSelfInvite ? null : invite.inviter_name,
-        jobFunction: invite.jf_id ? { id: invite.jf_id, name: invite.jf_name, slug: invite.jf_slug } : null,
+        jobFunction: invite.jf_id ? { id: invite.jf_id, name: invite.jf_name, slug: invite.jf_slug, practitionerLabel: invite.jf_practitioner_label } : null,
         vouchToken,
         isUpdate,
       }))
@@ -2878,7 +2867,7 @@ What ${senderFirst} wants to ask:
 
       // Look up person
       const personRes = await query(
-        'SELECT id, display_name, linkedin_url, email FROM people WHERE id = $1',
+        'SELECT id, display_name, linkedin_url, email, current_title, current_company, photo_url FROM people WHERE id = $1',
         [tokenRow.person_id]
       )
       const person = personRes.rows[0]
@@ -2909,6 +2898,9 @@ What ${senderFirst} wants to ask:
           linkedin: person.linkedin_url,
           email: person.email,
           has_vouched: vouchCheck.rows[0].has_vouched,
+          current_title: person.current_title || null,
+          current_company: person.current_company || null,
+          photo_url: person.photo_url || null,
         },
       }))
     } catch (err) {
@@ -2940,6 +2932,9 @@ What ${senderFirst} wants to ask:
           linkedin: person.linkedin_url,
           email: person.email,
           has_vouched: vouchCheck.rows[0].has_vouched,
+          current_title: person.current_title || null,
+          current_company: person.current_company || null,
+          photo_url: person.photo_url || null,
         },
       }))
     } catch (err) {

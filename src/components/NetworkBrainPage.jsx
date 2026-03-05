@@ -1073,6 +1073,80 @@ export default function NetworkBrainPage() {
                   );
                 })}
 
+                {/* Pre-vouch nudge (after Brain results) */}
+                {user && !user.has_vouched && messages.length > 0 && !loading && (
+                  <div style={{
+                    background: "linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)",
+                    border: `1.5px solid #C7D2FE`, borderRadius: 12,
+                    padding: "14px 16px", marginBottom: 16,
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 10 }}>
+                      Liked that? Vouching for your best colleagues grows your network and makes the Brain even better for you.
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <select
+                        id="brain-function-select"
+                        defaultValue=""
+                        style={{
+                          flex: 1, padding: "9px 12px", fontSize: 16, fontFamily: FONT,
+                          borderRadius: 8, border: `1.5px solid rgba(0,0,0,0.2)`,
+                          background: "#fff", color: C.ink, appearance: "none",
+                          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                          backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center",
+                          paddingRight: 28, cursor: "pointer",
+                        }}
+                      >
+                        <option value="" disabled>Choose a function…</option>
+                        {[
+                          { id: 1, name: "Engineering", slug: "engineering" },
+                          { id: 2, name: "Product Management", slug: "product" },
+                          { id: 3, name: "Marketing", slug: "marketing" },
+                          { id: 6, name: "Data / Analytics", slug: "data" },
+                          { id: 5, name: "Design (Product/UX)", slug: "design" },
+                          { id: 14, name: "General Management", slug: "general-management" },
+                          { id: 11, name: "Executive", slug: "executive" },
+                          { id: 8, name: "Operations", slug: "operations" },
+                          { id: 4, name: "Sales", slug: "sales" },
+                          { id: 10, name: "Customer Success", slug: "customer-success" },
+                          { id: 7, name: "Finance / Accounting", slug: "finance" },
+                          { id: 9, name: "People / HR", slug: "people-hr" },
+                          { id: 13, name: "Legal", slug: "legal" },
+                          { id: 12, name: "Investor", slug: "investor" },
+                        ].map(jf => (
+                          <option key={jf.id} value={JSON.stringify(jf)}>{jf.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={async () => {
+                          const sel = document.getElementById("brain-function-select");
+                          if (!sel.value) return;
+                          const jf = JSON.parse(sel.value);
+                          try {
+                            const res = await fetch("/api/start-vouch", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              credentials: "include",
+                              body: JSON.stringify({ jobFunctionId: jf.id }),
+                            });
+                            const data = await res.json();
+                            if (!res.ok) throw new Error(data.error || "Failed");
+                            window.location.href = `/vouch?token=${data.token}&ready=1`;
+                          } catch (err) {
+                            alert(err.message);
+                          }
+                        }}
+                        style={{
+                          padding: "9px 16px", background: C.accent, color: "#fff",
+                          border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                          fontFamily: FONT, cursor: "pointer", whiteSpace: "nowrap",
+                        }}
+                      >
+                        Vouch →
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Loading indicator */}
                 {loading && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>

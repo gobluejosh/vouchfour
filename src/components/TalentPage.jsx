@@ -334,6 +334,7 @@ export default function TalentPage() {
   const [reachableFunctions, setReachableFunctions] = useState([]); // all functions with reachable talent
   const [availableJobFunctions, setAvailableJobFunctions] = useState([]); // functions user hasn't vouched in
   const [activeFunction, setActiveFunction] = useState(null); // slug or null for "All"
+  const [totalPeople, setTotalPeople] = useState(0); // unfiltered total for user card
 
   const [selectedNextFn, setSelectedNextFn] = useState(""); // id of function picked in CTA dropdown
   const [startingVouch, setStartingVouch] = useState(false);
@@ -392,6 +393,7 @@ export default function TalentPage() {
       })
       .then(data => {
         setTalent(data.talent || []);
+        if (!activeFunction) setTotalPeople((data.talent || []).length);
         setMyVouches(data.myVouches || {});
         setVouchTokens(data.vouchTokens || {});
         setActiveJobFunctions(data.activeJobFunctions || []);
@@ -468,25 +470,40 @@ export default function TalentPage() {
           {/* Authenticated — talent network */}
           {authState === "authenticated" && !error && (
             <>
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
-                  {fullName}'s Trusted Talent Network
+              {/* User card */}
+              <a
+                href={user?.id ? `/person/${user.id}` : "#"}
+                onClick={() => capture("own_profile_clicked", { source: "talent_page" })}
+                style={{
+                  display: "flex", alignItems: "center", gap: 14,
+                  padding: "14px 16px", marginBottom: 20,
+                  background: "linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)",
+                  borderRadius: 14, border: `1.5px solid #C7D2FE`,
+                  textDecoration: "none", cursor: "pointer",
+                }}
+              >
+                <PhotoAvatar
+                  name={fullName}
+                  photoUrl={user?.photo_url}
+                  size={48}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
+                    {fullName}
+                  </div>
+                  {(user?.current_title || user?.current_company) && (
+                    <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.3, marginTop: 2 }}>
+                      {[user.current_title, user.current_company].filter(Boolean).join(" at ")}
+                    </div>
+                  )}
+                  {!loading && (
+                    <div style={{ fontSize: 12, color: C.accent, fontWeight: 600, marginTop: 4 }}>
+                      {totalPeople} {totalPeople === 1 ? "person" : "people"}{activeJobFunctions.length > 0 ? ` · ${activeJobFunctions.length} ${activeJobFunctions.length === 1 ? "function" : "functions"}` : ""}
+                    </div>
+                  )}
                 </div>
-                {user?.id && (
-                  <a
-                    href={`/person/${user.id}`}
-                    onClick={() => capture("own_profile_clicked", { source: "talent_page" })}
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 4,
-                      fontSize: 12, color: C.accent, fontWeight: 600,
-                      fontFamily: FONT, textDecoration: "none",
-                      marginTop: 4,
-                    }}
-                  >
-                    View your profile →
-                  </a>
-                )}
-              </div>
+                <ChevronRightIcon />
+              </a>
 
               {/* Network Brain prompt */}
               {!loading && talent.length > 0 && (
@@ -625,8 +642,7 @@ export default function TalentPage() {
                     No recommendations yet
                   </div>
                   <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: 0 }}>
-                    Your talent network is still being built. Recommendations will appear here
-                    as people in your network vouch for talent.
+                    Ask your all-time best colleagues for recommendations by selecting a function in the box below.
                   </p>
                 </div>
               )}

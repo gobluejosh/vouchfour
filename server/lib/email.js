@@ -149,32 +149,7 @@ export async function sendEmail({ to, subject, html, personId, templateKey }) {
   return data?.id
 }
 
-// ─── Template 1: Talent Network Ready ─────────────────────────────────────────
-
-export async function sendTalentReadyEmail(person, slug, loginToken, jobFunctionName = '', practitionerLabel = '') {
-  if (await isUnsubscribed(person.id)) {
-    console.log(`[Email] Skipping talent_ready — ${person.display_name} is unsubscribed`)
-    return null
-  }
-
-  const talentUrl = `${BASE_URL}/talent/${slug}?token=${loginToken}`
-  const firstName = person.display_name.split(' ')[0]
-
-  const template = await loadTemplate('talent_ready')
-  const vars = { firstName, talentUrl, jobFunction: jobFunctionName, jobFunctionShort: practitionerLabel || jobFunctionName }
-
-  const subject = applyVariables(template.subject, vars)
-  const bodyHtml = applyVariables(template.body_html, vars)
-  const html = emailLayout(bodyHtml, person.id)
-
-  const recipient = await getRecipient(person.email)
-  const id = await sendEmail({ to: recipient, subject, html, personId: person.id, templateKey: 'talent_ready' })
-
-  console.log(`[Email] Sent talent_ready to ${person.display_name} (${id})`)
-  return id
-}
-
-// ─── Template 2: Login Link ──────────────────────────────────────────────────
+// ─── Template: Login Link ────────────────────────────────────────────────────
 
 export async function sendLoginLinkEmail(person, slug, loginToken) {
   // Login links are transactional — don't block on unsubscribe
