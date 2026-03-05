@@ -2759,6 +2759,94 @@ What ${senderFirst} wants to ask:
     return
   }
 
+  // ─── Create session from vouch invite token ──────────────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/auth/vouch-session')) {
+    try {
+      const urlObj = new URL(req.url, `http://${req.headers.host}`)
+      const vouchToken = urlObj.searchParams.get('token')
+
+      if (!vouchToken) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'token is required' }))
+        return
+      }
+
+      // Look up vouch invite
+      const inviteRes = await query(`
+        SELECT vi.id, vi.status, vi.invitee_id, vi.inviter_id, vi.job_function_id,
+               p.display_name, p.linkedin_url, p.email,
+               inviter.display_name AS inviter_name,
+               jf.id AS jf_id, jf.name AS jf_name, jf.slug AS jf_slug
+        FROM vouch_invites vi
+        JOIN people p ON p.id = vi.invitee_id
+        JOIN people inviter ON inviter.id = vi.inviter_id
+        LEFT JOIN job_functions jf ON jf.id = vi.job_function_id
+        WHERE vi.token = $1
+      `, [vouchToken])
+
+      if (inviteRes.rows.length === 0) {
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Invalid invite token' }))
+        return
+      }
+
+      const invite = inviteRes.rows[0]
+      const isSelfInvite = invite.inviter_id === invite.invitee_id
+      const person = {
+        id: invite.invitee_id,
+        display_name: invite.display_name,
+        linkedin_url: invite.linkedin_url,
+        email: invite.email,
+      }
+
+      // Check if already completed or has existing vouches in this function
+      const existingVouches = await query(
+        'SELECT 1 FROM vouches WHERE voucher_id = $1 AND job_function_id = $2 LIMIT 1',
+        [person.id, invite.job_function_id]
+      )
+      const isUpdate = invite.status === 'completed' || existingVouches.rows.length > 0
+
+      // Check if user already has a valid session
+      const existingSession = await validateSession(req)
+      if (!existingSession || existingSession.id !== person.id) {
+        // Create new session
+        const sessionToken = crypto.randomUUID()
+        await query(
+          `INSERT INTO sessions (token, person_id, expires_at)
+           VALUES ($1, $2, NOW() + INTERVAL '30 days')`,
+          [sessionToken, person.id]
+        )
+        res.setHeader('Set-Cookie',
+          `vf_session=${sessionToken}; HttpOnly; Path=/; Max-Age=${30 * 24 * 60 * 60}; SameSite=Lax`
+        )
+        identifyPerson(String(person.id), { name: person.display_name })
+        trackEvent(String(person.id), 'vouch_session_created', { person_id: person.id, invite_token: vouchToken })
+      }
+
+      const vouchCheck = await query('SELECT EXISTS(SELECT 1 FROM vouches WHERE voucher_id = $1) AS has_vouched', [person.id])
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        user: {
+          id: person.id,
+          name: person.display_name,
+          linkedin: person.linkedin_url,
+          email: person.email,
+          has_vouched: vouchCheck.rows[0].has_vouched,
+        },
+        inviterName: isSelfInvite ? null : invite.inviter_name,
+        jobFunction: invite.jf_id ? { id: invite.jf_id, name: invite.jf_name, slug: invite.jf_slug } : null,
+        vouchToken,
+        isUpdate,
+      }))
+    } catch (err) {
+      console.error('[/api/auth/vouch-session error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Validate login token (magic link click) ──────────────────────
   if (req.method === 'GET' && req.url.startsWith('/api/auth/validate')) {
     try {
@@ -2811,6 +2899,8 @@ What ${senderFirst} wants to ask:
       identifyPerson(String(person.id), { name: person.display_name })
       trackEvent(String(person.id), 'login_completed', { person_id: person.id })
 
+      const vouchCheck = await query('SELECT EXISTS(SELECT 1 FROM vouches WHERE voucher_id = $1) AS has_vouched', [person.id])
+
       res.writeHead(200)
       res.end(JSON.stringify({
         user: {
@@ -2818,6 +2908,7 @@ What ${senderFirst} wants to ask:
           name: person.display_name,
           linkedin: person.linkedin_url,
           email: person.email,
+          has_vouched: vouchCheck.rows[0].has_vouched,
         },
       }))
     } catch (err) {
@@ -2839,6 +2930,8 @@ What ${senderFirst} wants to ask:
         return
       }
 
+      const vouchCheck = await query('SELECT EXISTS(SELECT 1 FROM vouches WHERE voucher_id = $1) AS has_vouched', [person.id])
+
       res.writeHead(200)
       res.end(JSON.stringify({
         user: {
@@ -2846,10 +2939,58 @@ What ${senderFirst} wants to ask:
           name: person.display_name,
           linkedin: person.linkedin_url,
           email: person.email,
+          has_vouched: vouchCheck.rows[0].has_vouched,
         },
       }))
     } catch (err) {
       console.error('[/api/auth/session error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Network preview for pre-vouch homepage ─────────────────────
+  if (req.method === 'GET' && req.url === '/api/my-network-preview') {
+    try {
+      const person = await validateSession(req)
+      if (!person) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'No valid session' }))
+        return
+      }
+
+      // Who vouched for this user (sponsors)
+      const sponsorsRes = await query(`
+        SELECT DISTINCT p.id, p.display_name, p.current_title, p.current_company, p.photo_url
+        FROM vouches v JOIN people p ON p.id = v.voucher_id
+        WHERE v.vouchee_id = $1
+      `, [person.id])
+
+      // Full network via existing graph traversal
+      const recommendations = await getTalentRecommendations(person.id, null)
+      const highlighted = recommendations.slice(0, 8).map(r => ({
+        id: r.id,
+        name: r.display_name,
+        title: r.current_title,
+        company: r.current_company,
+        photoUrl: r.photo_url,
+        degree: r.degree,
+      }))
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        sponsors: sponsorsRes.rows.map(s => ({
+          name: s.display_name,
+          title: s.current_title,
+          company: s.current_company,
+          photoUrl: s.photo_url,
+        })),
+        networkSize: recommendations.length,
+        highlighted,
+      }))
+    } catch (err) {
+      console.error('[/api/my-network-preview error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }
