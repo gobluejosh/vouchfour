@@ -844,7 +844,7 @@ export default function App() {
                   ? `The ${jobFnShort} you recommended will each receive an email letting them know you think highly of their work.`
                   : `The professionals you recommended will each receive an email letting them know you think highly of their work.`}
               </p>
-              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 20, marginTop: 0 }}>
+              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 20, marginTop: 0, fontWeight: 600 }}>
                 Let's keep building your network by vouching for your best colleagues in another function:
               </p>
 
