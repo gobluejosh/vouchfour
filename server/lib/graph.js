@@ -7,6 +7,12 @@ import { query } from './db.js'
  * function). The function filter is applied only at the output level — a person
  * appears in results only if they have a vouch in the target function pointing to them.
  *
+ * Sponsors (people who vouched FOR the user) are included as degree 1 if they are
+ * not already reachable via forward traversal. If a sponsor is already in the network
+ * through forward chains, their forward-traversal degree is preserved. Sponsors only
+ * appear in the unfiltered "All" view (they are naturally excluded from function
+ * filters since the function filter requires an inbound vouch in that function).
+ *
  * Cross-function detection uses a parallel function-SPECIFIC traversal. A result is
  * "cross-function" if it can only be reached through cross-function bridges — i.e.,
  * it does NOT appear in the pure function-specific chain. In the "All" view, the
@@ -85,6 +91,12 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
       -- Best (closest) degree per person, preferring non-sibling paths
       all_talent AS (
         SELECT person_id, 1 AS degree, FALSE AS is_sibling FROM all_seeds
+        UNION ALL
+        -- Sponsors as degree 1 (only those not already found via forward traversal)
+        SELECT voucher_id AS person_id, 1 AS degree, FALSE AS is_sibling FROM sponsors
+          WHERE voucher_id NOT IN (SELECT person_id FROM all_seeds)
+            AND voucher_id NOT IN (SELECT person_id FROM degree2)
+            AND voucher_id NOT IN (SELECT person_id FROM degree3)
         UNION ALL
         SELECT person_id, 2 AS degree, FALSE AS is_sibling FROM degree2_direct
         UNION ALL
@@ -166,6 +178,8 @@ export async function getTalentRecommendations(userId, jobFunctionId = null, { m
         SELECT person_id FROM fn_degree2
         UNION
         SELECT person_id FROM fn_degree3
+        UNION
+        SELECT voucher_id AS person_id FROM sponsors
       ),
 
       -- ══════════════════════════════════════════════════════════════════
