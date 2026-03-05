@@ -144,7 +144,7 @@ function PreVouchWelcome({ user, slug }) {
               >
                 <input
                   name="brainQ"
-                  placeholder="Who's a highly analytical marketer?"
+                  placeholder="Who is an analytical marketer?"
                   autoComplete="off"
                   style={{
                     flex: 1, padding: "12px 14px",
