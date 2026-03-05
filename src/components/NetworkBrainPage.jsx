@@ -239,6 +239,8 @@ function PersonCard({ person, inAskMode, isSelected, onToggle }) {
   return (
     <a
       href={`/person/${person.id}`}
+      target="_blank"
+      rel="noopener noreferrer"
       style={{
         display: "flex", alignItems: "center", gap: 12,
         padding: "10px 14px", background: colors.bg,
