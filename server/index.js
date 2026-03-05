@@ -1912,6 +1912,13 @@ Rules:
         WHERE id = $1
       `, [person_id, status, notes || null])
 
+      // Auto re-enrich when flagged (runs in background, doesn't block response)
+      if (status === 'flagged') {
+        enrichPerson(person_id)
+          .then(result => console.log(`[Review] Auto re-enrichment complete for person ${person_id}:`, JSON.stringify(result.steps)))
+          .catch(err => console.error(`[Review] Auto re-enrichment failed for person ${person_id}:`, err.message))
+      }
+
       res.writeHead(200)
       res.end(JSON.stringify({ ok: true, person_id, status }))
     } catch (err) {
