@@ -726,6 +726,20 @@ export default function App() {
     } catch (err) {
       console.error('[VouchForm] Submit error:', err);
       setSubmitError(err.message);
+      try {
+        fetch('/api/client-error', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            message: err.message,
+            stack: err.stack,
+            context: 'vouch_form_submit',
+            url: window.location.href,
+            userAgent: navigator.userAgent,
+          }),
+        }).catch(() => {})
+      } catch {}
     } finally {
       setSubmitting(false);
     }

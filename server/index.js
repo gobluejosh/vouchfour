@@ -300,6 +300,32 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  // ─── Client error reporting ───────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/client-error') {
+    try {
+      const body = await readBody(req)
+      const { message, stack, context, url, userAgent } = body
+      const session = await validateSession(req)
+      const userId = session?.id || null
+      console.error('[CLIENT ERROR]', JSON.stringify({
+        userId,
+        message,
+        stack,
+        context,
+        url,
+        userAgent,
+        timestamp: new Date().toISOString(),
+      }))
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true }))
+    } catch (err) {
+      console.error('[client-error endpoint]', err)
+      res.writeHead(200) // don't fail on error reporting
+      res.end(JSON.stringify({ ok: true }))
+    }
+    return
+  }
+
   // ─── Job functions list ──────────────────────────────────────────────
   if (req.method === 'GET' && req.url === '/api/job-functions') {
     try {

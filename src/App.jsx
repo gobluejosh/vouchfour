@@ -8,6 +8,33 @@ import NetworkBrainPage from './components/NetworkBrainPage'
 import PersonPage from './components/PersonPage'
 import EnrichmentReviewPage from './components/EnrichmentReviewPage'
 
+// ── Global client-side error reporting ──────────────────────────────
+function reportError(message, stack, context) {
+  try {
+    fetch('/api/client-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        message,
+        stack,
+        context,
+        url: window.location.href,
+        userAgent: navigator.userAgent,
+      }),
+    }).catch(() => {}) // silently fail
+  } catch {}
+}
+
+window.addEventListener('error', (e) => {
+  reportError(e.message, e.error?.stack, 'window.onerror')
+})
+
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = e.reason?.message || String(e.reason)
+  reportError(msg, e.reason?.stack, 'unhandledrejection')
+})
+
 export default function App() {
   const [page, setPage] = useState(() => {
     const path = window.location.pathname;
