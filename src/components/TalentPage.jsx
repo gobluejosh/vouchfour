@@ -430,7 +430,7 @@ export default function TalentPage() {
       </div>
       <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
-        <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 6 }}>
+        <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 12 }}>
 
           {/* Checking auth — show heading + shimmers */}
           {authState === "checking" && (
