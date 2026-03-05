@@ -454,7 +454,7 @@ export default function HomePage() {
             }}>
             <div style={{
               background: "#EEF2FF", borderRadius: 16,
-              padding: "36px 28px 32px",
+              padding: "36px 20px 32px", overflow: "hidden",
             }}>
               <p style={{
                 fontSize: 20, fontWeight: 700, color: C.ink, lineHeight: 1.4, fontFamily: FONT,
@@ -495,30 +495,29 @@ export default function HomePage() {
                     </div>
                   </div>
                 ) : (
-                  <form onSubmit={handleLogin} style={{ display: "flex", gap: 8 }}>
+                  <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <input
                       value={identifier}
                       onChange={e => setIdentifier(e.target.value)}
                       placeholder="Email or LinkedIn URL"
                       autoComplete="off"
                       style={{
-                        flex: 1, padding: "12px 14px",
+                        width: "100%", padding: "12px 14px",
                         fontSize: 16, border: `1.5px solid ${C.border}`,
                         borderRadius: 10, fontFamily: FONT,
                         color: C.ink, background: "#fff",
-                        WebkitAppearance: "none",
+                        WebkitAppearance: "none", boxSizing: "border-box",
                       }}
                     />
                     <button
                       type="submit"
                       disabled={!identifier.trim() || sending}
                       style={{
-                        padding: "12px 20px",
+                        width: "100%", padding: "12px 20px",
                         background: identifier.trim() && !sending ? C.accent : "#A5B4FC",
                         color: "#fff", border: "none", borderRadius: 10,
                         fontSize: 14, fontWeight: 600, fontFamily: FONT,
                         cursor: identifier.trim() && !sending ? "pointer" : "not-allowed",
-                        whiteSpace: "nowrap", flexShrink: 0,
                       }}
                     >
                       {sending ? "..." : "Log in"}
