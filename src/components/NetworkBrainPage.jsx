@@ -142,14 +142,14 @@ function renderInline(text) {
       const inner = part.slice(2, -2);
       const lm = inner.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (lm) {
-        return <a key={i} href={lm[2]} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
+        return <a key={i} href={lm[2]} style={{ fontWeight: 600, color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
       }
       return <strong key={i} style={{ fontWeight: 600 }}>{inner}</strong>;
     }
     // Link: [text](url)
     const lm = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (lm) {
-      return <a key={i} href={lm[2]} target="_blank" rel="noopener noreferrer" style={{ color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
+      return <a key={i} href={lm[2]} style={{ color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
     }
     return part;
   });
@@ -270,8 +270,6 @@ function PersonCard({ person, inAskMode, isSelected, onToggle }) {
   return (
     <a
       href={`/person/${person.id}`}
-      target="_blank"
-      rel="noopener noreferrer"
       style={{
         display: "flex", alignItems: "center", gap: 12,
         padding: "10px 14px", background: colors.bg,
@@ -465,13 +463,23 @@ function LoginPrompt() {
 export default function NetworkBrainPage() {
   const [authState, setAuthState] = useState("checking");
   const [user, setUser] = useState(null);
-  const [messages, setMessages] = useState([]); // [{ role: 'user'|'brain', text, people? }]
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem("brain_messages");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  }); // [{ role: 'user'|'brain', text, people? }]
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const bottomRef = useRef(null);
   const lastBrainRef = useRef(null);
   const inputRef = useRef(null);
+
+  // Persist messages to sessionStorage
+  useEffect(() => {
+    try { sessionStorage.setItem("brain_messages", JSON.stringify(messages)); } catch {}
+  }, [messages]);
 
   // Quick Ask state
   const [askMode, setAskMode] = useState(null); // msg index of brain response in ask mode
