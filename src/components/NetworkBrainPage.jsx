@@ -133,14 +133,44 @@ function renderMarkdown(text) {
 }
 
 function renderInline(text) {
-  // Split on **bold** markers
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  // Split on **bold** and [link](url) markers
+  const parts = text.split(/(\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g);
   return parts.map((part, i) => {
+    // Bold: **text** (may contain a [link](url) inside)
     if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={i} style={{ fontWeight: 600 }}>{part.slice(2, -2)}</strong>;
+      const inner = part.slice(2, -2);
+      const lm = inner.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      if (lm) {
+        return <a key={i} href={lm[2]} style={{ fontWeight: 600, color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
+      }
+      return <strong key={i} style={{ fontWeight: 600 }}>{inner}</strong>;
+    }
+    // Link: [text](url)
+    const lm = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (lm) {
+      return <a key={i} href={lm[2]} style={{ color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
     }
     return part;
   });
+}
+
+// Inject [Name](/person/id) links into brain answer text
+function linkifyNames(text, people) {
+  if (!text || !people?.length) return text;
+  // Sort longest names first to avoid partial replacement issues
+  const sorted = [...people].sort((a, b) => b.name.length - a.name.length);
+  let result = text;
+  for (const p of sorted) {
+    const esc = p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const link = `[${p.name}](/person/${p.id})`;
+    // Replace **Name** → **[Name](/person/id)**
+    result = result.replaceAll(`**${p.name}**`, `**${link}**`);
+    // Replace remaining plain Name → [Name](/person/id)
+    // Negative lookbehind for [ prevents double-linking already-linked names
+    const re = new RegExp(`(?<!\\[)\\b${esc}\\b(?![\\]\\(])`, "g");
+    result = result.replace(re, link);
+  }
+  return result;
 }
 
 // ── Photo avatar ──────────────────────────────────────────────────────
@@ -543,9 +573,10 @@ export default function NetworkBrainPage() {
       }
 
       const data = await res.json();
+      const answerText = data.answer || "I couldn't generate a response. Try rephrasing your question.";
       setMessages(prev => [...prev, {
         role: "brain",
-        text: data.answer || "I couldn't generate a response. Try rephrasing your question.",
+        text: linkifyNames(answerText, data.people),
         people: data.people || [],
       }]);
 
