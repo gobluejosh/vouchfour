@@ -153,7 +153,7 @@ export async function sendEmail({ to, subject, html, personId, templateKey }) {
 
 export async function sendLoginLinkEmail(person, slug, loginToken) {
   // Login links are transactional — don't block on unsubscribe
-  const talentUrl = `${BASE_URL}/talent/${slug}?token=${loginToken}`
+  const talentUrl = `${BASE_URL}/?token=${loginToken}`
   const firstName = person.display_name.split(' ')[0]
 
   const template = await loadTemplate('login_link')

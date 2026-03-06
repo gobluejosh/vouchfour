@@ -383,6 +383,22 @@ export default function AdminPage() {
     }
   }
 
+  async function toggleCollectEmail(newValue) {
+    setSavingToggle(true);
+    try {
+      const res = await adminFetch("/api/admin/settings", secret.trim(), {
+        method: "PUT",
+        body: JSON.stringify({ settings: { vouch_collect_email: newValue } }),
+      });
+      const data = await res.json();
+      setSettings(data.settings);
+    } catch (err) {
+      console.error("Failed to toggle collect email mode:", err);
+    } finally {
+      setSavingToggle(false);
+    }
+  }
+
   async function saveTemplates() {
     setSavingTemplates(true);
     setSavedTemplates(false);
@@ -561,6 +577,47 @@ export default function AdminPage() {
                   onToggle={toggleEmailMode}
                   saving={savingToggle}
                 />
+
+                {/* Email-free vouch mode toggle */}
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+                  {(() => {
+                    const isEmailFree = settings.vouch_collect_email === "false";
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                        <button
+                          onClick={() => toggleCollectEmail(isEmailFree ? "true" : "false")}
+                          disabled={savingToggle}
+                          style={{
+                            width: 48, height: 26, borderRadius: 13,
+                            background: isEmailFree ? C.warn : C.success,
+                            border: "none", cursor: savingToggle ? "default" : "pointer",
+                            position: "relative", transition: "background 0.2s",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <div style={{
+                            width: 20, height: 20, borderRadius: "50%",
+                            background: "#fff",
+                            position: "absolute", top: 3,
+                            left: isEmailFree ? 3 : 25,
+                            transition: "left 0.2s",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                          }} />
+                        </button>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                            {isEmailFree ? "Email-free mode" : "Collect email in vouch form"}
+                          </div>
+                          <div style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginTop: 1 }}>
+                            {isEmailFree
+                              ? "Vouchers share a link instead of providing emails"
+                              : "Vouch form collects email and sends invites automatically"}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
               </Section>
 
               {/* Network Scoring */}

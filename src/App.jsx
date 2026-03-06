@@ -7,6 +7,7 @@ import StartVouchPage from './components/StartVouchPage'
 import NetworkBrainPage from './components/NetworkBrainPage'
 import PersonPage from './components/PersonPage'
 import EnrichmentReviewPage from './components/EnrichmentReviewPage'
+import InvitePage from './components/InvitePage'
 
 // ── Global client-side error reporting ──────────────────────────────
 function reportError(message, stack, context) {
@@ -45,6 +46,7 @@ export default function App() {
     if (path === '/start-vouch') return 'startVouch';
     if (path === '/brain') return 'brain';
     if (path.startsWith('/person/')) return 'person';
+    if (path.startsWith('/invite/')) return 'invite';
     return 'home';
   });
 
@@ -58,6 +60,7 @@ export default function App() {
       else if (path === '/start-vouch') setPage('startVouch');
       else if (path === '/brain') setPage('brain');
       else if (path.startsWith('/person/')) setPage('person');
+      else if (path.startsWith('/invite/')) setPage('invite');
       else setPage('home');
     };
     window.addEventListener('popstate', handlePop);
@@ -71,5 +74,6 @@ export default function App() {
   if (page === 'startVouch') return <StartVouchPage />;
   if (page === 'brain') return <NetworkBrainPage />;
   if (page === 'person') return <PersonPage />;
+  if (page === 'invite') return <InvitePage />;
   return <HomePage />;
 }

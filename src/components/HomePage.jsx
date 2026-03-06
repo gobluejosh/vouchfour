@@ -374,6 +374,12 @@ export default function HomePage() {
         .then(data => {
           if (data.user) {
             setUser(data.user);
+            if (data.inviterName) {
+              sessionStorage.setItem("vouchfour_inviterName", data.inviterName);
+            }
+            if (data.jobFunction) {
+              sessionStorage.setItem("vouchfour_jobFunction", JSON.stringify(data.jobFunction));
+            }
             window.history.replaceState({}, "", window.location.pathname);
           }
         })

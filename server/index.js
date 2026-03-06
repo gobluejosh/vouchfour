@@ -834,6 +834,141 @@ Rules:
     return
   }
 
+  // ─── Invite page: load voucher info (no auth required) ─────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/invite/')) {
+    try {
+      const shareToken = req.url.split('/api/invite/')[1]?.split('?')[0]
+      if (!shareToken) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Token is required' }))
+        return
+      }
+
+      const result = await query(
+        'SELECT id, display_name, photo_url FROM people WHERE share_token = $1',
+        [shareToken]
+      )
+
+      if (result.rows.length === 0) {
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Invalid link' }))
+        return
+      }
+
+      const voucher = result.rows[0]
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        voucherName: voucher.display_name,
+        voucherPhotoUrl: voucher.photo_url,
+      }))
+    } catch (err) {
+      console.error('[/api/invite GET error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Invite page: recipient self-identification (no auth, rate-limited) ──
+  if (req.method === 'POST' && req.url === '/api/invite') {
+    if (isRateLimited(req)) {
+      res.writeHead(429)
+      res.end(JSON.stringify({ error: 'Too many requests' }))
+      return
+    }
+    try {
+      const body = await readBody(req)
+      const { shareToken, linkedinUrl, email } = body
+
+      if (!shareToken || !linkedinUrl || !email) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Share token, LinkedIn URL, and email are required' }))
+        return
+      }
+
+      // 1. Find voucher by share_token
+      const voucherRes = await query(
+        'SELECT id, display_name FROM people WHERE share_token = $1',
+        [shareToken]
+      )
+      if (voucherRes.rows.length === 0) {
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Invalid link' }))
+        return
+      }
+      const voucher = voucherRes.rows[0]
+
+      // 2. Normalize LinkedIn URL
+      const normalizedUrl = normalizeLinkedInUrl(linkedinUrl)
+      if (!normalizedUrl) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Please enter a valid LinkedIn URL' }))
+        return
+      }
+
+      // 3. Check if this LinkedIn matches any vouchee of this voucher
+      const matchRes = await query(`
+        SELECT p.id, p.display_name, p.email
+        FROM vouches v
+        JOIN people p ON p.id = v.vouchee_id
+        WHERE v.voucher_id = $1 AND p.linkedin_url = $2
+      `, [voucher.id, normalizedUrl])
+
+      if (matchRes.rows.length === 0) {
+        const voucherFirst = voucher.display_name.split(' ')[0]
+        res.writeHead(404)
+        res.end(JSON.stringify({
+          error: `We couldn't find you in ${voucherFirst}'s recommendations. Please check your LinkedIn URL and try again.`
+        }))
+        return
+      }
+
+      const person = matchRes.rows[0]
+      const cleanEmail = email.trim().toLowerCase()
+
+      // 4. Update email (person is self-identifying)
+      await query(
+        `UPDATE people SET email = $1, self_provided = TRUE, updated_at = NOW() WHERE id = $2`,
+        [cleanEmail, person.id]
+      )
+
+      // 5. Create login_token and send magic link email
+      const loginToken = crypto.randomUUID()
+      await query(
+        `INSERT INTO login_tokens (token, person_id, expires_at)
+         VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
+        [loginToken, person.id]
+      )
+
+      const slug = normalizedUrl.split('/in/')[1]?.replace(/\/$/, '') || ''
+      const resendId = await sendLoginLinkEmail(
+        { ...person, email: cleanEmail },
+        slug,
+        loginToken
+      )
+      await query(
+        `INSERT INTO sent_emails (recipient_id, email_type, resend_id)
+         VALUES ($1, 'login_link', $2)`,
+        [person.id, resendId]
+      )
+
+      console.log(`[Invite] ${person.display_name} claimed via share link from ${voucher.display_name}`)
+      identifyPerson(String(person.id), { name: person.display_name, email: cleanEmail })
+      trackEvent(String(person.id), 'invite_claimed', {
+        person_id: person.id,
+        voucher_id: voucher.id,
+      })
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true, personName: person.display_name }))
+    } catch (err) {
+      console.error('[/api/invite POST error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Validate vouch invite token ───────────────────────────────────
   if (req.method === 'GET' && req.url.startsWith('/api/vouch-invite/')) {
     try {
@@ -865,6 +1000,10 @@ Rules:
       const invite = result.rows[0]
       const isSelfInvite = invite.inviter_id === invite.invitee_id
 
+      // Check if vouch form should collect email
+      const ceRes = await query("SELECT value FROM app_settings WHERE key = 'vouch_collect_email'")
+      const collectEmail = ceRes.rows[0]?.value !== 'false'
+
       // Build base response
       const baseResponse = {
         name: invite.display_name,
@@ -877,6 +1016,7 @@ Rules:
           slug: invite.jf_slug,
           practitionerLabel: invite.jf_practitioner_label,
         } : null,
+        collectEmail,
       }
 
       // For completed invites or re-vouch, load existing vouches
@@ -954,7 +1094,7 @@ Rules:
       // Look up invite (allow both pending and completed for updates)
       const inviteRes = await query(`
         SELECT vi.id, vi.inviter_id, vi.invitee_id, vi.status, vi.job_function_id,
-               p.display_name,
+               p.display_name, p.email,
                jf.id AS jf_id, jf.name AS jf_name, jf.slug AS jf_slug, jf.practitioner_label AS jf_practitioner_label
         FROM vouch_invites vi
         JOIN people p ON p.id = vi.invitee_id
@@ -1096,40 +1236,82 @@ Rules:
           is_update: isUpdate,
         })
 
-        res.writeHead(200)
-        res.end(JSON.stringify({ ok: true, personId: voucherId }))
+        // Check email-free mode and generate share token if needed
+        const ceRes = await query("SELECT value FROM app_settings WHERE key = 'vouch_collect_email'")
+        const collectEmail = ceRes.rows[0]?.value !== 'false'
+        let shareToken = null
+        if (!collectEmail) {
+          const stRes = await query('SELECT share_token FROM people WHERE id = $1', [voucherId])
+          shareToken = stRes.rows[0]?.share_token
+          if (!shareToken) {
+            shareToken = crypto.randomBytes(4).toString('hex')
+            await query('UPDATE people SET share_token = $1 WHERE id = $2', [shareToken, voucherId])
+          }
+          console.log(`[Vouch] Email-free mode: share_token for ${invite.display_name}: ${shareToken}`)
+        }
 
-        // ── Post-commit: send invite emails + trigger enrichment ──
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true, personId: voucherId, ...(shareToken && { shareToken }) }))
+
+        // ── Post-commit: create invites + send emails + trigger enrichment ──
+
+        // Send share link email to voucher in email-free mode
+        if (!collectEmail && shareToken && invite.email) {
+          const BASE_URL = process.env.BASE_URL || 'http://localhost:3000'
+          const inviteLink = `${BASE_URL}/invite/${shareToken}`
+          const firstName = invite.display_name.split(' ')[0]
+          const jfLabel = invite.jf_practitioner_label || invite.jf_name
+          const names = vouchedPeople.map(v => v.display_name)
+          const nameList = names.length <= 2 ? names.join(' and ') : names.slice(0, -1).join(', ') + ', and ' + names[names.length - 1]
+          const bodyHtml = `
+            <p>Hi ${firstName},</p>
+            <p>Thanks for recommending ${nameList} as your top ${jfLabel}.</p>
+            <p>Share this link with them so they can access their network:</p>
+            <p style="margin:16px 0"><a href="${inviteLink}" style="color:#4F46E5;font-weight:600">${inviteLink}</a></p>
+            <p style="color:#6B7280;font-size:13px">This link is yours — it works for anyone you've recommended on VouchFour.</p>
+          `
+          ;(async () => {
+            try {
+              const html = emailLayout(bodyHtml, voucherId)
+              const recipient = await getRecipient(invite.email)
+              await sendEmail({ to: recipient, subject: 'Your VouchFour invite link', html, personId: voucherId, templateKey: 'share_link' })
+              console.log(`[Email] Sent share_link to ${invite.display_name}`)
+            } catch (err) {
+              console.error(`[Email] Failed to send share_link to ${invite.display_name}:`, err.message)
+            }
+          })()
+        }
 
         const jobFunction = { id: invite.jf_id, name: invite.jf_name, slug: invite.jf_slug, practitionerLabel: invite.jf_practitioner_label }
         const inviterFullName = invite.display_name
 
-        // Send vouch_invite emails to all new vouchees. Chain propagation is
-        // unlimited — every vouched person gets an invite. Display depth is
-        // controlled on the talent profile page instead.
+        // Create vouch_invites for all new vouchees. In email mode, also send
+        // invite emails. In email-free mode, invites are still created (needed
+        // for token system) but emails are skipped.
         ;(async () => {
           for (const talent of newPeople) {
-            if (!talent.email) continue
             try {
-              if (!(await canEmailRecipient(talent.id))) {
-                console.log(`[Email] Daily cap reached for ${talent.display_name}, skipping vouch_invite`)
-                continue
-              }
-
               const newToken = crypto.randomUUID()
               await query(
                 `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
                 [newToken, voucherId, talent.id, jobFunctionId]
               )
 
-              const resendId = await sendVouchInviteEmail(talent, inviterFullName, jobFunction, newToken)
-              await query(
-                `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
-                 VALUES ($1, 'vouch_invite', $2, $3)`,
-                [talent.id, invite.id, resendId]
-              )
+              if (collectEmail && talent.email) {
+                if (!(await canEmailRecipient(talent.id))) {
+                  console.log(`[Email] Daily cap reached for ${talent.display_name}, skipping vouch_invite`)
+                  continue
+                }
+
+                const resendId = await sendVouchInviteEmail(talent, inviterFullName, jobFunction, newToken)
+                await query(
+                  `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
+                   VALUES ($1, 'vouch_invite', $2, $3)`,
+                  [talent.id, invite.id, resendId]
+                )
+              }
             } catch (err) {
-              console.error(`[Email] Failed to send vouch_invite to ${talent.display_name}:`, err.message)
+              console.error(`[Email] Failed for ${talent.display_name}:`, err.message)
             }
             await sleep(600)
           }
@@ -1361,6 +1543,10 @@ Rules:
       `, jobFunctionId ? [userId, jobFunctionId] : [userId])
       const contributorCount = Number(contributorsRes.rows[0]?.count || 0)
 
+      // Include share token for invite link display
+      const shareTokenRes = await query('SELECT share_token FROM people WHERE id = $1', [userId])
+      const userShareToken = shareTokenRes.rows[0]?.share_token || null
+
       res.writeHead(200)
       res.end(JSON.stringify({
         user: { id: session.id, name: session.display_name, linkedin: linkedinUrl },
@@ -1371,6 +1557,7 @@ Rules:
         reachableFunctions,
         availableJobFunctions,
         contributorCount,
+        ...(userShareToken && { shareToken: userShareToken }),
       }))
     } catch (err) {
       console.error('[/api/talent error]', err)
@@ -1654,6 +1841,7 @@ Rules:
           name: person.display_name,
           linkedin_url: person.linkedin_url,
           email: Number(session.id) === Number(personId) ? (person.email || null) : undefined,
+          has_email: !!person.email,
           current_title: person.current_title,
           current_company: person.current_company,
           location: person.location,
@@ -2923,6 +3111,23 @@ What ${senderFirst} wants to ask:
 
       const vouchCheck = await query('SELECT EXISTS(SELECT 1 FROM vouches WHERE voucher_id = $1) AS has_vouched', [person.id])
 
+      // Look up who vouched for this person (most recent voucher) + job function
+      let inviterName = null
+      let jobFunction = null
+      const vouchInfoRes = await query(`
+        SELECT p.display_name, jf.id, jf.name, jf.slug, jf.practitioner_label
+        FROM vouches v
+        JOIN people p ON p.id = v.voucher_id
+        JOIN job_functions jf ON jf.id = v.job_function_id
+        WHERE v.vouchee_id = $1
+        ORDER BY v.created_at DESC LIMIT 1
+      `, [person.id])
+      if (vouchInfoRes.rows.length > 0) {
+        const vi = vouchInfoRes.rows[0]
+        inviterName = vi.display_name
+        jobFunction = { id: vi.id, name: vi.name, slug: vi.slug, practitionerLabel: vi.practitioner_label }
+      }
+
       res.writeHead(200)
       res.end(JSON.stringify({
         user: {
@@ -2935,6 +3140,8 @@ What ${senderFirst} wants to ask:
           current_company: person.current_company || null,
           photo_url: person.photo_url || null,
         },
+        ...(inviterName && { inviterName }),
+        ...(jobFunction && { jobFunction }),
       }))
     } catch (err) {
       console.error('[/api/auth/validate error]', err)

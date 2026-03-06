@@ -145,7 +145,7 @@ function SuggestionChips({ items, onSelect, loading, show, type }) {
 }
 
 // ─── Single Contact Form ─────────────────────────────────────────────────────
-function SingleContactForm({ index, onComplete }) {
+function SingleContactForm({ index, onComplete, collectEmail = true }) {
   const [name, setName] = useState("");
   const [linkedinInput, setLinkedinInput] = useState("");
   const [emailInput, setEmailInput] = useState("");
@@ -229,6 +229,7 @@ function SingleContactForm({ index, onComplete }) {
   // Always runs a refined Brave search with company info from the LinkedIn profile,
   // even if the prefetch found something (prefetch lacks company context → low quality).
   useEffect(() => {
+    if (!collectEmail) return;
     if (!liConfirmed) return;
     const searchId = ++emailSearchId.current;
     const trimmed = name.trim();
@@ -312,18 +313,30 @@ function SingleContactForm({ index, onComplete }) {
     setLiConfirmed(item);
     setLinkedinInput(item.url);
     setLiSuggestions([]);
-    setStep("email");
     capture("linkedin_result_selected", { slot_index: index, method: "suggestion" });
-    setTimeout(() => emailInputRef.current?.focus(), 100);
+    if (collectEmail) {
+      setStep("email");
+      setTimeout(() => emailInputRef.current?.focus(), 100);
+    } else {
+      setStep("done");
+      capture("vouch_slot_filled", { slot_index: index });
+      onComplete({ name: capitalizeName(name), linkedin: item.url, email: null });
+    }
   }
 
   function handleManualLinkedin() {
     if (!linkedinInput.trim()) return;
     setLiConfirmed({ label: name.trim(), detail: linkedinInput.trim(), url: linkedinInput.trim() });
     setLiSuggestions([]);
-    setStep("email");
     capture("linkedin_result_selected", { slot_index: index, method: "manual" });
-    setTimeout(() => emailInputRef.current?.focus(), 100);
+    if (collectEmail) {
+      setStep("email");
+      setTimeout(() => emailInputRef.current?.focus(), 100);
+    } else {
+      setStep("done");
+      capture("vouch_slot_filled", { slot_index: index });
+      onComplete({ name: capitalizeName(name), linkedin: linkedinInput.trim(), email: null });
+    }
   }
 
   function handleRefineSearch() {
@@ -523,7 +536,7 @@ function SingleContactForm({ index, onComplete }) {
       )}
 
       {/* EMAIL */}
-      {(step === "email" || step === "done") && (
+      {collectEmail && (step === "email" || step === "done") && (
         <div>
           <label style={labelStyle}>Email address</label>
           <input
@@ -588,6 +601,99 @@ function SingleContactForm({ index, onComplete }) {
   );
 }
 
+// ─── Share Link Box (email-free mode success screen) ─────────────────────────
+function ShareLinkBox({ shareToken, jobFnShort, voucherFirstName }) {
+  const [copied, setCopied] = useState(false);
+  const [msgCopied, setMsgCopied] = useState(false);
+  const link = `${window.location.origin}/invite/${shareToken}`;
+
+  const smsMsg = `I'm sharing an invite link for VouchFour. It's a new professional network site where you only get to invite your all-time best colleagues. I recommended you.\n\n${link}`;
+
+  const emailSubject = "Sharing an invite";
+  const emailBody = `Hi,\n\nI'm building out my professional network on a new site - VouchFour. It's invite-only and the premise is that you only get to invite your 4 all-time best colleagues in each job function. I recommended you as one of the top 4 ${jobFnShort || "professionals"} I've ever worked with. The link below will get you access to the site:\n\n${link}\n\nLet me know what you think,\n${voucherFirstName || ""}`;
+
+  const shareBtnBase = {
+    flex: 1, padding: "10px 6px", borderRadius: 999,
+    fontSize: 12, fontWeight: 700, fontFamily: FONT,
+    cursor: "pointer", textAlign: "center",
+    textDecoration: "none", display: "block", lineHeight: 1.3,
+    border: "none", color: "#fff",
+    textShadow: "0 1px 2px rgba(0,0,0,0.15)",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+  };
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      {/* Share buttons — primary action */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <a
+          href={`mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
+          style={{ ...shareBtnBase, background: "linear-gradient(135deg, #3B82F6, #6366F1)" }}
+        >
+          Email
+        </a>
+        <a
+          href={`https://mail.google.com/mail/?view=cm&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ ...shareBtnBase, background: "linear-gradient(135deg, #E11D48, #F97316)" }}
+        >
+          Gmail
+        </a>
+        <a
+          href={`sms:?&body=${encodeURIComponent(smsMsg)}`}
+          style={{ ...shareBtnBase, background: "linear-gradient(135deg, #10B981, #06B6D4)" }}
+        >
+          Text
+        </a>
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(smsMsg);
+            setMsgCopied(true);
+            setTimeout(() => setMsgCopied(false), 2000);
+          }}
+          style={{ ...shareBtnBase, background: "linear-gradient(135deg, #8B5CF6, #EC4899)" }}
+        >
+          {msgCopied ? "Copied!" : "Copy msg"}
+        </button>
+      </div>
+
+      {/* Raw link — secondary */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "8px 12px", background: "rgba(255,255,255,0.6)",
+        border: `1px solid ${C.border}`, borderRadius: 10,
+      }}>
+        <input
+          readOnly
+          value={link}
+          style={{
+            flex: 1, border: "none", background: "transparent",
+            fontSize: 12, fontFamily: FONT, color: C.sub,
+            outline: "none", minWidth: 0,
+          }}
+          onClick={e => e.target.select()}
+        />
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(link);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+          style={{
+            padding: "4px 10px", background: "transparent", color: C.accent,
+            border: `1px solid #C7D2FE`, borderRadius: 6, fontSize: 11,
+            fontWeight: 600, fontFamily: FONT, cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {copied ? "Copied!" : "Copy link"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Collapsed Contact Card ──────────────────────────────────────────────────
 function ContactCard({ contact, index, onEdit }) {
   return (
@@ -600,7 +706,7 @@ function ContactCard({ contact, index, onEdit }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 15, color: C.ink, fontFamily: FONT }}>{contact.name}</div>
         <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {contact.email}
+          {contact.email || contact.linkedin || ""}
         </div>
       </div>
       <button onClick={onEdit} style={{
@@ -629,6 +735,7 @@ export default function App() {
   const [isUpdate, setIsUpdate] = useState(false);
   const [tokenError, setTokenError] = useState(null);
   const [tokenLoading, setTokenLoading] = useState(!!token);
+  const [shareToken, setShareToken] = useState(null);
 
   // Validate token on mount — try to create session and redirect pre-vouch users to homepage
   useEffect(() => {
@@ -702,6 +809,9 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Submission failed');
+
+      // Capture share token for email-free mode success screen
+      if (data.shareToken) setShareToken(data.shareToken);
 
       // Store identity so StartVouchPage works for chained (non-authenticated) users
       if (data.personId) {
@@ -848,106 +958,32 @@ export default function App() {
             <div style={{ fontSize: 24, fontWeight: 700, color: C.ink, marginBottom: 12, lineHeight: 1.3 }}>
               Your network is taking shape, {vouchFirstName}.
             </div>
+            {/* Share link / email notification */}
             <div style={{
               background: "linear-gradient(135deg, #FDE6D0 0%, #D4F0E0 100%)",
               borderRadius: 14, border: "1.5px solid rgba(0,0,0,0.06)",
-              padding: "18px 18px 22px", marginBottom: 28,
+              padding: "18px 18px 22px", marginBottom: 20,
             }}>
-              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 12, marginTop: 0 }}>
-                {jobFnShort
-                  ? `The ${jobFnShort} you recommended will each receive an email letting them know you think highly of their work.`
-                  : `The professionals you recommended will each receive an email letting them know you think highly of their work.`}
-              </p>
-              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 20, marginTop: 0, fontWeight: 600 }}>
-                Let's keep building your network by vouching for your best colleagues in another function:
-              </p>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {/* Function dropdown + vouch button */}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <select
-                    id="success-function-select"
-                    defaultValue=""
-                    style={{
-                      flex: 1, padding: "12px 14px", fontSize: 16, fontFamily: FONT,
-                      borderRadius: 10, border: `1.5px solid rgba(0,0,0,0.2)`,
-                      background: "#fff", color: C.ink, appearance: "none",
-                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
-                      backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center",
-                      paddingRight: 32, cursor: "pointer",
-                    }}
-                  >
-                    <option value="" disabled>Choose a function…</option>
-                    {[
-                      { id: 1, name: "Engineering", slug: "engineering" },
-                      { id: 2, name: "Product Management", slug: "product" },
-                      { id: 3, name: "Marketing", slug: "marketing" },
-                      { id: 6, name: "Data / Analytics", slug: "data" },
-                      { id: 5, name: "Design (Product/UX)", slug: "design" },
-                      { id: 14, name: "General Management", slug: "general-management" },
-                      { id: 11, name: "Executive", slug: "executive" },
-                      { id: 8, name: "Operations", slug: "operations" },
-                      { id: 4, name: "Sales", slug: "sales" },
-                      { id: 10, name: "Customer Success", slug: "customer-success" },
-                      { id: 7, name: "Finance / Accounting", slug: "finance" },
-                      { id: 9, name: "People / HR", slug: "people-hr" },
-                      { id: 13, name: "Legal", slug: "legal" },
-                      { id: 12, name: "Investor", slug: "investor" },
-                    ].filter(jf => jf.slug !== invitee?.jobFunction?.slug).map(jf => (
-                      <option key={jf.id} value={JSON.stringify(jf)}>{jf.name}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={async () => {
-                      const sel = document.getElementById("success-function-select");
-                      if (!sel.value) return;
-                      const jf = JSON.parse(sel.value);
-                      try {
-                        const controller = new AbortController();
-                        const timeout = setTimeout(() => controller.abort(), 15000);
-                        const res = await fetch("/api/start-vouch", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          credentials: "include",
-                          body: JSON.stringify({ jobFunctionId: jf.id }),
-                          signal: controller.signal,
-                        });
-                        clearTimeout(timeout);
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || "Failed");
-                        window.location.href = `/vouch?token=${data.token}&ready=1`;
-                      } catch (err) {
-                        alert(err.message);
-                        try {
-                          fetch('/api/client-error', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'include',
-                            body: JSON.stringify({
-                              message: err.message, stack: err.stack,
-                              context: 'vouch_success_start_vouch',
-                              url: window.location.href, userAgent: navigator.userAgent,
-                            }),
-                          }).catch(() => {})
-                        } catch {}
-                      }
-                    }}
-                    style={{
-                      padding: "12px 20px", background: C.accent, color: "#fff",
-                      border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600,
-                      fontFamily: FONT, cursor: "pointer", whiteSpace: "nowrap",
-                    }}
-                  >
-                    Vouch →
-                  </button>
-                </div>
-
-              </div>
+              {shareToken ? (
+                <>
+                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
+                    Now you need to share an invite with {jobFnShort ? `the ${jobFnShort}` : "the professionals"} you recommended so they can access their network. Pick the best option for you:
+                  </p>
+                  <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
+                </>
+              ) : (
+                <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 0, marginTop: 0 }}>
+                  {jobFnShort
+                    ? `The ${jobFnShort} you recommended will each receive an email letting them know you think highly of their work.`
+                    : `The professionals you recommended will each receive an email letting them know you think highly of their work.`}
+                </p>
+              )}
             </div>
 
+            {/* You recommended */}
             <div style={{
               background: "linear-gradient(135deg, #ECFDF5 0%, #DBEAFE 100%)", borderRadius: 14, border: "1.5px solid rgba(0,0,0,0.06)",
-              padding: "16px 18px", marginBottom: 28,
+              padding: "16px 18px", marginBottom: 20,
             }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>
                 You recommended
@@ -989,6 +1025,93 @@ export default function App() {
                   </a>
                 ) : null;
               })()}
+            </div>
+
+            {/* Keep building your network */}
+            <div style={{
+              background: "#fff", borderRadius: 14, border: `1.5px solid ${C.border}`,
+              padding: "18px 18px 22px", marginBottom: 28,
+            }}>
+              <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 14, marginTop: 0, fontWeight: 600 }}>
+                Keep building your network by vouching in another function:
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <select
+                  id="success-function-select"
+                  defaultValue=""
+                  style={{
+                    flex: 1, padding: "12px 14px", fontSize: 16, fontFamily: FONT,
+                    borderRadius: 10, border: `1.5px solid ${C.border}`,
+                    background: "#fff", color: C.ink, appearance: "none",
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center",
+                    paddingRight: 32, cursor: "pointer",
+                  }}
+                >
+                  <option value="" disabled>Choose a function…</option>
+                  {[
+                    { id: 1, name: "Engineering", slug: "engineering" },
+                    { id: 2, name: "Product Management", slug: "product" },
+                    { id: 3, name: "Marketing", slug: "marketing" },
+                    { id: 6, name: "Data / Analytics", slug: "data" },
+                    { id: 5, name: "Design (Product/UX)", slug: "design" },
+                    { id: 14, name: "General Management", slug: "general-management" },
+                    { id: 11, name: "Executive", slug: "executive" },
+                    { id: 8, name: "Operations", slug: "operations" },
+                    { id: 4, name: "Sales", slug: "sales" },
+                    { id: 10, name: "Customer Success", slug: "customer-success" },
+                    { id: 7, name: "Finance / Accounting", slug: "finance" },
+                    { id: 9, name: "People / HR", slug: "people-hr" },
+                    { id: 13, name: "Legal", slug: "legal" },
+                    { id: 12, name: "Investor", slug: "investor" },
+                  ].filter(jf => jf.slug !== invitee?.jobFunction?.slug).map(jf => (
+                    <option key={jf.id} value={JSON.stringify(jf)}>{jf.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={async () => {
+                    const sel = document.getElementById("success-function-select");
+                    if (!sel.value) return;
+                    const jf = JSON.parse(sel.value);
+                    try {
+                      const controller = new AbortController();
+                      const timeout = setTimeout(() => controller.abort(), 15000);
+                      const res = await fetch("/api/start-vouch", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({ jobFunctionId: jf.id }),
+                        signal: controller.signal,
+                      });
+                      clearTimeout(timeout);
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || "Failed");
+                      window.location.href = `/vouch?token=${data.token}&ready=1`;
+                    } catch (err) {
+                      alert(err.message);
+                      try {
+                        fetch('/api/client-error', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          credentials: 'include',
+                          body: JSON.stringify({
+                            message: err.message, stack: err.stack,
+                            context: 'vouch_success_start_vouch',
+                            url: window.location.href, userAgent: navigator.userAgent,
+                          }),
+                        }).catch(() => {})
+                      } catch {}
+                    }
+                  }}
+                  style={{
+                    padding: "12px 20px", background: C.accent, color: "#fff",
+                    border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600,
+                    fontFamily: FONT, cursor: "pointer", whiteSpace: "nowrap",
+                  }}
+                >
+                  Vouch →
+                </button>
+              </div>
             </div>
 
             <p style={{
@@ -1115,6 +1238,7 @@ export default function App() {
                   key={`contact-form-${i}`}
                   index={i}
                   onComplete={(data) => handleComplete(i, data)}
+                  collectEmail={invitee?.collectEmail !== false}
                 />
               )}
             </div>

@@ -718,7 +718,7 @@ export default function PersonPage() {
 
   const person = data?.person;
   const subtitle = [person?.current_title, person?.current_company].filter(Boolean).join(" at ");
-  const canAsk = data && !data.is_self && data.degree >= 1 && data.degree <= 3;
+  const canAsk = data && !data.is_self && data.degree >= 1 && data.degree <= 3 && data.person?.has_email;
   const personFirstName = person?.name?.split(" ")[0] || "them";
 
   return (

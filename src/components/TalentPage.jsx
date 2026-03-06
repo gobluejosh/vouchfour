@@ -149,9 +149,11 @@ function TalentCard({ talent }) {
   );
 }
 
-function VouchStatusCard({ vouches, vouchToken, label }) {
+function VouchStatusCard({ vouches, vouchToken, shareToken, label }) {
   const [expanded, setExpanded] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const responded = vouches.filter(v => v.inviteStatus === "completed").length;
+  const inviteLink = shareToken ? `${window.location.origin}/invite/${shareToken}` : null;
 
   return (
     <div style={{
@@ -227,6 +229,44 @@ function VouchStatusCard({ vouches, vouchToken, label }) {
               )}
             </div>
           ))}
+          {inviteLink && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "8px 10px", marginTop: 4,
+              background: "#F9FAFB", borderRadius: 8,
+              border: `1px solid ${C.border}`,
+            }}>
+              <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, whiteSpace: "nowrap" }}>
+                Invite link:
+              </div>
+              <input
+                readOnly
+                value={inviteLink}
+                style={{
+                  flex: 1, border: "none", background: "transparent",
+                  fontSize: 12, fontFamily: FONT, color: C.ink,
+                  outline: "none", minWidth: 0,
+                }}
+                onClick={e => { e.stopPropagation(); e.target.select(); }}
+              />
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(inviteLink);
+                  setLinkCopied(true);
+                  setTimeout(() => setLinkCopied(false), 2000);
+                }}
+                style={{
+                  padding: "4px 10px", background: "transparent", color: C.accent,
+                  border: `1px solid #C7D2FE`, borderRadius: 6, fontSize: 11,
+                  fontWeight: 600, fontFamily: FONT, cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {linkCopied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -336,6 +376,7 @@ export default function TalentPage() {
   const [activeFunction, setActiveFunction] = useState(null); // slug or null for "All"
   const [totalPeople, setTotalPeople] = useState(0); // unfiltered total for user card
 
+  const [shareToken, setShareToken] = useState(null); // invite share link token
   const [selectedNextFn, setSelectedNextFn] = useState(""); // id of function picked in CTA dropdown
   const [startingVouch, setStartingVouch] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
@@ -399,6 +440,7 @@ export default function TalentPage() {
         setActiveJobFunctions(data.activeJobFunctions || []);
         setReachableFunctions(data.reachableFunctions || data.activeJobFunctions || []);
         setAvailableJobFunctions(data.availableJobFunctions || []);
+        if (data.shareToken) setShareToken(data.shareToken);
 
         if (data.user?.id) identify(data.user.id, { name: data.user.name });
         capture("talent_page_viewed", {
@@ -675,6 +717,7 @@ export default function TalentPage() {
                 <VouchStatusCard
                   vouches={currentVouches}
                   vouchToken={currentVouchToken}
+                  shareToken={shareToken}
                   label={displayedFunctionSlug && reachableFunctions.length > 1
                     ? (reachableFunctions.find(f => f.slug === displayedFunctionSlug)?.practitionerLabel || "")
                     : ""}
@@ -685,6 +728,7 @@ export default function TalentPage() {
                 <VouchStatusCard
                   vouches={currentVouches}
                   vouchToken={currentVouchToken}
+                  shareToken={shareToken}
                   label=""
                 />
               )}
