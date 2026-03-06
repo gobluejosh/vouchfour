@@ -28,6 +28,8 @@ const TEMPLATE_LABELS = {
   role_network: "Role Network (Legacy)",
   role_ready: "Role Ready (Legacy)",
   quick_ask: "Quick Ask",
+  thread_invite: "Group Thread Invite",
+  thread_reply_notification: "Group Thread Reply Notification",
 };
 
 function adminFetch(url, secret, options = {}) {

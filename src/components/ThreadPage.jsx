@@ -10,6 +10,20 @@ const C = {
 };
 const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
+// ── Linkify URLs in text ──────────────────────────────────────────────
+
+function Linkified({ text, linkColor }) {
+  const parts = text.split(/(https?:\/\/[^\s<]+)/);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    /^https?:\/\//.test(part) ? (
+      <a key={i} href={part} target="_blank" rel="noopener noreferrer"
+        style={{ color: linkColor || C.accent, textDecoration: "underline" }}
+      >{part}</a>
+    ) : part
+  );
+}
+
 // ── Avatar ────────────────────────────────────────────────────────────
 
 function PhotoAvatar({ name, photoUrl, size = 36 }) {
@@ -93,7 +107,7 @@ function MessageBubble({ msg, isViewer }) {
           fontSize: 14, lineHeight: 1.6, fontFamily: FONT,
           whiteSpace: "pre-wrap", wordBreak: "break-word",
         }}>
-          {msg.body}
+          <Linkified text={msg.body} linkColor={isViewer ? "#E0E7FF" : C.accent} />
         </div>
       </div>
     </div>

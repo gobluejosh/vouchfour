@@ -4423,12 +4423,13 @@ What ${senderFirst} wants to discuss: "${question}"` }],
             if (await isUnsubscribed(p.person_id)) continue
             if (!(await canEmailRecipient(p.person_id))) continue
 
-            // Throttle: skip if a notification was sent for this thread within the last 30 minutes
+            // Throttle: skip if a notification was sent for this thread recently (configurable)
+            const throttleMin = Number((await query("SELECT value FROM app_settings WHERE key = 'thread_notification_throttle_minutes'")).rows[0]?.value) || 30
             const recentNotif = await query(
-              `SELECT 1 FROM sent_emails WHERE recipient_id = $1 AND email_type = 'thread_reply_notification' AND reference_id = $2 AND sent_at > NOW() - INTERVAL '30 minutes' LIMIT 1`,
-              [p.person_id, viewer.thread_id])
+              `SELECT 1 FROM sent_emails WHERE recipient_id = $1 AND email_type = 'thread_reply_notification' AND reference_id = $2 AND sent_at > NOW() - INTERVAL '1 minute' * $3 LIMIT 1`,
+              [p.person_id, viewer.thread_id, throttleMin])
             if (recentNotif.rows.length > 0) {
-              console.log(`[Threads] Skipping notification for ${p.display_name} — sent within last 30min`)
+              console.log(`[Threads] Skipping notification for ${p.display_name} — sent within last ${throttleMin}min`)
               continue
             }
 
