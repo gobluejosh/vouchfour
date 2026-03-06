@@ -314,14 +314,6 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
     setLinkedinInput(item.url);
     setLiSuggestions([]);
     capture("linkedin_result_selected", { slot_index: index, method: "suggestion" });
-    if (collectEmail) {
-      setStep("email");
-      setTimeout(() => emailInputRef.current?.focus(), 100);
-    } else {
-      setStep("done");
-      capture("vouch_slot_filled", { slot_index: index });
-      onComplete({ name: capitalizeName(name), linkedin: item.url, email: null });
-    }
   }
 
   function handleManualLinkedin() {
@@ -329,6 +321,9 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
     setLiConfirmed({ label: name.trim(), detail: linkedinInput.trim(), url: linkedinInput.trim() });
     setLiSuggestions([]);
     capture("linkedin_result_selected", { slot_index: index, method: "manual" });
+  }
+
+  function handleLinkedInConfirm() {
     if (collectEmail) {
       setStep("email");
       setTimeout(() => emailInputRef.current?.focus(), 100);
@@ -460,9 +455,42 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
               marginTop: 5, fontSize: 12, fontFamily: FONT, fontWeight: 500,
               color: liFaded ? C.sub : C.success,
               transition: "color 0.8s ease",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
             }}>
-              ✓ {liConfirmed.detail}
+              <span>✓ {liConfirmed.detail}</span>
+              {step === "linkedin" && (
+                <button onClick={() => {
+                  setLiConfirmed(null); setLinkedinInput("");
+                  // Restore suggestions from prefetch cache
+                  const cached = prefetchCache.current[name.trim()];
+                  if (cached && cached !== "__loading__") { setLiSuggestions(cached); }
+                  setLiSearched(true);
+                }} style={{
+                  background: "none", border: "none", padding: "2px 6px",
+                  fontSize: 12, color: C.sub, fontFamily: FONT,
+                  cursor: "pointer", textDecoration: "underline",
+                  textDecorationStyle: "dotted", textUnderlineOffset: 3,
+                }}>
+                  Change
+                </button>
+              )}
             </div>
+          )}
+          {step === "linkedin" && liConfirmed && (
+            <button
+              onClick={handleLinkedInConfirm}
+              style={{
+                ...nextBtnStyle(true),
+                width: "100%",
+                marginTop: 14,
+                padding: "14px",
+                fontSize: 16,
+                borderRadius: 12,
+                justifyContent: "center",
+              }}
+            >
+              {collectEmail ? "Next →" : "Save ✓"}
+            </button>
           )}
           <SuggestionChips
             show={liShowSuggestions}
