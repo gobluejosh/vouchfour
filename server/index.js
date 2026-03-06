@@ -1170,6 +1170,13 @@ Rules:
         `, [voucherId, JSON.stringify(body), jobFunctionId])
         const submissionId = subRes.rows[0].id
 
+        // Snapshot which LinkedIn URLs already exist in people table (before upserts)
+        const recUrls = (recommendations || []).map(r => r?.linkedin ? normalizeLinkedInUrl(r.linkedin) : null).filter(Boolean)
+        const preExistingRes = recUrls.length > 0
+          ? await client.query('SELECT linkedin_url FROM people WHERE linkedin_url = ANY($1)', [recUrls])
+          : { rows: [] }
+        const preExistingUrls = new Set(preExistingRes.rows.map(r => r.linkedin_url))
+
         // Process each recommendation
         const vouchedPeople = []
         for (const r of (recommendations || [])) {
@@ -1206,6 +1213,7 @@ Rules:
             id: talentId, display_name: r.name,
             email: r.email || null, linkedin_url: talentUrl,
             isNew,
+            isNewToSystem: !preExistingUrls.has(talentUrl),
           })
         }
 
@@ -1282,17 +1290,8 @@ Rules:
           }
           console.log(`[Vouch] Email-free mode: share_token for ${invite.display_name}: ${shareToken}`)
 
-          // Check which vouchees are already active (have vouched or have an active session)
-          const voucheeIds = vouchedPeople.map(v => v.id)
-          if (voucheeIds.length > 0) {
-            const activeRes = await query(`
-              SELECT id, display_name FROM people
-              WHERE id = ANY($1)
-                AND (EXISTS(SELECT 1 FROM vouches WHERE voucher_id = people.id)
-                  OR EXISTS(SELECT 1 FROM sessions WHERE person_id = people.id))
-            `, [voucheeIds])
-            activeVoucheeNames = activeRes.rows.map(r => r.display_name)
-          }
+          // Vouchees who already existed in the system before this submission are "already on VouchFour"
+          activeVoucheeNames = vouchedPeople.filter(v => !v.isNewToSystem).map(v => v.display_name)
         }
 
         const responsePayload = { ok: true, personId: voucherId }
@@ -1542,11 +1541,11 @@ Rules:
         id: f.id, name: f.name, slug: f.slug, practitionerLabel: f.practitioner_label,
       }))
 
-      // Get all job functions, marking which ones are available (not yet vouched in)
+      // Get all job functions — only hide from "Keep building" if user has a full set of 4 vouches
       const allFnRes = await query('SELECT id, name, slug, practitioner_label FROM job_functions ORDER BY display_order')
-      const activeSlugs = new Set(activeJobFunctions.map(f => f.slug))
+      const fullSlugs = new Set(Object.entries(myVouches).filter(([, fn]) => fn.vouches.length >= 4).map(([slug]) => slug))
       const availableJobFunctions = allFnRes.rows
-        .filter(f => !activeSlugs.has(f.slug))
+        .filter(f => !fullSlugs.has(f.slug))
         .map(f => ({ id: f.id, name: f.name, slug: f.slug, practitionerLabel: f.practitioner_label }))
 
       // Batch fetch pending vouch invite tokens for all active functions
