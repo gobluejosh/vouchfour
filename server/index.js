@@ -1272,6 +1272,7 @@ Rules:
         const ceRes = await query("SELECT value FROM app_settings WHERE key = 'vouch_collect_email'")
         const collectEmail = ceRes.rows[0]?.value !== 'false'
         let shareToken = null
+        let activeVoucheeNames = []
         if (!collectEmail) {
           const stRes = await query('SELECT share_token FROM people WHERE id = $1', [voucherId])
           shareToken = stRes.rows[0]?.share_token
@@ -1280,10 +1281,28 @@ Rules:
             await query('UPDATE people SET share_token = $1 WHERE id = $2', [shareToken, voucherId])
           }
           console.log(`[Vouch] Email-free mode: share_token for ${invite.display_name}: ${shareToken}`)
+
+          // Check which vouchees are already active (have vouched or have an active session)
+          const voucheeIds = vouchedPeople.map(v => v.id)
+          if (voucheeIds.length > 0) {
+            const activeRes = await query(`
+              SELECT id, display_name FROM people
+              WHERE id = ANY($1)
+                AND (EXISTS(SELECT 1 FROM vouches WHERE voucher_id = people.id)
+                  OR EXISTS(SELECT 1 FROM sessions WHERE person_id = people.id))
+            `, [voucheeIds])
+            activeVoucheeNames = activeRes.rows.map(r => r.display_name)
+          }
         }
 
+        const responsePayload = { ok: true, personId: voucherId }
+        if (shareToken) {
+          responsePayload.shareToken = shareToken
+          responsePayload.activeVoucheeNames = activeVoucheeNames
+          responsePayload.totalVouchees = vouchedPeople.length
+        }
         res.writeHead(200)
-        res.end(JSON.stringify({ ok: true, personId: voucherId, ...(shareToken && { shareToken }) }))
+        res.end(JSON.stringify(responsePayload))
 
         // ── Post-commit: create invites + send emails + trigger enrichment ──
 

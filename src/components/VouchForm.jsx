@@ -736,6 +736,8 @@ export default function App() {
   const [tokenError, setTokenError] = useState(null);
   const [tokenLoading, setTokenLoading] = useState(!!token);
   const [shareToken, setShareToken] = useState(null);
+  const [activeVoucheeNames, setActiveVoucheeNames] = useState([]);
+  const [totalVouchees, setTotalVouchees] = useState(0);
 
   // Validate token on mount — try to create session and redirect pre-vouch users to homepage
   useEffect(() => {
@@ -810,8 +812,12 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Submission failed');
 
-      // Capture share token for email-free mode success screen
-      if (data.shareToken) setShareToken(data.shareToken);
+      // Capture share token + active vouchee info for email-free mode success screen
+      if (data.shareToken) {
+        setShareToken(data.shareToken);
+        setActiveVoucheeNames(data.activeVoucheeNames || []);
+        setTotalVouchees(data.totalVouchees || 0);
+      }
 
       // Store identity so StartVouchPage works for chained (non-authenticated) users
       if (data.personId) {
@@ -965,12 +971,33 @@ export default function App() {
               padding: "18px 18px 22px", marginBottom: 20,
             }}>
               {shareToken ? (
-                <>
-                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
-                    Now you need to share an invite with {jobFnShort ? `the ${jobFnShort}` : "the professionals"} you recommended so they can access their network. Pick the best option for you:
+                activeVoucheeNames.length >= totalVouchees && totalVouchees > 0 ? (
+                  /* All vouchees are already active */
+                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 0, marginTop: 0 }}>
+                    Everyone you recommended is already on VouchFour — no need to share an invite link. Your vouches have been recorded and their networks just got stronger.
                   </p>
-                  <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
-                </>
+                ) : activeVoucheeNames.length > 0 ? (
+                  /* Some vouchees are already active */
+                  <>
+                    <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 4, marginTop: 0 }}>
+                      {activeVoucheeNames.length === 1
+                        ? <><strong>{activeVoucheeNames[0]}</strong> is already on VouchFour, so they're all set.</>
+                        : <><strong>{activeVoucheeNames.join(" and ")}</strong> are already on VouchFour, so they're all set.</>}
+                    </p>
+                    <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
+                      Share this invite with {totalVouchees - activeVoucheeNames.length === 1 ? "the other person" : "the others"} you recommended so they can access their network:
+                    </p>
+                    <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
+                  </>
+                ) : (
+                  /* No vouchees are active */
+                  <>
+                    <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
+                      Now you need to share an invite with {jobFnShort ? `the ${jobFnShort}` : "the professionals"} you recommended so they can access their network. Pick the best option for you:
+                    </p>
+                    <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
+                  </>
+                )
               ) : (
                 <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 0, marginTop: 0 }}>
                   {jobFnShort
