@@ -680,13 +680,14 @@ export default function EnrichmentReviewPage() {
             </div>
           </div>
 
-          {/* Filter tabs */}
+          {/* Filter tabs + refresh */}
           <div
             style={{
               display: "flex",
               gap: 6,
               marginBottom: 16,
               flexWrap: "wrap",
+              alignItems: "center",
             }}
           >
             {filters.map((f) => (
@@ -724,6 +725,31 @@ export default function EnrichmentReviewPage() {
                 )}
               </button>
             ))}
+            <button
+              onClick={() => loadQueue(secret.trim(), filter)}
+              disabled={loading}
+              title="Refresh"
+              style={{
+                marginLeft: "auto",
+                width: 32,
+                height: 32,
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#FAFAF9",
+                border: `1.5px solid ${C.border}`,
+                borderRadius: "50%",
+                color: C.sub,
+                fontSize: 15,
+                cursor: loading ? "default" : "pointer",
+                opacity: loading ? 0.5 : 1,
+                transition: "all 0.15s",
+                flexShrink: 0,
+              }}
+            >
+              ↻
+            </button>
           </div>
 
           {/* People list */}
