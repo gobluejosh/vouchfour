@@ -2929,6 +2929,60 @@ Rules:
         userContext = parts.join('\n')
       }
 
+      // ─── Name-match shortcut: skip Claude for simple name lookups ─────
+      const nameMatches = (() => {
+        const cleaned = question.replace(/[?!.,;:'"]/g, '').trim()
+        const words = cleaned.split(/\s+/)
+        if (words.length === 0 || words.length > 3) return []
+        // Skip if it looks like a question or command
+        const skipWords = ['who','what','where','when','how','why','which','can','do','does',
+          'is','are','find','tell','list','show','recommend','suggest','any','help','looking',
+          'anyone','know','about','get','best','top','strongest','work','works']
+        if (skipWords.includes(words[0].toLowerCase())) return []
+        if (question.includes('?')) return []
+        const qLower = cleaned.toLowerCase()
+        return talent.filter(t => {
+          const name = t.display_name.toLowerCase()
+          const nameParts = name.split(/\s+/)
+          if (name === qLower) return true
+          if (words.length === 1 && nameParts.some(p => p === qLower)) return true
+          if (words.length >= 2 && name.includes(qLower)) return true
+          return false
+        })
+      })()
+
+      if (nameMatches.length > 0) {
+        const answerParts = nameMatches.map(t => {
+          const s = structuredMap.get(t.id)
+          const summary = summaryMap.get(t.id)
+          const degreeLabel = t.degree === 1 ? '1st' : t.degree === 2 ? '2nd' : '3rd'
+          const parts = [`**${t.display_name}**`]
+          if (s?.current_title && s?.current_company) parts.push(` — ${s.current_title} at ${s.current_company}`)
+          else if (s?.current_company) parts.push(` — ${s.current_company}`)
+          parts.push(` (${degreeLabel} degree connection)`)
+          if (summary) parts.push(`\n\n${summary}`)
+          return parts.join('')
+        })
+        const answer = nameMatches.length === 1
+          ? answerParts[0]
+          : answerParts.join('\n\n---\n\n')
+        const matchedPeople = nameMatches.map(t => {
+          const s = structuredMap.get(t.id)
+          const maxDeg = askDegreeLimit(s?.ask_receive_degree, s?.has_vouched)
+          const canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
+          return {
+            id: t.id, name: t.display_name, linkedin_url: t.linkedin_url,
+            degree: t.degree, vouch_score: t.vouch_score,
+            current_title: s?.current_title || null, current_company: s?.current_company || null,
+            photo_url: s?.photo_url || null, can_ask: canAsk,
+          }
+        })
+        console.log(`[NetworkBrain] Name shortcut: "${question}" → ${nameMatches.length} match(es) in ${Date.now() - start}ms`)
+        res.writeHead(200)
+        res.end(JSON.stringify({ answer, people: matchedPeople }))
+        return
+      }
+
       // Build network context for Claude (includes gives)
       const networkContext = talent.map(t => {
         const s = structuredMap.get(t.id)
