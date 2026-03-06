@@ -141,14 +141,14 @@ function renderInline(text) {
       const inner = part.slice(2, -2);
       const lm = inner.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (lm) {
-        return <a key={i} href={lm[2]} style={{ fontWeight: 600, color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
+        return <a key={i} href={lm[2]} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
       }
       return <strong key={i} style={{ fontWeight: 600 }}>{inner}</strong>;
     }
     // Link: [text](url)
     const lm = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (lm) {
-      return <a key={i} href={lm[2]} style={{ color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
+      return <a key={i} href={lm[2]} target="_blank" rel="noopener noreferrer" style={{ color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
     }
     return part;
   });
