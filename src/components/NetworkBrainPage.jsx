@@ -1137,20 +1137,29 @@ export default function NetworkBrainPage() {
                       >
                         <option value="" disabled>Choose a function…</option>
                         {[
-                          { id: 1, name: "Engineering", slug: "engineering" },
-                          { id: 2, name: "Product Management", slug: "product" },
-                          { id: 3, name: "Marketing", slug: "marketing" },
+                          { id: 15, name: "Clinicians", slug: "clinicians" },
+                          { id: 16, name: "Coaches", slug: "coaches" },
+                          { id: 17, name: "Communications / PR", slug: "communications" },
+                          { id: 18, name: "Consultants", slug: "consultants" },
+                          { id: 10, name: "Customer Success", slug: "customer-success" },
                           { id: 6, name: "Data / Analytics", slug: "data" },
                           { id: 5, name: "Design (Product/UX)", slug: "design" },
-                          { id: 14, name: "General Management", slug: "general-management" },
+                          { id: 19, name: "Educators", slug: "educators" },
+                          { id: 1, name: "Engineering", slug: "engineering" },
                           { id: 11, name: "Executive", slug: "executive" },
-                          { id: 8, name: "Operations", slug: "operations" },
-                          { id: 4, name: "Sales", slug: "sales" },
-                          { id: 10, name: "Customer Success", slug: "customer-success" },
                           { id: 7, name: "Finance / Accounting", slug: "finance" },
-                          { id: 9, name: "People / HR", slug: "people-hr" },
-                          { id: 13, name: "Legal", slug: "legal" },
+                          { id: 20, name: "Founders", slug: "founders" },
+                          { id: 14, name: "General Management", slug: "general-management" },
+                          { id: 21, name: "Generalists", slug: "generalists" },
                           { id: 12, name: "Investor", slug: "investor" },
+                          { id: 13, name: "Legal", slug: "legal" },
+                          { id: 3, name: "Marketing", slug: "marketing" },
+                          { id: 8, name: "Operations", slug: "operations" },
+                          { id: 9, name: "People / HR", slug: "people-hr" },
+                          { id: 22, name: "People Managers", slug: "people-managers" },
+                          { id: 2, name: "Product Management", slug: "product" },
+                          { id: 4, name: "Sales", slug: "sales" },
+                          { id: 23, name: "Strategists", slug: "strategists" },
                         ].map(jf => (
                           <option key={jf.id} value={JSON.stringify(jf)}>{jf.name}</option>
                         ))}
