@@ -2275,6 +2275,260 @@ Rules:
     return
   }
 
+  // ─── Admin: fix career via LinkedIn paste (parse + save + regen) ───
+  if (req.method === 'POST' && req.url === '/api/admin/fix-career') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const body = await readBody(req)
+      const { person_id, text } = body
+
+      if (!person_id || !text?.trim()) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'person_id and text are required' }))
+        return
+      }
+
+      // Step 1: Parse LinkedIn text with Claude
+      const parseController = new AbortController()
+      const parseTimeout = setTimeout(() => parseController.abort(), 30000)
+
+      const parseRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4096,
+          system: `Parse the following LinkedIn experience section text into structured employment history.
+Return a JSON array of roles, ordered from most recent to oldest.
+Each role object must have these fields:
+{
+  "title": string,
+  "organization": string,
+  "start_date": "YYYY-MM-DD" or null,
+  "end_date": "YYYY-MM-DD" or null,
+  "is_current": boolean,
+  "location": string or null,
+  "description": string or null
+}
+
+Rules:
+- Dates: Convert "Jan 2020" to "2020-01-01", "Mar 2023" to "2023-03-01", "2020" alone to "2020-01-01". If no date, use null.
+- is_current: true if the role shows "Present" as the end date.
+- location: Extract if shown (e.g. "San Francisco, CA" or "San Francisco Bay Area" or "Remote").
+- description: Include any bullet points or description text under the role. Combine multiple lines with newlines. Omit if none.
+- Organization: Use the company name as written. LinkedIn often shows company name on its own line.
+- Multiple roles at the same company: LinkedIn groups them. Create separate role objects for each position, all with the same organization name.
+- Duration strings like "2 yrs 3 mos" are metadata — ignore them, just use the actual dates.
+- Skills lists or "Skills:" sections should be ignored.
+- Output ONLY the JSON array. No markdown fencing, no preamble, no explanation.`,
+          messages: [{ role: 'user', content: text.trim() }],
+        }),
+        signal: parseController.signal,
+      })
+      clearTimeout(parseTimeout)
+
+      const parseData = await parseRes.json()
+      if (parseData.error) {
+        console.error('[admin/fix-career] Claude parse error:', JSON.stringify(parseData.error))
+        res.writeHead(500)
+        res.end(JSON.stringify({ error: 'Claude API error during parsing' }))
+        return
+      }
+      const parseText = parseData.content?.[0]?.text || ''
+      let roles
+      try {
+        const cleaned = parseText.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
+        roles = JSON.parse(cleaned)
+      } catch {
+        console.error('[admin/fix-career] Failed to parse Claude response:', parseText.substring(0, 300))
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Could not parse the pasted text' }))
+        return
+      }
+
+      if (!Array.isArray(roles) || roles.length === 0) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'No roles found in the pasted text' }))
+        return
+      }
+
+      // Step 2: Save employment history (delete + insert)
+      await query('DELETE FROM employment_history WHERE person_id = $1', [person_id])
+      for (const role of roles) {
+        await query(`
+          INSERT INTO employment_history (person_id, organization, title, start_date, end_date, is_current, location, description)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          person_id,
+          (role.organization || 'Unknown').trim(),
+          role.title?.trim() || null,
+          role.start_date || null,
+          role.is_current ? null : (role.end_date || null),
+          role.is_current || false,
+          role.location?.trim() || null,
+          role.description?.trim() || null,
+        ])
+      }
+
+      // Update current title/company from first current role
+      const currentRole = roles.find(r => r.is_current)
+      if (currentRole) {
+        await query(
+          'UPDATE people SET current_title = $1, current_company = $2, career_edited_at = NOW(), updated_at = NOW() WHERE id = $3',
+          [currentRole.title?.trim() || null, (currentRole.organization || '').trim(), person_id]
+        )
+      } else {
+        await query('UPDATE people SET career_edited_at = NOW(), updated_at = NOW() WHERE id = $1', [person_id])
+      }
+
+      // Step 3: Regenerate summary
+      const personRes = await query(
+        'SELECT display_name, current_title, current_company, location, linkedin_url FROM people WHERE id = $1',
+        [person_id]
+      )
+      const person = personRes.rows[0]
+
+      const historyRes = await query(
+        'SELECT organization, title, start_date, end_date, is_current, location, description FROM employment_history WHERE person_id = $1 ORDER BY is_current DESC, start_date DESC NULLS LAST',
+        [person_id]
+      )
+
+      const braveRes = await query(
+        "SELECT raw_payload FROM person_enrichment WHERE person_id = $1 AND source = 'brave'",
+        [person_id]
+      )
+
+      let context = `Name: ${person.display_name}\n`
+      if (person.current_title) context += `Current Role: ${person.current_title}`
+      if (person.current_company) context += ` at ${person.current_company}`
+      context += '\n'
+      if (person.location) context += `Location: ${person.location}\n`
+
+      if (historyRes.rows.length > 0) {
+        context += '\nEmployment History:\n'
+        for (const job of historyRes.rows) {
+          const start = job.start_date ? new Date(job.start_date).getFullYear() : '?'
+          const end = job.is_current ? 'Present' : (job.end_date ? new Date(job.end_date).getFullYear() : '?')
+          context += `- ${job.title || 'Role'} at ${job.organization} (${start}–${end})`
+          if (job.location) context += ` — ${job.location}`
+          context += '\n'
+          if (job.description) context += `  ${job.description}\n`
+        }
+      }
+
+      if (braveRes.rows.length > 0) {
+        try {
+          const braveData = braveRes.rows[0].raw_payload
+          const snippets = []
+          if (braveData.professional?.results) {
+            for (const r of braveData.professional.results.slice(0, 6)) {
+              if (r.description) snippets.push(r.description)
+            }
+          }
+          if (braveData.thought_leadership?.results) {
+            for (const r of braveData.thought_leadership.results.slice(0, 6)) {
+              if (r.description) snippets.push(r.description)
+            }
+          }
+          if (snippets.length > 0) {
+            context += '\nWeb Mentions:\n'
+            for (const s of snippets) context += `- ${s}\n`
+          }
+        } catch { /* non-critical */ }
+      }
+
+      const summaryController = new AbortController()
+      const summaryTimeout = setTimeout(() => summaryController.abort(), 30000)
+
+      const summaryRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          system: `You are writing a concise professional profile summary. Output ONLY the summary paragraph — no preamble, no heading, no meta-commentary.\n\nGuidelines:\n- 3–6 sentences\n- Authoritative tone, third person\n- Lead with current role and company\n- Highlight career trajectory and notable companies\n- Mention domain expertise or specializations\n- If web mentions show speaking, writing, or community involvement, include briefly\n- Structured data (title, company, history) is authoritative; web mentions are supplementary\n- Do NOT pad with generic praise. Every sentence must add information.`,
+          messages: [{ role: 'user', content: context }],
+        }),
+        signal: summaryController.signal,
+      })
+      clearTimeout(summaryTimeout)
+
+      const summaryData = await summaryRes.json()
+      const aiSummary = summaryData.content?.[0]?.text || null
+
+      if (aiSummary) {
+        await query(`
+          INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+          VALUES ($1, 'claude', $2, $3, NOW())
+          ON CONFLICT (person_id, source) DO UPDATE
+          SET raw_payload = EXCLUDED.raw_payload, ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+        `, [person_id, JSON.stringify({ admin_fix: true, context }), aiSummary])
+
+        // Compact summary
+        try {
+          const compactController = new AbortController()
+          const compactTimeout = setTimeout(() => compactController.abort(), 15000)
+          const compactRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': ANTHROPIC_API_KEY,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 128,
+              system: 'Compress this professional summary into 1–2 sentences (max 40 words). Keep the most important facts: current role, company, and one key differentiator. Output ONLY the compressed text.',
+              messages: [{ role: 'user', content: aiSummary }],
+            }),
+            signal: compactController.signal,
+          })
+          clearTimeout(compactTimeout)
+          const compactData = await compactRes.json()
+          const compactSummary = compactData.content?.[0]?.text || null
+          if (compactSummary) {
+            await query(`
+              INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+              VALUES ($1, 'claude-compact', '{}', $2, NOW())
+              ON CONFLICT (person_id, source) DO UPDATE
+              SET ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+            `, [person_id, compactSummary])
+          }
+        } catch { /* compact is non-critical */ }
+      }
+
+      // Mark as approved
+      await query(
+        "UPDATE people SET review_status = 'approved', review_notes = 'Fixed via LinkedIn paste', reviewed_at = NOW() WHERE id = $1",
+        [person_id]
+      )
+
+      console.log(`[admin/fix-career] Fixed person ${person_id}: ${roles.length} roles, summary ${aiSummary ? 'generated' : 'failed'}`)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        ok: true,
+        roles_count: roles.length,
+        ai_summary: aiSummary,
+        current_title: currentRole?.title || null,
+        current_company: currentRole?.organization || null,
+      }))
+    } catch (err) {
+      console.error('[admin/fix-career error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Enrichment trigger (no auth, tucked away) ───────────────────
   if (req.method === 'POST' && req.url === '/api/enrich') {
     try {

@@ -129,6 +129,9 @@ function PersonCard({ person, secret, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState(person.review_notes || "");
   const [saving, setSaving] = useState(false);
+  const [linkedinText, setLinkedinText] = useState("");
+  const [fixing, setFixing] = useState(false);
+  const [fixResult, setFixResult] = useState(null); // null | { ok, roles_count, ai_summary } | { error }
 
   async function setStatus(status) {
     setSaving(true);
@@ -251,6 +254,71 @@ function PersonCard({ person, secret, onUpdate }) {
             >
               Profile page ↗
             </a>
+          </div>
+
+          {/* LinkedIn paste fix */}
+          <div style={{
+            marginBottom: 12, padding: "10px 12px",
+            background: "#FAFAF9", borderRadius: 8, border: `1px solid ${C.border}`,
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: C.accent, marginBottom: 6, fontFamily: FONT }}>
+              Paste LinkedIn Experience
+            </div>
+            <textarea
+              value={linkedinText}
+              onChange={(e) => setLinkedinText(e.target.value)}
+              placeholder="Paste LinkedIn experience section here to fix career history + regenerate summary..."
+              rows={3}
+              style={{
+                width: "100%", padding: "8px 10px", fontSize: 13, fontFamily: FONT,
+                color: C.ink, background: "#fff", border: `1.5px solid ${C.border}`,
+                borderRadius: 8, resize: "vertical", boxSizing: "border-box",
+                marginBottom: 6,
+              }}
+            />
+            <button
+              onClick={async () => {
+                if (!linkedinText.trim()) return;
+                setFixing(true);
+                setFixResult(null);
+                try {
+                  const res = await adminFetch("/api/admin/fix-career", secret, {
+                    method: "POST",
+                    body: JSON.stringify({ person_id: person.id, text: linkedinText.trim() }),
+                  });
+                  const data = await res.json();
+                  if (data.ok) {
+                    setFixResult(data);
+                    onUpdate(person.id, "approved", "Fixed via LinkedIn paste");
+                  } else {
+                    setFixResult({ error: data.error || "Fix failed" });
+                  }
+                } catch {
+                  setFixResult({ error: "Request failed" });
+                } finally {
+                  setFixing(false);
+                }
+              }}
+              disabled={fixing || !linkedinText.trim()}
+              style={{
+                padding: "6px 14px", background: C.accent, color: "#fff",
+                border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                fontFamily: FONT, cursor: (fixing || !linkedinText.trim()) ? "default" : "pointer",
+                opacity: (fixing || !linkedinText.trim()) ? 0.6 : 1,
+              }}
+            >
+              {fixing ? "Fixing..." : "Parse & Fix ✨"}
+            </button>
+            {fixResult && (
+              <div style={{
+                marginTop: 6, fontSize: 12, fontFamily: FONT,
+                color: fixResult.error ? C.danger : C.success,
+              }}>
+                {fixResult.error
+                  ? fixResult.error
+                  : `✓ Fixed: ${fixResult.roles_count} roles saved, summary regenerated. Status set to Approved.`}
+              </div>
+            )}
           </div>
 
           {/* Flagged notes */}
