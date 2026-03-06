@@ -260,6 +260,9 @@ function PeopleMentioned({ people, inAskMode, selectedPeople, onTogglePerson, st
   const [expanded, setExpanded] = useState(false);
   if (!people || people.length === 0) return null;
 
+  // In ask mode, only show people who can be asked
+  const askablePeople = inAskMode ? people.filter(p => p.can_ask !== false) : people;
+
   const showExpanded = expanded || inAskMode;
 
   return (
@@ -314,14 +317,17 @@ function PeopleMentioned({ people, inAskMode, selectedPeople, onTogglePerson, st
           textTransform: "uppercase", letterSpacing: 0.5,
           marginBottom: 8,
         }}>
-          Select up to 3 people to message
+          {askablePeople.length > 0
+            ? "Select up to 3 people to message"
+            : "None of the mentioned people are currently accepting asks from your connection degree."
+          }
         </div>
       )}
 
       {/* Expanded cards */}
       {showExpanded && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: inAskMode ? 0 : 6 }}>
-          {people.map(p => (
+          {(inAskMode ? askablePeople : people).map(p => (
             <PersonCard
               key={p.id}
               person={p}

@@ -116,21 +116,27 @@ export async function saveApolloData(personId, displayName, apolloData) {
       fields.seniority, fields.industry, fields.headline, fields.photo_url])
 
   // Replace employment history (delete + insert for idempotent re-enrichment)
-  await query('DELETE FROM employment_history WHERE person_id = $1', [personId])
+  // Skip if user has manually edited their career history
+  const editCheck = await query('SELECT career_edited_at FROM people WHERE id = $1', [personId])
+  if (!editCheck.rows[0]?.career_edited_at) {
+    await query('DELETE FROM employment_history WHERE person_id = $1', [personId])
 
-  const history = person.employment_history || []
-  for (const job of history) {
-    await query(`
-      INSERT INTO employment_history (person_id, organization, title, start_date, end_date, is_current)
-      VALUES ($1, $2, $3, $4, $5, $6)
-    `, [
-      personId,
-      job.organization_name || 'Unknown',
-      job.title || null,
-      job.start_date || null,
-      job.end_date || null,
-      job.current || false,
-    ])
+    const history = person.employment_history || []
+    for (const job of history) {
+      await query(`
+        INSERT INTO employment_history (person_id, organization, title, start_date, end_date, is_current, location, description)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `, [
+        personId,
+        job.organization_name || 'Unknown',
+        job.title || null,
+        job.start_date || null,
+        job.end_date || null,
+        job.current || false,
+        null,
+        null,
+      ])
+    }
   }
 
   // Upsert into person_enrichment

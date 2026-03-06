@@ -132,6 +132,38 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY
 const APOLLO_API_KEY = process.env.APOLLO_API_KEY || ''
 const ADMIN_SECRET = process.env.ADMIN_SECRET || ''
 
+// ─── Gives & Ask Preferences constants ──────────────────────────────
+const VALID_ASK_DEGREES = ['network', '2nd', '1st', 'none']
+const VALID_GIVE_TYPES = [
+  'talent_recommendations', 'reference_checks', 'informational_interviews',
+  'experience_advice', 'gut_checks', 'candid_feedback', 'introductions',
+  'resume_reviews', 'referrals',
+]
+const GIVE_TYPE_LABELS = {
+  talent_recommendations: 'Talent recommendations',
+  reference_checks: 'Reference checks',
+  informational_interviews: 'Brief informational interviews about my role or career',
+  experience_advice: 'Advice based on my experience',
+  gut_checks: 'Gut-checks / sounding board conversations',
+  candid_feedback: 'Candid feedback',
+  introductions: 'Introductions',
+  resume_reviews: 'Resume reviews',
+  referrals: 'Referrals',
+}
+
+// Returns the max allowed degree for a person's ask preference.
+// Returns 0 for 'none', 1 for '1st', 2 for '2nd', 3 for 'network'/default.
+function askDegreeLimit(askReceiveDegree, hasVouched) {
+  const effective = askReceiveDegree || (hasVouched ? 'network' : '1st')
+  switch (effective) {
+    case 'none': return 0
+    case '1st': return 1
+    case '2nd': return 2
+    case 'network': return 3
+    default: return 3
+  }
+}
+
 if (!ANTHROPIC_API_KEY || !BRAVE_API_KEY || !RESEND_API_KEY) {
   console.error('\n  ⚠  Missing required environment variables.')
   console.error('  Run:  ANTHROPIC_API_KEY=sk-ant-... BRAVE_API_KEY=BSA... RESEND_API_KEY=re_... npm run server\n')
@@ -1681,8 +1713,110 @@ Rules:
         return
       }
 
+      // Preferences update (ask_receive_degree, gives, gives_free_text)
+      if (body.type === 'preferences') {
+        const updates = []
+        const params = []
+        let idx = 1
+
+        if (body.ask_receive_degree !== undefined) {
+          if (body.ask_receive_degree !== null && !VALID_ASK_DEGREES.includes(body.ask_receive_degree)) {
+            res.writeHead(400)
+            res.end(JSON.stringify({ error: 'Invalid ask_receive_degree value' }))
+            return
+          }
+          updates.push(`ask_receive_degree = $${idx++}`)
+          params.push(body.ask_receive_degree)
+        }
+
+        if (body.gives !== undefined) {
+          if (!Array.isArray(body.gives) || body.gives.some(g => !VALID_GIVE_TYPES.includes(g))) {
+            res.writeHead(400)
+            res.end(JSON.stringify({ error: 'Invalid gives value' }))
+            return
+          }
+          updates.push(`gives = $${idx++}`)
+          params.push(body.gives)
+        }
+
+        if (body.gives_free_text !== undefined) {
+          updates.push(`gives_free_text = $${idx++}`)
+          params.push(body.gives_free_text?.trim() || null)
+        }
+
+        if (updates.length === 0) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'No preference fields to update' }))
+          return
+        }
+
+        params.push(personId)
+        await query(
+          `UPDATE people SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${idx}`,
+          params
+        )
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+
+      if (body.type === 'employment_history') {
+        if (!Array.isArray(body.roles) || body.roles.length === 0) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'roles must be a non-empty array' }))
+          return
+        }
+
+        // Validate each role has at least an organization
+        for (const role of body.roles) {
+          if (!role.organization?.trim()) {
+            res.writeHead(400)
+            res.end(JSON.stringify({ error: 'Each role must have a company name' }))
+            return
+          }
+        }
+
+        // Delete existing and insert new (same pattern as saveApolloData)
+        await query('DELETE FROM employment_history WHERE person_id = $1', [personId])
+
+        for (const role of body.roles) {
+          await query(`
+            INSERT INTO employment_history (person_id, organization, title, start_date, end_date, is_current, location, description)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `, [
+            personId,
+            role.organization.trim(),
+            role.title?.trim() || null,
+            role.start_date || null,
+            role.is_current ? null : (role.end_date || null),
+            role.is_current || false,
+            role.location?.trim() || null,
+            role.description?.trim() || null,
+          ])
+        }
+
+        // Update people.current_title and current_company from first current role
+        const currentRole = body.roles.find(r => r.is_current)
+        if (currentRole) {
+          await query(
+            'UPDATE people SET current_title = $1, current_company = $2, career_edited_at = NOW(), updated_at = NOW() WHERE id = $3',
+            [currentRole.title?.trim() || null, currentRole.organization.trim(), personId]
+          )
+        } else {
+          await query(
+            'UPDATE people SET career_edited_at = NOW(), updated_at = NOW() WHERE id = $1',
+            [personId]
+          )
+        }
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+
       res.writeHead(400)
-      res.end(JSON.stringify({ error: 'Invalid update type. Use "profile" or "summary".' }))
+      res.end(JSON.stringify({ error: 'Invalid update type. Use "profile", "summary", "preferences", or "employment_history".' }))
     } catch (err) {
       console.error('[/api/person PUT error]', err)
       res.writeHead(500)
@@ -1708,10 +1842,11 @@ Rules:
         return
       }
 
-      // Fetch person with all enrichment fields
+      // Fetch person with all enrichment fields + preferences
       const personRes = await query(`
         SELECT id, display_name, linkedin_url, email, current_title, current_company,
-               location, seniority, industry, headline, photo_url, enriched_at
+               location, seniority, industry, headline, photo_url, enriched_at,
+               ask_receive_degree, gives, gives_free_text
         FROM people WHERE id = $1
       `, [personId])
 
@@ -1729,7 +1864,7 @@ Rules:
           WHERE person_id = $1 AND source = 'claude'
         `, [personId]),
         query(`
-          SELECT organization, title, start_date, end_date, is_current
+          SELECT id, organization, title, start_date, end_date, is_current, location, description
           FROM employment_history
           WHERE person_id = $1
           ORDER BY is_current DESC, start_date DESC NULLS LAST
@@ -1834,13 +1969,31 @@ Rules:
         } catch (e) { /* non-critical */ }
       }
 
+      // Check if person has vouched (needed for ask preference defaults)
+      const isSelf = Number(session.id) === Number(personId)
+      const personHasVouchedRes = await query(
+        'SELECT EXISTS(SELECT 1 FROM vouches WHERE voucher_id = $1) AS has_vouched',
+        [personId]
+      )
+      const personHasVouched = personHasVouchedRes.rows[0].has_vouched
+
+      // Compute effective ask degree (resolves NULL default based on vouch status)
+      const effectiveAskDegree = person.ask_receive_degree || (personHasVouched ? 'network' : '1st')
+
+      // Compute can_ask: considers degree, email, preferences
+      let canAsk = false
+      if (!isSelf && computedDegree >= 1 && computedDegree <= 3 && person.email) {
+        const maxDeg = askDegreeLimit(person.ask_receive_degree, personHasVouched)
+        canAsk = computedDegree <= maxDeg
+      }
+
       res.writeHead(200)
       res.end(JSON.stringify({
         person: {
           id: person.id,
           name: person.display_name,
           linkedin_url: person.linkedin_url,
-          email: Number(session.id) === Number(personId) ? (person.email || null) : undefined,
+          email: isSelf ? (person.email || null) : undefined,
           has_email: !!person.email,
           current_title: person.current_title,
           current_company: person.current_company,
@@ -1848,6 +2001,10 @@ Rules:
           industry: person.industry,
           headline: person.headline,
           photo_url: person.photo_url,
+          gives: person.gives || [],
+          gives_free_text: person.gives_free_text || null,
+          // Only expose ask preference to self (effective value, not raw NULL)
+          ...(isSelf ? { ask_receive_degree: effectiveAskDegree } : {}),
         },
         degree: computedDegree,
         degree_mismatch,
@@ -1856,7 +2013,8 @@ Rules:
         ai_summary: summaryRes.rows[0]?.ai_summary || null,
         employment_history: historyRes.rows,
         web_mentions: webMentions,
-        is_self: Number(session.id) === Number(personId),
+        is_self: isSelf,
+        can_ask: canAsk,
       }))
     } catch (err) {
       console.error('[/api/person error]', err)
@@ -2185,6 +2343,251 @@ Rules:
     return
   }
 
+  // ─── Parse LinkedIn experience text ──────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/parse-linkedin-experience') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end('{}'); return }
+
+      const body = await readBody(req)
+      if (!body.text?.trim()) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'No text provided' }))
+        return
+      }
+
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 30000)
+
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4096,
+          system: `Parse the following LinkedIn experience section text into structured employment history.
+Return a JSON array of roles, ordered from most recent to oldest.
+Each role object must have these fields:
+{
+  "title": string,
+  "organization": string,
+  "start_date": "YYYY-MM-DD" or null,
+  "end_date": "YYYY-MM-DD" or null,
+  "is_current": boolean,
+  "location": string or null,
+  "description": string or null
+}
+
+Rules:
+- Dates: Convert "Jan 2020" to "2020-01-01", "Mar 2023" to "2023-03-01", "2020" alone to "2020-01-01". If no date, use null.
+- is_current: true if the role shows "Present" as the end date.
+- location: Extract if shown (e.g. "San Francisco, CA" or "San Francisco Bay Area" or "Remote").
+- description: Include any bullet points or description text under the role. Combine multiple lines with newlines. Omit if none.
+- Organization: Use the company name as written. LinkedIn often shows company name on its own line.
+- Multiple roles at the same company: LinkedIn groups them. Create separate role objects for each position, all with the same organization name.
+- Duration strings like "2 yrs 3 mos" are metadata — ignore them, just use the actual dates.
+- Skills lists or "Skills:" sections should be ignored.
+- Output ONLY the JSON array. No markdown fencing, no preamble, no explanation.`,
+          messages: [{ role: 'user', content: body.text.trim() }],
+        }),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+
+      const claudeData = await claudeRes.json()
+      if (claudeData.error) {
+        console.error('[parse-linkedin] Claude API error:', JSON.stringify(claudeData.error))
+      }
+      const text = claudeData.content?.[0]?.text || ''
+      console.log('[parse-linkedin] Claude response length:', text.length, 'preview:', text.substring(0, 200))
+
+      // Parse the JSON response — handle potential markdown fencing
+      let parsed
+      try {
+        const cleaned = text.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
+        parsed = JSON.parse(cleaned)
+      } catch {
+        console.error('[parse-linkedin] Failed to parse Claude response:', text.substring(0, 500))
+        res.writeHead(200)
+        res.end(JSON.stringify({ roles: [], error: 'Could not parse the pasted text. Please try again.' }))
+        return
+      }
+
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        res.writeHead(200)
+        res.end(JSON.stringify({ roles: [], error: 'No roles found in the pasted text.' }))
+        return
+      }
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ roles: parsed }))
+    } catch (err) {
+      console.error('[parse-linkedin error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Regenerate AI summary ─────────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/regenerate-summary') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end('{}'); return }
+
+      const personId = session.id
+
+      // Load person data
+      const personRes = await query(
+        'SELECT display_name, current_title, current_company, location, linkedin_url FROM people WHERE id = $1',
+        [personId]
+      )
+      if (personRes.rows.length === 0) {
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Person not found' }))
+        return
+      }
+      const person = personRes.rows[0]
+
+      // Load employment history
+      const historyRes = await query(
+        'SELECT organization, title, start_date, end_date, is_current, location, description FROM employment_history WHERE person_id = $1 ORDER BY is_current DESC, start_date DESC NULLS LAST',
+        [personId]
+      )
+
+      // Load existing Brave data
+      const braveRes = await query(
+        "SELECT raw_payload FROM person_enrichment WHERE person_id = $1 AND source = 'brave'",
+        [personId]
+      )
+
+      // Build context (same structure as enrichPerson Step C)
+      let context = `Name: ${person.display_name}\n`
+      if (person.current_title) context += `Current Role: ${person.current_title}`
+      if (person.current_company) context += ` at ${person.current_company}`
+      context += '\n'
+      if (person.location) context += `Location: ${person.location}\n`
+
+      if (historyRes.rows.length > 0) {
+        context += '\nEmployment History:\n'
+        for (const job of historyRes.rows) {
+          const start = job.start_date ? new Date(job.start_date).getFullYear() : '?'
+          const end = job.is_current ? 'Present' : (job.end_date ? new Date(job.end_date).getFullYear() : '?')
+          context += `- ${job.title || 'Role'} at ${job.organization} (${start}–${end})`
+          if (job.location) context += ` — ${job.location}`
+          context += '\n'
+          if (job.description) context += `  ${job.description}\n`
+        }
+      }
+
+      // Add Brave web mentions if available
+      if (braveRes.rows.length > 0) {
+        try {
+          const braveData = braveRes.rows[0].raw_payload
+          const snippets = []
+          if (braveData.professional?.results) {
+            for (const r of braveData.professional.results.slice(0, 6)) {
+              if (r.description) snippets.push(r.description)
+            }
+          }
+          if (braveData.thought_leadership?.results) {
+            for (const r of braveData.thought_leadership.results.slice(0, 6)) {
+              if (r.description) snippets.push(r.description)
+            }
+          }
+          if (snippets.length > 0) {
+            context += '\nWeb Mentions:\n'
+            for (const s of snippets) context += `- ${s}\n`
+          }
+        } catch { /* non-critical */ }
+      }
+
+      // Call Claude for summary (same prompt as enrichPerson)
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 30000)
+
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          system: `You are writing a concise professional profile summary. Output ONLY the summary paragraph — no preamble, no heading, no meta-commentary.\n\nGuidelines:\n- 3–6 sentences\n- Authoritative tone, third person\n- Lead with current role and company\n- Highlight career trajectory and notable companies\n- Mention domain expertise or specializations\n- If web mentions show speaking, writing, or community involvement, include briefly\n- Structured data (title, company, history) is authoritative; web mentions are supplementary\n- Do NOT pad with generic praise. Every sentence must add information.`,
+          messages: [{ role: 'user', content: context }],
+        }),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+
+      const claudeData = await claudeRes.json()
+      const aiSummary = claudeData.content?.[0]?.text || null
+
+      if (!aiSummary) {
+        res.writeHead(500)
+        res.end(JSON.stringify({ error: 'Failed to generate summary' }))
+        return
+      }
+
+      // Save full summary
+      await query(`
+        INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+        VALUES ($1, 'claude', $2, $3, NOW())
+        ON CONFLICT (person_id, source) DO UPDATE
+        SET raw_payload = EXCLUDED.raw_payload, ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+      `, [personId, JSON.stringify({ regenerated: true, context }), aiSummary])
+
+      // Generate and save compact summary
+      try {
+        const compactController = new AbortController()
+        const compactTimeout = setTimeout(() => compactController.abort(), 15000)
+
+        const compactRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 128,
+            system: 'Compress this professional summary into 1–2 sentences (max 40 words). Keep the most important facts: current role, company, and one key differentiator. Output ONLY the compressed text.',
+            messages: [{ role: 'user', content: aiSummary }],
+          }),
+          signal: compactController.signal,
+        })
+        clearTimeout(compactTimeout)
+
+        const compactData = await compactRes.json()
+        const compactSummary = compactData.content?.[0]?.text || null
+        if (compactSummary) {
+          await query(`
+            INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+            VALUES ($1, 'claude-compact', '{}', $2, NOW())
+            ON CONFLICT (person_id, source) DO UPDATE
+            SET ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+          `, [personId, compactSummary])
+        }
+      } catch { /* compact is non-critical */ }
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true, ai_summary: aiSummary }))
+    } catch (err) {
+      console.error('[regenerate-summary error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Network Brain query (session auth, tucked away) ────────────
   if (req.method === 'POST' && req.url === '/api/network-brain') {
     try {
@@ -2229,7 +2632,9 @@ Rules:
           ORDER BY person_id, CASE source WHEN 'claude-compact' THEN 0 ELSE 1 END
         `, [personIds]),
         query(`
-          SELECT id, display_name, current_title, current_company, industry, linkedin_url, photo_url
+          SELECT id, display_name, current_title, current_company, industry, linkedin_url, photo_url,
+                 email, ask_receive_degree, gives, gives_free_text,
+                 EXISTS(SELECT 1 FROM vouches WHERE voucher_id = people.id) AS has_vouched
           FROM people WHERE id = ANY($1)
         `, [personIds]),
         // User's own profile
@@ -2270,7 +2675,7 @@ Rules:
         userContext = parts.join('\n')
       }
 
-      // Build network context for Claude
+      // Build network context for Claude (includes gives)
       const networkContext = talent.map(t => {
         const s = structuredMap.get(t.id)
         const summary = summaryMap.get(t.id) || ''
@@ -2279,6 +2684,12 @@ Rules:
         else if (s?.current_company) parts.push(`| ${s.current_company}`)
         if (s?.industry) parts.push(`| ${s.industry}`)
         parts.push(`| Degree ${t.degree}, Score ${t.vouch_score}`)
+        const gives = s?.gives || []
+        if (gives.length > 0) {
+          const giveLabels = gives.map(g => GIVE_TYPE_LABELS[g] || g).join(', ')
+          parts.push(`| Gives: ${giveLabels}`)
+        }
+        if (s?.gives_free_text) parts.push(`| Also: ${s.gives_free_text}`)
         if (summary) parts.push(`\n  Profile: ${summary}`)
         return parts.join(' ')
       }).join('\n')
@@ -2303,6 +2714,8 @@ Below is data about every person in their network, including their role, company
 
 Answer the user's question by recommending specific people from their network. Always reference people by name and explain why they're relevant. You know the user's background, so you can tailor recommendations based on shared experience, complementary skills, or relevant connections. If no one in the network matches, say so honestly. Keep responses to 2-4 short paragraphs. Use bullet points when listing multiple people. Be direct and actionable.
 
+Some people have indicated specific ways they're willing to help (listed as "Gives"). Use this as a helpful signal when relevant — for example, mention that someone offers reference checks or introductions if it's pertinent to the user's question. However, treat Gives as a soft signal, not a hard constraint. Feel free to suggest someone even if they haven't explicitly listed a matching Give.
+
 Network (${talent.length} people):
 ${networkContext}`,
           messages: [{ role: 'user', content: question }],
@@ -2317,19 +2730,25 @@ ${networkContext}`,
 
       console.log(`[NetworkBrain] Response in ${Date.now() - start}ms | ${answer.length} chars`)
 
-      // Extract mentioned people for structured response
+      // Extract mentioned people for structured response (with can_ask)
       const mentionedPeople = talent.filter(t =>
         answer.toLowerCase().includes(t.display_name.toLowerCase())
-      ).map(t => ({
-        id: t.id,
-        name: t.display_name,
-        linkedin_url: t.linkedin_url,
-        degree: t.degree,
-        vouch_score: t.vouch_score,
-        current_title: structuredMap.get(t.id)?.current_title || null,
-        current_company: structuredMap.get(t.id)?.current_company || null,
-        photo_url: structuredMap.get(t.id)?.photo_url || null,
-      }))
+      ).map(t => {
+        const s = structuredMap.get(t.id)
+        const maxDeg = askDegreeLimit(s?.ask_receive_degree, s?.has_vouched)
+        const canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
+        return {
+          id: t.id,
+          name: t.display_name,
+          linkedin_url: t.linkedin_url,
+          degree: t.degree,
+          vouch_score: t.vouch_score,
+          current_title: s?.current_title || null,
+          current_company: s?.current_company || null,
+          photo_url: s?.photo_url || null,
+          can_ask: canAsk,
+        }
+      })
 
       res.writeHead(200)
       res.end(JSON.stringify({ answer, people: mentionedPeople }))
@@ -2522,9 +2941,10 @@ ${networkContext}`,
         res.writeHead(400); res.end(JSON.stringify({ error: 'You need an email address on your profile before sending asks. Update it on your profile page.' })); return
       }
 
-      // Check recipient rate limits + load profiles
+      // Check recipient rate limits, ask preferences, + load profiles
       const recipientProfiles = []
       const recipientsAtLimit = []
+      const recipientsBlocked = []
       for (const rid of recipient_ids) {
         const maxReceives = await getQuickAskLimit('quick_ask_max_receives_per_week')
         const recvCount = await countRecipientReceivesThisWeek(rid)
@@ -2534,14 +2954,65 @@ ${networkContext}`,
         }
         const rRes = await query(
           `SELECT p.id, p.display_name, p.email, p.current_title, p.current_company, p.photo_url,
-                  pe.ai_summary
+                  p.ask_receive_degree,
+                  pe.ai_summary,
+                  EXISTS(SELECT 1 FROM vouches WHERE voucher_id = p.id) AS has_vouched
            FROM people p
            LEFT JOIN person_enrichment pe ON pe.person_id = p.id AND pe.source = 'claude'
            WHERE p.id = $1`, [rid])
-        if (rRes.rows[0]) recipientProfiles.push(rRes.rows[0])
+        if (!rRes.rows[0]) continue
+
+        // Check ask preference: compute degree between sender and recipient
+        const recipientRow = rRes.rows[0]
+        const maxDeg = askDegreeLimit(recipientRow.ask_receive_degree, recipientRow.has_vouched)
+        // Compute degree for this specific sender→recipient pair
+        const degRes = await query(`
+          WITH degree1 AS (
+            SELECT DISTINCT vouchee_id AS person_id FROM vouches WHERE voucher_id = $1
+          ),
+          sponsors AS (
+            SELECT DISTINCT voucher_id FROM vouches WHERE vouchee_id = $1
+          ),
+          siblings AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM sponsors s JOIN vouches v ON v.voucher_id = s.voucher_id
+            WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+          ),
+          degree2 AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM degree1 d1 JOIN vouches v ON v.voucher_id = d1.person_id
+            WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+            UNION SELECT person_id FROM siblings
+          ),
+          degree3 AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM degree2 d2 JOIN vouches v ON v.voucher_id = d2.person_id
+            WHERE v.vouchee_id != $1
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree2)
+          )
+          SELECT CASE
+            WHEN $2 = $1 THEN 0
+            WHEN $2 IN (SELECT person_id FROM degree1) THEN 1
+            WHEN $2 IN (SELECT person_id FROM degree2) THEN 2
+            WHEN $2 IN (SELECT person_id FROM degree3) THEN 3
+            ELSE NULL
+          END AS degree
+        `, [session.id, rid])
+        const senderDegree = degRes.rows[0]?.degree
+        if (senderDegree === null || senderDegree === undefined || senderDegree > maxDeg) {
+          recipientsBlocked.push({ id: rid, name: recipientRow.display_name })
+          continue
+        }
+
+        recipientProfiles.push(recipientRow)
       }
 
       if (recipientProfiles.length === 0) {
+        if (recipientsBlocked.length > 0) {
+          const names = recipientsBlocked.map(r => r.name).join(', ')
+          res.writeHead(403); res.end(JSON.stringify({ error: `${names} ${recipientsBlocked.length === 1 ? 'is' : 'are'} not accepting asks from your degree of connection.` })); return
+        }
         res.writeHead(429); res.end(JSON.stringify({ error: 'All selected recipients have reached their receive limit this week.', recipients_at_limit: recipientsAtLimit })); return
       }
 
