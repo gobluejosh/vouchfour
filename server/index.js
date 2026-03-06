@@ -3694,6 +3694,897 @@ What ${senderFirst} wants to ask:
     return
   }
 
+  // ─── Group Threads: Draft outreach ──────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/threads/draft') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const body = await readBody(req)
+      const { topic, question, recipient_ids, recipient_context } = body
+
+      if (!topic?.trim() || !question || !Array.isArray(recipient_ids) || recipient_ids.length < 2) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'topic, question, and at least 2 recipient_ids required' })); return
+      }
+
+      const maxParticipants = Number((await query("SELECT value FROM app_settings WHERE key = 'thread_max_participants'")).rows[0]?.value || '6')
+      if (recipient_ids.length > maxParticipants) {
+        res.writeHead(400); res.end(JSON.stringify({ error: `Maximum ${maxParticipants} participants per thread` })); return
+      }
+
+      // Check sender rate limit (reuse Quick Ask caps)
+      const maxSends = await getQuickAskLimit('quick_ask_max_sends_per_week')
+      const senderCount = await countSenderAsksThisWeek(session.id)
+      if (senderCount >= maxSends) {
+        res.writeHead(429); res.end(JSON.stringify({ error: `You've reached your weekly send limit. Try again next week.`, asks_remaining: 0 })); return
+      }
+
+      // Check sender has email
+      const senderRes = await query(
+        `SELECT p.id, p.display_name, p.email, p.current_title, p.current_company, p.photo_url,
+                pe.ai_summary
+         FROM people p
+         LEFT JOIN person_enrichment pe ON pe.person_id = p.id AND pe.source = 'claude'
+         WHERE p.id = $1`, [session.id])
+      const sender = senderRes.rows[0]
+      if (!sender?.email) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'You need an email on your profile before starting threads.' })); return
+      }
+
+      // Check recipient rate limits, ask preferences, load profiles
+      const recipientProfiles = []
+      const recipientsAtLimit = []
+      const recipientsBlocked = []
+      for (const rid of recipient_ids) {
+        const maxReceives = await getQuickAskLimit('quick_ask_max_receives_per_week')
+        const recvCount = await countRecipientReceivesThisWeek(rid)
+        if (recvCount >= maxReceives) { recipientsAtLimit.push(rid); continue }
+
+        const rRes = await query(
+          `SELECT p.id, p.display_name, p.email, p.current_title, p.current_company, p.photo_url,
+                  p.ask_receive_degree,
+                  EXISTS(SELECT 1 FROM vouches WHERE voucher_id = p.id) AS has_vouched
+           FROM people p WHERE p.id = $1`, [rid])
+        if (!rRes.rows[0]) continue
+
+        const recipientRow = rRes.rows[0]
+        const maxDeg = askDegreeLimit(recipientRow.ask_receive_degree, recipientRow.has_vouched)
+        const degRes = await query(`
+          WITH degree1 AS (
+            SELECT DISTINCT vouchee_id AS person_id FROM vouches WHERE voucher_id = $1
+          ),
+          sponsors AS (
+            SELECT DISTINCT voucher_id FROM vouches WHERE vouchee_id = $1
+          ),
+          siblings AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM sponsors s JOIN vouches v ON v.voucher_id = s.voucher_id
+            WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+          ),
+          degree2 AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM degree1 d1 JOIN vouches v ON v.voucher_id = d1.person_id
+            WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+            UNION SELECT person_id FROM siblings
+          ),
+          degree3 AS (
+            SELECT DISTINCT v.vouchee_id AS person_id
+            FROM degree2 d2 JOIN vouches v ON v.voucher_id = d2.person_id
+            WHERE v.vouchee_id != $1
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree1)
+              AND v.vouchee_id NOT IN (SELECT person_id FROM degree2)
+          )
+          SELECT CASE
+            WHEN $2 = $1 THEN 0
+            WHEN $2 IN (SELECT person_id FROM degree1) THEN 1
+            WHEN $2 IN (SELECT person_id FROM degree2) THEN 2
+            WHEN $2 IN (SELECT person_id FROM degree3) THEN 3
+            ELSE NULL
+          END AS degree
+        `, [session.id, rid])
+        const senderDegree = degRes.rows[0]?.degree
+        if (senderDegree === null || senderDegree === undefined || senderDegree > maxDeg) {
+          recipientsBlocked.push({ id: rid, name: recipientRow.display_name })
+          continue
+        }
+        recipientProfiles.push({ ...recipientRow, degree: senderDegree })
+      }
+
+      if (recipientProfiles.length < 2) {
+        if (recipientsBlocked.length > 0) {
+          const names = recipientsBlocked.map(r => r.name).join(', ')
+          res.writeHead(403); res.end(JSON.stringify({ error: `${names} ${recipientsBlocked.length === 1 ? 'is' : 'are'} not accepting asks from your degree of connection.` })); return
+        }
+        res.writeHead(429); res.end(JSON.stringify({ error: 'Not enough eligible recipients. Some may have reached their weekly limit.' })); return
+      }
+
+      // Compute vouch paths
+      const paths = await getVouchPaths(session.id, recipientProfiles.map(r => r.id))
+
+      // Create thread + participants
+      const threadRes = await query(
+        `INSERT INTO threads (creator_id, topic, initial_question) VALUES ($1, $2, $3) RETURNING id`,
+        [session.id, topic.trim(), question]
+      )
+      const threadId = threadRes.rows[0].id
+
+      // Creator participant (has_participated = true from the start)
+      const creatorToken = crypto.randomBytes(12).toString('hex')
+      await query(
+        `INSERT INTO thread_participants (thread_id, person_id, access_token, role, has_participated)
+         VALUES ($1, $2, $3, 'creator', true)`,
+        [threadId, session.id, creatorToken]
+      )
+
+      // Claude drafts one shared outreach message
+      const senderFirst = sender.display_name.split(' ')[0]
+      const participantNames = recipientProfiles.map(r => r.display_name).join(', ')
+      let draftSubject, draftBody
+      try {
+        const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 512,
+            system: `You are drafting a very short email inviting people to a group conversation on VouchFour.
+
+Rules:
+- Write ONLY the email body. 1-2 sentences. Be brief.
+- State the topic plainly. Do NOT embellish, reinterpret, or expand on it.
+- Do NOT add your own framing ("opportunities and challenges", "excited to hear", "would love your perspectives", etc.). Just state what the sender wants to discuss.
+- Mention it's a small group discussion.
+- Do NOT address anyone by name. Do NOT include a greeting or sign-off.
+- Tone: matter-of-fact, like a quick message to colleagues.
+- Generate a short subject line (max 60 chars).
+
+Format:
+SUBJECT: <subject line>
+BODY:
+<message body>`,
+            messages: [{ role: 'user', content: `Sender: ${sender.display_name}, ${sender.current_title || 'Professional'} at ${sender.current_company || 'N/A'}
+Participants: ${participantNames}
+Topic: ${topic}
+What ${senderFirst} wants to discuss: "${question}"` }],
+          }),
+        })
+        const data = await claudeRes.json()
+        const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+        const subjectMatch = text.match(/SUBJECT:\s*(.+)/i)
+        const bodyMatch = text.match(/BODY:\s*([\s\S]+)/i)
+        draftSubject = subjectMatch ? subjectMatch[1].trim() : `Group conversation: ${topic}`
+        draftBody = bodyMatch ? bodyMatch[1].trim() : `I'm starting a group conversation about ${topic}. ${question}`
+      } catch (err) {
+        console.warn('[Threads] Claude draft failed:', err.message)
+        draftSubject = `Group conversation: ${topic}`
+        draftBody = `I'm starting a group conversation about ${topic}. ${question}`
+      }
+
+      // Create recipient participants with the shared draft
+      const participants = []
+      for (const recipient of recipientProfiles) {
+        const token = crypto.randomBytes(12).toString('hex')
+        const vouchPath = paths.get(recipient.id) || [
+          { id: sender.id, name: sender.display_name },
+          { id: recipient.id, name: recipient.display_name }
+        ]
+        const ctx = recipient_context?.[String(recipient.id)] || {}
+        const knowsRecipient = recipient.degree === 1 || (ctx.knows_them === true)
+        await query(
+          `INSERT INTO thread_participants (thread_id, person_id, access_token, vouch_path, draft_subject, draft_body)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [threadId, recipient.id, token, JSON.stringify(vouchPath), draftSubject, draftBody]
+        )
+        participants.push({
+          person_id: recipient.id,
+          name: recipient.display_name,
+          title: [recipient.current_title, recipient.current_company].filter(Boolean).join(' at '),
+          photo_url: recipient.photo_url || null,
+          vouch_path: vouchPath,
+          degree: recipient.degree,
+          no_email: !recipient.email,
+          knows_recipient: knowsRecipient,
+        })
+      }
+
+      trackEvent(session.id, 'thread_drafted', { thread_id: threadId, participant_count: participants.length })
+      console.log(`[Threads] Draft created: thread ${threadId}, ${participants.length} participants by ${sender.display_name}`)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        thread_id: threadId,
+        creator_token: creatorToken,
+        topic: topic.trim(),
+        draft_subject: draftSubject,
+        draft_body: draftBody,
+        participants,
+        recipients_at_limit: recipientsAtLimit,
+        recipients_blocked: recipientsBlocked,
+      }))
+    } catch (err) {
+      console.error('[/api/threads/draft error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Group Threads: Edit draft ──────────────────────────────────
+  if (req.method === 'PUT' && req.url.match(/^\/api\/threads\/draft\/\d+$/)) {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const threadId = Number(req.url.split('/').pop())
+      const body = await readBody(req)
+      const { draft_subject, draft_body } = body
+
+      // Verify ownership + draft status
+      const threadRes = await query('SELECT id, creator_id, status FROM threads WHERE id = $1', [threadId])
+      if (!threadRes.rows[0] || threadRes.rows[0].creator_id !== session.id) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Thread not found' })); return
+      }
+      if (threadRes.rows[0].status !== 'draft') {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'Thread has already been sent' })); return
+      }
+
+      // Update draft on all non-creator participant rows
+      await query(
+        `UPDATE thread_participants SET draft_subject = $1, draft_body = $2
+         WHERE thread_id = $3 AND role = 'participant'`,
+        [draft_subject, draft_body, threadId]
+      )
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true }))
+    } catch (err) {
+      console.error('[/api/threads/draft/:id error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Group Threads: Send outreach ─────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/threads/send') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const body = await readBody(req)
+      const { thread_id } = body
+
+      if (!thread_id) { res.writeHead(400); res.end(JSON.stringify({ error: 'thread_id required' })); return }
+
+      // Verify ownership + draft status
+      const threadRes = await query('SELECT * FROM threads WHERE id = $1', [thread_id])
+      const thread = threadRes.rows[0]
+      if (!thread || thread.creator_id !== session.id) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Thread not found' })); return
+      }
+      if (thread.status !== 'draft') {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'Thread has already been sent' })); return
+      }
+
+      // Load sender info
+      const senderRes = await query('SELECT display_name, email FROM people WHERE id = $1', [session.id])
+      const sender = senderRes.rows[0]
+      const senderParts = sender.display_name.split(' ')
+      const senderFirst = senderParts[0]
+      const senderLast = senderParts.slice(1).join(' ')
+
+      // Load participant rows (non-creator)
+      const participantsRes = await query(
+        `SELECT tp.*, p.display_name, p.email AS recipient_email
+         FROM thread_participants tp
+         JOIN people p ON p.id = tp.person_id
+         WHERE tp.thread_id = $1 AND tp.role = 'participant'`,
+        [thread_id]
+      )
+
+      // Activate thread + create initial message
+      const firstDraft = participantsRes.rows[0]
+      const initialBody = firstDraft?.draft_body || thread.initial_question
+      await query("UPDATE threads SET status = 'active' WHERE id = $1", [thread_id])
+      await query(
+        `INSERT INTO thread_messages (thread_id, author_id, body, is_initial) VALUES ($1, $2, $3, true)`,
+        [thread_id, session.id, initialBody]
+      )
+
+      // Send emails to each participant
+      const results = []
+      for (const tp of participantsRes.rows) {
+        const result = { person_id: tp.person_id, status: 'failed', reason: null }
+        try {
+          if (await isUnsubscribed(tp.person_id)) {
+            result.reason = 'Unsubscribed'; results.push(result); continue
+          }
+          if (!(await canEmailRecipient(tp.person_id))) {
+            result.reason = 'Daily email limit'; results.push(result); continue
+          }
+          if (!tp.recipient_email) {
+            result.reason = 'No email on file'; results.push(result); continue
+          }
+
+          // Build connection section (same pattern as Quick Ask)
+          const vouchPath = tp.vouch_path || []
+          const degree = vouchPath.length - 1
+          const ctx = body.recipient_context?.[String(tp.person_id)] || {}
+          let connectionSection = ''
+          if (!(degree === 1 || ctx.knows_them) && degree >= 2) {
+            const chainParts = vouchPath.map((p, i) => {
+              const bold = `<strong style="color:#1C1917;">${p.name}</strong>`
+              if (i === 0) return bold
+              return `<span style="color:#4F46E5;font-size:13px;"> → </span>${bold}`
+            })
+            const vouchChainHtml = `<div style="font-size:14px;color:#44403C;line-height:1.8;">${chainParts.join('')}</div>`
+            connectionSection = `<div style="margin:16px 0;padding:16px 20px;background:#F8F7F6;border-radius:12px;border-left:4px solid #4F46E5;">
+  <div style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">How you're connected</div>
+  ${vouchChainHtml}
+</div>`
+          }
+
+          const messageBody = (tp.draft_body || '').replace(/\n/g, '<br/>')
+          const recipientFirst = tp.display_name.split(' ')[0]
+
+          const template = await loadTemplate('thread_invite')
+          const vars = {
+            senderName: sender.display_name,
+            senderFirstName: senderFirst,
+            senderLastName: senderLast,
+            recipientFirstName: recipientFirst,
+            recipientName: tp.display_name,
+            connectionSection,
+            threadTopic: thread.topic,
+            messageBody,
+            threadUrl: `${BASE_URL}/thread/${tp.access_token}`,
+          }
+          const subject = applyVariables(template.subject, vars)
+          const bodyHtml = applyVariables(template.body_html, vars)
+          const html = emailLayout(bodyHtml, tp.person_id)
+
+          const recipientEmail = await getRecipient(tp.recipient_email)
+          const emailResult = await sendEmail({ to: recipientEmail, subject, html, personId: tp.person_id, templateKey: 'thread_invite' })
+
+          await query(`INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id) VALUES ($1, 'thread_invite', $2, $3)`,
+            [tp.person_id, thread_id, emailResult?.id || null])
+          await query(`UPDATE thread_participants SET invited_at = NOW() WHERE id = $1`, [tp.id])
+
+          result.status = 'sent'
+        } catch (sendErr) {
+          console.error(`[Threads] Send failed for participant ${tp.person_id}:`, sendErr.message)
+          result.reason = 'Email delivery failed'
+        }
+        results.push(result)
+      }
+
+      const sentCount = results.filter(r => r.status === 'sent').length
+      trackEvent(session.id, 'thread_sent', { thread_id, participant_count: sentCount })
+      console.log(`[Threads] Sent thread ${thread_id}: ${sentCount}/${results.length} emails delivered`)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ results }))
+
+      // Fire-and-forget: auto-retry failed sends after 5s
+      const failedParticipants = participantsRes.rows.filter(
+        tp => results.find(r => r.person_id === tp.person_id && r.status === 'failed' && r.reason === 'Email delivery failed')
+      )
+      if (failedParticipants.length > 0) {
+        setTimeout(async () => {
+          for (const tp of failedParticipants) {
+            try {
+              if (!tp.recipient_email) continue
+              const vouchPath = tp.vouch_path || []
+              const degree = vouchPath.length - 1
+              let connectionSection = ''
+              if (degree >= 2) {
+                const chainParts = vouchPath.map((p, i) => {
+                  const bold = `<strong style="color:#1C1917;">${p.name}</strong>`
+                  if (i === 0) return bold
+                  return `<span style="color:#4F46E5;font-size:13px;"> → </span>${bold}`
+                })
+                const vouchChainHtml = `<div style="font-size:14px;color:#44403C;line-height:1.8;">${chainParts.join('')}</div>`
+                connectionSection = `<div style="margin:16px 0;padding:16px 20px;background:#F8F7F6;border-radius:12px;border-left:4px solid #4F46E5;">
+  <div style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">How you're connected</div>
+  ${vouchChainHtml}
+</div>`
+              }
+              const messageBody = (tp.draft_body || '').replace(/\n/g, '<br/>')
+              const recipientFirst = tp.display_name.split(' ')[0]
+              const template = await loadTemplate('thread_invite')
+              const vars = {
+                senderName: sender.display_name, senderFirstName: senderFirst, senderLastName: senderLast,
+                recipientFirstName: recipientFirst, recipientName: tp.display_name,
+                connectionSection, threadTopic: thread.topic, messageBody,
+                threadUrl: `${BASE_URL}/thread/${tp.access_token}`,
+              }
+              const subject = applyVariables(template.subject, vars)
+              const bodyHtml = applyVariables(template.body_html, vars)
+              const html = emailLayout(bodyHtml, tp.person_id)
+              const recipientEmail = await getRecipient(tp.recipient_email)
+              const emailResult = await sendEmail({ to: recipientEmail, subject, html, personId: tp.person_id, templateKey: 'thread_invite' })
+              await query(`INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id) VALUES ($1, 'thread_invite', $2, $3)`,
+                [tp.person_id, thread_id, emailResult?.id || null])
+              await query(`UPDATE thread_participants SET invited_at = NOW() WHERE id = $1`, [tp.id])
+              console.log(`[Threads] Retry succeeded for participant ${tp.person_id}`)
+            } catch (retryErr) {
+              console.error(`[Threads] Retry also failed for participant ${tp.person_id}:`, retryErr.message)
+            }
+          }
+        }, 5000)
+      }
+    } catch (err) {
+      console.error('[/api/threads/send error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Group Threads: Send status (poll after retry) ─────────────
+  if (req.method === 'GET' && req.url.match(/^\/api\/threads\/\d+\/send-status$/)) {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const threadId = Number(req.url.match(/\/(\d+)\//)[1])
+
+      const threadRes = await query('SELECT creator_id FROM threads WHERE id = $1', [threadId])
+      if (!threadRes.rows[0] || threadRes.rows[0].creator_id !== session.id) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); return
+      }
+
+      const participantsRes = await query(
+        `SELECT person_id, invited_at FROM thread_participants WHERE thread_id = $1 AND role = 'participant'`,
+        [threadId])
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        results: participantsRes.rows.map(r => ({
+          person_id: r.person_id,
+          status: r.invited_at ? 'sent' : 'failed',
+        })),
+      }))
+    } catch (err) {
+      console.error('[/api/threads/send-status error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Group Threads: Retry failed sends ───────────────────────────
+  if (req.method === 'POST' && req.url === '/api/threads/retry') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const body = await readBody(req)
+      const { thread_id, person_ids } = body
+
+      if (!thread_id || !person_ids?.length) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'thread_id and person_ids required' })); return
+      }
+
+      // Verify ownership + active status
+      const threadRes = await query('SELECT * FROM threads WHERE id = $1', [thread_id])
+      const thread = threadRes.rows[0]
+      if (!thread || thread.creator_id !== session.id) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Thread not found' })); return
+      }
+      if (thread.status !== 'active') {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'Thread is not active' })); return
+      }
+
+      // Load sender info
+      const senderRes = await query('SELECT display_name, email FROM people WHERE id = $1', [session.id])
+      const sender = senderRes.rows[0]
+      const senderParts = sender.display_name.split(' ')
+      const senderFirst = senderParts[0]
+      const senderLast = senderParts.slice(1).join(' ')
+
+      // Load only the failed participants
+      const participantsRes = await query(
+        `SELECT tp.*, p.display_name, p.email AS recipient_email
+         FROM thread_participants tp
+         JOIN people p ON p.id = tp.person_id
+         WHERE tp.thread_id = $1 AND tp.role = 'participant'
+           AND tp.person_id = ANY($2) AND tp.invited_at IS NULL`,
+        [thread_id, person_ids]
+      )
+
+      const results = []
+      for (const tp of participantsRes.rows) {
+        const result = { person_id: tp.person_id, status: 'failed', reason: null }
+        try {
+          if (await isUnsubscribed(tp.person_id)) {
+            result.reason = 'Unsubscribed'; results.push(result); continue
+          }
+          if (!(await canEmailRecipient(tp.person_id))) {
+            result.reason = 'Daily email limit'; results.push(result); continue
+          }
+          if (!tp.recipient_email) {
+            result.reason = 'No email on file'; results.push(result); continue
+          }
+
+          const vouchPath = tp.vouch_path || []
+          const degree = vouchPath.length - 1
+          let connectionSection = ''
+          if (degree >= 2) {
+            const chainParts = vouchPath.map((p, i) => {
+              const bold = `<strong style="color:#1C1917;">${p.name}</strong>`
+              if (i === 0) return bold
+              return `<span style="color:#4F46E5;font-size:13px;"> → </span>${bold}`
+            })
+            const vouchChainHtml = `<div style="font-size:14px;color:#44403C;line-height:1.8;">${chainParts.join('')}</div>`
+            connectionSection = `<div style="margin:16px 0;padding:16px 20px;background:#F8F7F6;border-radius:12px;border-left:4px solid #4F46E5;">
+  <div style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">How you're connected</div>
+  ${vouchChainHtml}
+</div>`
+          }
+
+          const messageBody = (tp.draft_body || '').replace(/\n/g, '<br/>')
+          const recipientFirst = tp.display_name.split(' ')[0]
+
+          const template = await loadTemplate('thread_invite')
+          const vars = {
+            senderName: sender.display_name,
+            senderFirstName: senderFirst,
+            senderLastName: senderLast,
+            recipientFirstName: recipientFirst,
+            recipientName: tp.display_name,
+            connectionSection,
+            threadTopic: thread.topic,
+            messageBody,
+            threadUrl: `${BASE_URL}/thread/${tp.access_token}`,
+          }
+          const subject = applyVariables(template.subject, vars)
+          const bodyHtml = applyVariables(template.body_html, vars)
+          const html = emailLayout(bodyHtml, tp.person_id)
+
+          const recipientEmail = await getRecipient(tp.recipient_email)
+          const emailResult = await sendEmail({ to: recipientEmail, subject, html, personId: tp.person_id, templateKey: 'thread_invite' })
+
+          await query(`INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id) VALUES ($1, 'thread_invite', $2, $3)`,
+            [tp.person_id, thread_id, emailResult?.id || null])
+          await query(`UPDATE thread_participants SET invited_at = NOW() WHERE id = $1`, [tp.id])
+
+          result.status = 'sent'
+        } catch (sendErr) {
+          console.error(`[Threads] Retry send failed for participant ${tp.person_id}:`, sendErr.message)
+          result.reason = 'Email delivery failed'
+        }
+        results.push(result)
+      }
+
+      console.log(`[Threads] Retry thread ${thread_id}: ${results.filter(r => r.status === 'sent').length}/${results.length} retried`)
+      res.writeHead(200)
+      res.end(JSON.stringify({ results }))
+    } catch (err) {
+      console.error('[/api/threads/retry error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Group Threads: Load thread ───────────────────────────────────
+  if (req.method === 'GET' && req.url.match(/^\/api\/thread\/[a-f0-9]+$/)) {
+    try {
+      const token = req.url.split('/api/thread/')[1]
+
+      // Look up participant by access_token
+      let participantRes = await query(
+        `SELECT tp.*, t.topic, t.status, t.creator_id, t.created_at AS thread_created_at
+         FROM thread_participants tp
+         JOIN threads t ON t.id = tp.thread_id
+         WHERE tp.access_token = $1`,
+        [token]
+      )
+
+      if (!participantRes.rows[0]) {
+        // Try session auth: find thread where this person is a participant
+        const session = await validateSession(req)
+        if (session) {
+          // Token might be a thread ID in this case — but we use tokens, so just 404
+        }
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Thread not found' })); return
+      }
+
+      const viewer = participantRes.rows[0]
+      const threadId = viewer.thread_id
+
+      if (viewer.status !== 'active') {
+        res.writeHead(403); res.end(JSON.stringify({ error: 'This thread is not yet active' })); return
+      }
+
+      // Load all participants
+      const allParticipantsRes = await query(
+        `SELECT tp.person_id, tp.role, tp.has_participated,
+                p.display_name, p.photo_url, p.current_title, p.current_company
+         FROM thread_participants tp
+         JOIN people p ON p.id = tp.person_id
+         WHERE tp.thread_id = $1
+         ORDER BY tp.role DESC, tp.created_at ASC`,
+        [threadId]
+      )
+
+      // Load all messages
+      const messagesRes = await query(
+        `SELECT tm.id, tm.author_id, tm.body, tm.is_initial, tm.created_at,
+                p.display_name AS author_name, p.photo_url AS author_photo_url
+         FROM thread_messages tm
+         JOIN people p ON p.id = tm.author_id
+         WHERE tm.thread_id = $1
+         ORDER BY tm.created_at ASC`,
+        [threadId]
+      )
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        thread: {
+          id: threadId,
+          topic: viewer.topic,
+          status: viewer.status,
+          created_at: viewer.thread_created_at,
+        },
+        participants: allParticipantsRes.rows.map(p => ({
+          person_id: p.person_id,
+          display_name: p.display_name,
+          photo_url: p.photo_url,
+          current_title: p.current_title,
+          current_company: p.current_company,
+          role: p.role,
+          has_participated: p.has_participated,
+        })),
+        messages: messagesRes.rows.map(m => ({
+          id: m.id,
+          author_id: m.author_id,
+          author_name: m.author_name,
+          author_photo_url: m.author_photo_url,
+          body: m.body,
+          is_initial: m.is_initial,
+          created_at: m.created_at,
+        })),
+        viewer_person_id: viewer.person_id,
+      }))
+    } catch (err) {
+      console.error('[/api/thread/:token error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Group Threads: Post reply ────────────────────────────────────
+  if (req.method === 'POST' && req.url.match(/^\/api\/thread\/[a-f0-9]+\/reply$/)) {
+    try {
+      const token = req.url.match(/^\/api\/thread\/([a-f0-9]+)\/reply$/)[1]
+      const bodyData = await readBody(req)
+      const { body: replyBody } = bodyData
+
+      if (!replyBody?.trim()) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'Reply body required' })); return
+      }
+
+      // Look up participant by token
+      const participantRes = await query(
+        `SELECT tp.*, t.topic, t.status, t.creator_id
+         FROM thread_participants tp
+         JOIN threads t ON t.id = tp.thread_id
+         WHERE tp.access_token = $1`,
+        [token]
+      )
+      if (!participantRes.rows[0]) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Thread not found' })); return
+      }
+
+      const viewer = participantRes.rows[0]
+      if (viewer.status !== 'active') {
+        res.writeHead(403); res.end(JSON.stringify({ error: 'Thread is not active' })); return
+      }
+
+      // Insert message
+      const msgRes = await query(
+        `INSERT INTO thread_messages (thread_id, author_id, body) VALUES ($1, $2, $3) RETURNING id, created_at`,
+        [viewer.thread_id, viewer.person_id, replyBody.trim()]
+      )
+      const newMsg = msgRes.rows[0]
+
+      // Set has_participated if first reply
+      if (!viewer.has_participated) {
+        await query('UPDATE thread_participants SET has_participated = true WHERE id = $1', [viewer.id])
+      }
+
+      // Get author info for response
+      const authorRes = await query('SELECT display_name, photo_url FROM people WHERE id = $1', [viewer.person_id])
+      const author = authorRes.rows[0]
+
+      // Fire-and-forget: send notifications
+      ;(async () => {
+        try {
+          const allParticipantsRes = await query(
+            `SELECT tp.person_id, tp.access_token, tp.role, tp.has_participated,
+                    p.display_name, p.email
+             FROM thread_participants tp
+             JOIN people p ON p.id = tp.person_id
+             WHERE tp.thread_id = $1 AND tp.person_id != $2`,
+            [viewer.thread_id, viewer.person_id]
+          )
+
+          const replyAuthorFirst = author.display_name.split(' ')[0]
+          const replyPreview = replyBody.trim().length > 200
+            ? replyBody.trim().slice(0, 200) + '…'
+            : replyBody.trim()
+
+          for (const p of allParticipantsRes.rows) {
+            // Creator always gets notified; others only if has_participated
+            if (p.role !== 'creator' && !p.has_participated) continue
+            if (!p.email) continue
+            if (await isUnsubscribed(p.person_id)) continue
+            if (!(await canEmailRecipient(p.person_id))) continue
+
+            // Throttle: skip if a notification was sent for this thread within the last 30 minutes
+            const recentNotif = await query(
+              `SELECT 1 FROM sent_emails WHERE recipient_id = $1 AND email_type = 'thread_reply_notification' AND reference_id = $2 AND sent_at > NOW() - INTERVAL '30 minutes' LIMIT 1`,
+              [p.person_id, viewer.thread_id])
+            if (recentNotif.rows.length > 0) {
+              console.log(`[Threads] Skipping notification for ${p.display_name} — sent within last 30min`)
+              continue
+            }
+
+            try {
+              const template = await loadTemplate('thread_reply_notification')
+              const recipientFirst = p.display_name.split(' ')[0]
+              const vars = {
+                recipientFirstName: recipientFirst,
+                replyAuthorName: author.display_name,
+                replyAuthorFirstName: replyAuthorFirst,
+                threadTopic: viewer.topic,
+                replyPreview: replyPreview.replace(/\n/g, '<br/>'),
+                threadUrl: `${BASE_URL}/thread/${p.access_token}`,
+              }
+              const subject = applyVariables(template.subject, vars)
+              const bodyHtml = applyVariables(template.body_html, vars)
+              const html = emailLayout(bodyHtml, p.person_id)
+
+              const recipientEmail = await getRecipient(p.email)
+              const emailResult = await sendEmail({ to: recipientEmail, subject, html, personId: p.person_id, templateKey: 'thread_reply_notification' })
+              await query(`INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id) VALUES ($1, 'thread_reply_notification', $2, $3)`,
+                [p.person_id, viewer.thread_id, emailResult?.id || null])
+              console.log(`[Threads] Reply notification sent to ${p.display_name} for thread ${viewer.thread_id}`)
+            } catch (notifErr) {
+              console.error(`[Threads] Notification failed for ${p.person_id}:`, notifErr.message)
+            }
+          }
+        } catch (err) {
+          console.error('[Threads] Notification dispatch error:', err)
+        }
+      })()
+
+      trackEvent(viewer.person_id, 'thread_reply', { thread_id: viewer.thread_id })
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        message: {
+          id: newMsg.id,
+          author_id: viewer.person_id,
+          author_name: author.display_name,
+          author_photo_url: author.photo_url,
+          body: replyBody.trim(),
+          is_initial: false,
+          created_at: newMsg.created_at,
+        }
+      }))
+    } catch (err) {
+      console.error('[/api/thread/:token/reply error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Group Threads: My threads ────────────────────────────────────
+  if (req.method === 'GET' && req.url === '/api/my-threads') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+
+      const threadsRes = await query(`
+        SELECT t.id, t.topic, t.created_at,
+               tp.access_token, tp.role,
+               creator.display_name AS creator_name,
+               (SELECT COUNT(*) FROM thread_participants WHERE thread_id = t.id) AS participant_count,
+               last_msg.body AS last_message_body,
+               last_msg.created_at AS last_message_at,
+               last_author.display_name AS last_message_author
+        FROM thread_participants tp
+        JOIN threads t ON t.id = tp.thread_id
+        JOIN people creator ON creator.id = t.creator_id
+        LEFT JOIN LATERAL (
+          SELECT tm.body, tm.created_at, tm.author_id
+          FROM thread_messages tm
+          WHERE tm.thread_id = t.id
+          ORDER BY tm.created_at DESC LIMIT 1
+        ) last_msg ON true
+        LEFT JOIN people last_author ON last_author.id = last_msg.author_id
+        WHERE tp.person_id = $1 AND t.status = 'active'
+        ORDER BY COALESCE(last_msg.created_at, t.created_at) DESC
+      `, [session.id])
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        threads: threadsRes.rows.map(r => ({
+          thread_id: r.id,
+          topic: r.topic,
+          participant_count: Number(r.participant_count),
+          last_message_at: r.last_message_at,
+          last_message_preview: r.last_message_body ? (r.last_message_body.length > 100 ? r.last_message_body.slice(0, 100) + '…' : r.last_message_body) : null,
+          last_message_author: r.last_message_author,
+          access_token: r.access_token,
+          creator_name: r.creator_name,
+          is_creator: r.role === 'creator',
+          created_at: r.created_at,
+        }))
+      }))
+    } catch (err) {
+      console.error('[/api/my-threads error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Network search (for thread participant picker) ─────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/network-search')) {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+
+      const params = new URL(req.url, `http://${req.headers.host}`).searchParams
+      const q = (params.get('q') || '').trim()
+      if (!q || q.length < 2) {
+        res.writeHead(200); res.end(JSON.stringify({ results: [] })); return
+      }
+
+      // Get the user's full vouch network with degrees
+      const network = await getTalentRecommendations(session.id, null)
+
+      // Filter by name match + ask permission
+      const searchLower = q.toLowerCase()
+      const results = []
+      for (const person of network) {
+        if (person.id === session.id) continue // exclude self
+        if (!person.display_name.toLowerCase().includes(searchLower)) continue
+        if (!person.email) continue // must have email to be contacted
+
+        // Check ask permission
+        const hasVouched = (await query('SELECT 1 FROM vouches WHERE voucher_id = $1 LIMIT 1', [person.id])).rows.length > 0
+        const askPrefRes = await query('SELECT ask_receive_degree FROM people WHERE id = $1', [person.id])
+        const askPref = askPrefRes.rows[0]?.ask_receive_degree
+        const maxDeg = askDegreeLimit(askPref, hasVouched)
+        if (person.degree > maxDeg) continue // not allowed to ask
+
+        results.push({
+          person_id: person.id,
+          display_name: person.display_name,
+          photo_url: person.photo_url,
+          current_title: person.current_title,
+          current_company: person.current_company,
+          degree: person.degree,
+        })
+        if (results.length >= 10) break // cap at 10 results
+      }
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ results }))
+    } catch (err) {
+      console.error('[/api/network-search error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Request login (magic link) ──────────────────────────────────
   if (req.method === 'POST' && req.url === '/api/request-login') {
     if (isRateLimited(req)) {

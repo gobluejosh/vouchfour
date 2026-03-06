@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
 import QuickAskDraftPanel from "./QuickAskDraftPanel.jsx";
+import ThreadDraftPanel from "./ThreadDraftPanel.jsx";
 
 const C = {
   ink: "#171717",
@@ -482,6 +483,12 @@ export default function NetworkBrainPage() {
   const [draftingLoading, setDraftingLoading] = useState(false);
   const [askError, setAskError] = useState(null);
 
+  // Group Thread state
+  const [threadMode, setThreadMode] = useState(false);
+  const [threadTopic, setThreadTopic] = useState("");
+  const [threadDraft, setThreadDraft] = useState(null); // { thread_id, creator_token, topic, draft_subject, draft_body, participants }
+  const [threadDraftLoading, setThreadDraftLoading] = useState(false);
+
   // Auth flow on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -624,6 +631,11 @@ export default function NetworkBrainPage() {
     setAskId(null);
     setAskError(null);
     setDraftingLoading(false);
+    // Reset thread state too
+    setThreadMode(false);
+    setThreadTopic("");
+    setThreadDraft(null);
+    setThreadDraftLoading(false);
   }
 
   function handleTogglePerson(personId) {
@@ -710,6 +722,68 @@ export default function NetworkBrainPage() {
     }
   }
 
+  async function handleDraftThread() {
+    if (askMode === null || selectedPeople.size < 2 || !threadTopic.trim()) return;
+    const userMsg = messages[askMode - 1];
+    const question = userMsg?.text || "";
+
+    setThreadDraftLoading(true);
+    setAskError(null);
+    try {
+      const res = await fetch("/api/threads/draft", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: threadTopic.trim(),
+          question,
+          recipient_ids: Array.from(selectedPeople),
+          recipient_context: recipientContext,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create thread draft");
+      setThreadDraft(data);
+      capture("thread_drafted", { thread_id: data.thread_id, participant_count: data.participants.length });
+    } catch (err) {
+      setAskError(err.message);
+    } finally {
+      setThreadDraftLoading(false);
+    }
+  }
+
+  async function handleStartThreadMode() {
+    setThreadMode(true);
+    // Fetch intermediary names for 2nd+ degree people (same logic as handleProceedToContext)
+    const brainMsg = messages[askMode];
+    const selected2ndPlus = (brainMsg?.people || []).filter(
+      p => selectedPeople.has(p.id) && p.degree >= 2
+    );
+    if (selected2ndPlus.length > 0) {
+      let intermediaries = {};
+      try {
+        const pathRes = await fetch("/api/vouch-paths", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipient_ids: selected2ndPlus.map(p => p.id) }),
+        });
+        if (pathRes.ok) intermediaries = await pathRes.json();
+      } catch (e) { /* non-critical */ }
+      const ctx = {};
+      selected2ndPlus.forEach(p => {
+        ctx[p.id] = {
+          knows_them: false,
+          relationship: "",
+          intermediary_context: "",
+          intermediary_name: intermediaries[p.id]?.intermediary_name || null,
+        };
+      });
+      setRecipientContext(ctx);
+    }
+    setShowContextStep(true);
+  }
+
   function handleAskDone() {
     setAskMode(null);
     setSelectedPeople(new Set());
@@ -718,6 +792,10 @@ export default function NetworkBrainPage() {
     setDrafts(null);
     setAskId(null);
     setAskError(null);
+    setThreadMode(false);
+    setThreadTopic("");
+    setThreadDraft(null);
+    setThreadDraftLoading(false);
   }
 
   const firstName = user?.name?.split(" ")[0] || "";
@@ -904,7 +982,7 @@ export default function NetworkBrainPage() {
                               )}
 
                               {/* Ask mode: people selection + context + draft controls */}
-                              {askMode === i && !drafts && (
+                              {askMode === i && !drafts && !threadDraft && (
                                 <div style={{ marginTop: 12 }}>
                                   <PeopleMentioned
                                     people={msg.people}
@@ -914,14 +992,14 @@ export default function NetworkBrainPage() {
                                     style={{}}
                                   />
                                 <div style={{ marginTop: 10 }}>
-                                  {draftingLoading ? (
+                                  {draftingLoading || threadDraftLoading ? (
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
                                       <div style={{
                                         width: 8, height: 8, borderRadius: "50%",
                                         background: C.accent, animation: "pulse 1.2s infinite",
                                       }} />
                                       <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
-                                        Drafting personalized messages...
+                                        {threadDraftLoading ? "Drafting thread outreach..." : "Drafting personalized messages..."}
                                       </span>
                                     </div>
                                   ) : showContextStep ? (
@@ -934,7 +1012,9 @@ export default function NetworkBrainPage() {
                                         fontSize: 12, fontWeight: 700, color: C.sub,
                                         textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
                                       }}>
-                                        Quick context for better drafts
+                                        {threadMode
+                                          ? (Object.keys(recipientContext).length > 0 ? "Context + thread topic" : "Set your thread topic")
+                                          : "Quick context for better drafts"}
                                       </div>
                                       {Object.keys(recipientContext).map(pid => {
                                         const person = (msg.people || []).find(p => p.id === Number(pid));
@@ -1027,9 +1107,35 @@ export default function NetworkBrainPage() {
                                           </div>
                                         );
                                       })}
+                                      {/* Thread topic input */}
+                                      {threadMode && (
+                                        <div style={{ marginBottom: 12, marginTop: Object.keys(recipientContext).length > 0 ? 8 : 0 }}>
+                                          <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
+                                            Thread topic
+                                          </div>
+                                          <input
+                                            value={threadTopic}
+                                            onChange={e => setThreadTopic(e.target.value)}
+                                            placeholder="e.g., Exploring health tech opportunities"
+                                            style={{
+                                              width: "100%", padding: "8px 10px",
+                                              fontSize: 16, fontFamily: FONT, color: C.ink,
+                                              background: "#fff", border: `1.5px solid ${C.border}`,
+                                              borderRadius: 6, boxSizing: "border-box",
+                                              WebkitAppearance: "none",
+                                              transition: "border-color 0.15s",
+                                            }}
+                                            onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                            onBlur={e => { e.target.style.borderColor = C.border; }}
+                                          />
+                                        </div>
+                                      )}
                                       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                                         <button
-                                          onClick={() => { setShowContextStep(false); setRecipientContext({}); }}
+                                          onClick={() => {
+                                            if (threadMode) { setThreadMode(false); setThreadTopic(""); }
+                                            setShowContextStep(false); setRecipientContext({});
+                                          }}
                                           style={{
                                             padding: "8px 14px", background: "#F5F5F4",
                                             color: C.sub, border: `1px solid ${C.border}`,
@@ -1039,17 +1145,34 @@ export default function NetworkBrainPage() {
                                         >
                                           Back
                                         </button>
-                                        <button
-                                          onClick={handleDraftMessages}
-                                          style={{
-                                            padding: "8px 16px", background: C.accent,
-                                            color: "#fff", border: "none", borderRadius: 8,
-                                            fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                                            cursor: "pointer", transition: "background 0.15s",
-                                          }}
-                                        >
-                                          Draft email for review
-                                        </button>
+                                        {threadMode ? (
+                                          <button
+                                            onClick={handleDraftThread}
+                                            disabled={!threadTopic.trim()}
+                                            style={{
+                                              padding: "8px 16px",
+                                              background: threadTopic.trim() ? C.accent : "#C7D2FE",
+                                              color: "#fff", border: "none", borderRadius: 8,
+                                              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                              cursor: threadTopic.trim() ? "pointer" : "not-allowed",
+                                              transition: "background 0.15s",
+                                            }}
+                                          >
+                                            Draft thread outreach
+                                          </button>
+                                        ) : (
+                                          <button
+                                            onClick={handleDraftMessages}
+                                            style={{
+                                              padding: "8px 16px", background: C.accent,
+                                              color: "#fff", border: "none", borderRadius: 8,
+                                              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                              cursor: "pointer", transition: "background 0.15s",
+                                            }}
+                                          >
+                                            Draft email for review
+                                          </button>
+                                        )}
                                       </div>
                                     </div>
                                   ) : (
@@ -1077,8 +1200,23 @@ export default function NetworkBrainPage() {
                                           transition: "background 0.15s",
                                         }}
                                       >
-                                        Draft email for review ({selectedPeople.size})
+                                        {selectedPeople.size > 1 ? `Draft emails for review (${selectedPeople.size})` : `Draft email for review (${selectedPeople.size})`}
                                       </button>
+                                      {selectedPeople.size >= 2 && (
+                                        <button
+                                          onClick={handleStartThreadMode}
+                                          style={{
+                                            padding: "8px 16px",
+                                            background: "linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)",
+                                            color: "#7C3AED", border: "1px solid #C4B5FD",
+                                            borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                            fontFamily: FONT, cursor: "pointer",
+                                            transition: "all 0.15s",
+                                          }}
+                                        >
+                                          Start a group thread ({selectedPeople.size})
+                                        </button>
+                                      )}
                                     </div>
                                   )}
                                   {askError && (
@@ -1100,6 +1238,20 @@ export default function NetworkBrainPage() {
                                   drafts={drafts}
                                   setDrafts={setDrafts}
                                   askId={askId}
+                                  onDone={handleAskDone}
+                                  onCancel={handleCancelAskMode}
+                                />
+                              )}
+
+                              {/* Thread draft review panel */}
+                              {askMode === i && threadDraft && (
+                                <ThreadDraftPanel
+                                  threadId={threadDraft.thread_id}
+                                  creatorToken={threadDraft.creator_token}
+                                  topic={threadDraft.topic}
+                                  draftSubject={threadDraft.draft_subject}
+                                  draftBody={threadDraft.draft_body}
+                                  participants={threadDraft.participants}
                                   onDone={handleAskDone}
                                   onCancel={handleCancelAskMode}
                                 />

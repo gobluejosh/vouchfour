@@ -8,6 +8,7 @@ import NetworkBrainPage from './components/NetworkBrainPage'
 import PersonPage from './components/PersonPage'
 import EnrichmentReviewPage from './components/EnrichmentReviewPage'
 import InvitePage from './components/InvitePage'
+import ThreadPage from './components/ThreadPage'
 
 // ── Global client-side error reporting ──────────────────────────────
 function reportError(message, stack, context) {
@@ -47,6 +48,7 @@ export default function App() {
     if (path === '/brain') return 'brain';
     if (path.startsWith('/person/')) return 'person';
     if (path.startsWith('/invite/')) return 'invite';
+    if (path.startsWith('/thread/')) return 'thread';
     return 'home';
   });
 
@@ -61,6 +63,7 @@ export default function App() {
       else if (path === '/brain') setPage('brain');
       else if (path.startsWith('/person/')) setPage('person');
       else if (path.startsWith('/invite/')) setPage('invite');
+      else if (path.startsWith('/thread/')) setPage('thread');
       else setPage('home');
     };
     window.addEventListener('popstate', handlePop);
@@ -75,5 +78,6 @@ export default function App() {
   if (page === 'brain') return <NetworkBrainPage />;
   if (page === 'person') return <PersonPage />;
   if (page === 'invite') return <InvitePage />;
+  if (page === 'thread') return <ThreadPage />;
   return <HomePage />;
 }

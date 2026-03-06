@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
 import QuickAskDraftPanel from "./QuickAskDraftPanel.jsx";
+import ThreadDraftPanel from "./ThreadDraftPanel.jsx";
 
 const C = {
   ink: "#171717",
@@ -1327,6 +1328,17 @@ export default function PersonPage() {
   const [replyContext, setReplyContext] = useState(null); // { sender_name, message_body, subject }
   const [hasVouched, setHasVouched] = useState(true); // default true to hide nudge until loaded
   const [askJustCompleted, setAskJustCompleted] = useState(false);
+  const [myThreads, setMyThreads] = useState(null); // fetched for self-view only
+  const [showThreads, setShowThreads] = useState(false);
+  // New thread creation from profile
+  const [newThreadOpen, setNewThreadOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [selectedParticipants, setSelectedParticipants] = useState([]);
+  const [threadTopic, setThreadTopic] = useState("");
+  const [threadDraftLoading, setThreadDraftLoading] = useState(false);
+  const [threadDraft, setThreadDraft] = useState(null); // { threadId, creatorToken, topic, draftSubject, draftBody, participants }
 
   // Auth flow
   useEffect(() => {
@@ -1386,6 +1398,15 @@ export default function PersonPage() {
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
   }, [authState, personId]);
+
+  // Fetch user's threads for self-view
+  useEffect(() => {
+    if (!data?.is_self) return;
+    fetch("/api/my-threads", { credentials: "include" })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => { if (d) setMyThreads(d.threads); })
+      .catch(() => {});
+  }, [data?.is_self]);
 
   // Auto-open reply mode if ?reply_to= param present
   // Fetches the original message context, then creates a blank reply draft
@@ -1497,6 +1518,90 @@ export default function PersonPage() {
     setAskId(null);
     setAskError(null);
     if (!hasVouched) setAskJustCompleted(true);
+  }
+
+  // ── New Thread handlers ──────────────────────────────────────────
+  function handleNewThreadCancel() {
+    setNewThreadOpen(false);
+    setSearchQuery("");
+    setSearchResults([]);
+    setSelectedParticipants([]);
+    setThreadTopic("");
+    setThreadDraft(null);
+    setThreadDraftLoading(false);
+  }
+
+  function handleNewThreadDone() {
+    handleNewThreadCancel();
+    // Refresh thread list
+    fetch("/api/my-threads", { credentials: "include" })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => { if (d) setMyThreads(d.threads); })
+      .catch(() => {});
+  }
+
+  // Debounced search
+  useEffect(() => {
+    if (!searchQuery || searchQuery.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    setSearchLoading(true);
+    const timer = setTimeout(() => {
+      fetch(`/api/network-search?q=${encodeURIComponent(searchQuery)}`, { credentials: "include" })
+        .then(res => res.ok ? res.json() : { results: [] })
+        .then(d => {
+          // Filter out already-selected people
+          const selectedIds = new Set(selectedParticipants.map(p => p.person_id));
+          setSearchResults((d.results || []).filter(r => !selectedIds.has(r.person_id)));
+        })
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearchLoading(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  function handleSelectParticipant(person) {
+    setSelectedParticipants(prev => [...prev, person]);
+    setSearchQuery("");
+    setSearchResults([]);
+  }
+
+  function handleRemoveParticipant(personId) {
+    setSelectedParticipants(prev => prev.filter(p => p.person_id !== personId));
+  }
+
+  async function handleDraftThread() {
+    if (selectedParticipants.length < 2 || !threadTopic.trim()) return;
+    setThreadDraftLoading(true);
+    try {
+      const res = await fetch("/api/threads/draft", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: threadTopic.trim(),
+          question: threadTopic.trim(),
+          recipient_ids: selectedParticipants.map(p => p.person_id),
+          recipient_context: {},
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Failed to draft thread");
+      setThreadDraft({
+        threadId: d.thread_id,
+        creatorToken: d.creator_token,
+        topic: d.topic,
+        draftSubject: d.draft_subject,
+        draftBody: d.draft_body,
+        participants: d.participants,
+      });
+      capture("thread_drafted_from_profile", { participant_count: selectedParticipants.length });
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setThreadDraftLoading(false);
+    }
   }
 
   const person = data?.person;
@@ -1659,9 +1764,312 @@ export default function PersonPage() {
                       </svg>
                       Gives & Asks
                     </button>
+                    {myThreads !== null && (
+                      <button
+                        onClick={() => setShowThreads(v => !v)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 5,
+                          padding: "8px 14px",
+                          background: showThreads ? "#F5F3FF" : "#FFFFFF",
+                          border: `1.5px solid ${showThreads ? "#C4B5FD" : C.border}`,
+                          borderRadius: 8, fontSize: 13, fontWeight: 600,
+                          color: showThreads ? "#7C3AED" : C.sub,
+                          fontFamily: FONT, cursor: "pointer",
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                        Group Threads{myThreads.length > 0 ? ` (${myThreads.length})` : ""}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
+
+              {/* Group Threads (revealed by button) */}
+              {showThreads && myThreads && (
+                <div style={{
+                  background: "#FFFFFF", borderRadius: 14,
+                  padding: "16px 18px", marginBottom: 16,
+                  border: `1px solid ${C.border}`,
+                }}>
+                  {/* Header with + button */}
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    marginBottom: 12,
+                  }}>
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, color: C.sub, fontFamily: FONT,
+                      textTransform: "uppercase", letterSpacing: 0.5,
+                    }}>
+                      Group Threads
+                    </div>
+                    {!newThreadOpen && !threadDraft && (
+                      <button
+                        onClick={() => setNewThreadOpen(true)}
+                        title="New thread"
+                        style={{
+                          width: 26, height: 26, borderRadius: 7,
+                          background: "#F5F3FF", border: "1px solid #C4B5FD",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          cursor: "pointer", transition: "all 0.15s",
+                          padding: 0,
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "#EDE9FE"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* New thread creation panel */}
+                  {newThreadOpen && !threadDraft && (
+                    <div style={{
+                      background: "#FAFAF9", borderRadius: 12,
+                      border: `1.5px solid ${C.accent}`, padding: "14px 16px",
+                      marginBottom: myThreads.length > 0 ? 12 : 0,
+                    }}>
+                      <div style={{
+                        fontSize: 11, fontWeight: 700, color: C.accent,
+                        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
+                      }}>
+                        New Thread
+                      </div>
+
+                      {/* Selected participants as chips */}
+                      {selectedParticipants.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                          {selectedParticipants.map(p => (
+                            <div key={p.person_id} style={{
+                              display: "inline-flex", alignItems: "center", gap: 5,
+                              padding: "4px 8px 4px 4px",
+                              background: "#EEF2FF", border: "1px solid #A5B4FC",
+                              borderRadius: 20, fontSize: 12, fontWeight: 500,
+                              color: C.ink, fontFamily: FONT,
+                            }}>
+                              <PhotoAvatar name={p.display_name} photoUrl={p.photo_url} size={20} />
+                              <span>{p.display_name.split(" ")[0]}</span>
+                              <button
+                                onClick={() => handleRemoveParticipant(p.person_id)}
+                                style={{
+                                  background: "none", border: "none", cursor: "pointer",
+                                  padding: "0 2px", color: C.sub, fontSize: 14, lineHeight: 1,
+                                  display: "flex", alignItems: "center",
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Search input */}
+                      <div style={{ position: "relative", marginBottom: 10 }}>
+                        <input
+                          value={searchQuery}
+                          onChange={e => setSearchQuery(e.target.value)}
+                          placeholder="Search your network to add people..."
+                          autoFocus
+                          style={{
+                            width: "100%", padding: "8px 10px",
+                            fontSize: 14, fontFamily: FONT, color: C.ink,
+                            background: "#fff", border: `1.5px solid ${C.border}`,
+                            borderRadius: 8, boxSizing: "border-box",
+                            WebkitAppearance: "none",
+                            transition: "border-color 0.15s",
+                          }}
+                          onFocus={e => { e.target.style.borderColor = C.accent; }}
+                          onBlur={e => { setTimeout(() => { e.target.style.borderColor = C.border; }, 150); }}
+                        />
+                        {/* Search results dropdown */}
+                        {searchQuery.length >= 2 && (searchResults.length > 0 || searchLoading) && (
+                          <div style={{
+                            position: "absolute", top: "100%", left: 0, right: 0,
+                            background: "#fff", border: `1px solid ${C.border}`,
+                            borderRadius: 8, marginTop: 4, zIndex: 10,
+                            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                            maxHeight: 200, overflowY: "auto",
+                          }}>
+                            {searchLoading && searchResults.length === 0 ? (
+                              <div style={{ padding: "10px 12px", fontSize: 13, color: C.sub, fontFamily: FONT }}>
+                                Searching...
+                              </div>
+                            ) : searchResults.map(r => (
+                              <button
+                                key={r.person_id}
+                                onMouseDown={(e) => { e.preventDefault(); handleSelectParticipant(r); }}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 8,
+                                  width: "100%", padding: "8px 12px",
+                                  background: "none", border: "none", cursor: "pointer",
+                                  fontFamily: FONT, textAlign: "left",
+                                  transition: "background 0.1s",
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.background = "#F5F3FF"; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
+                              >
+                                <PhotoAvatar name={r.display_name} photoUrl={r.photo_url} size={28} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>
+                                    {r.display_name}
+                                  </div>
+                                  {(r.current_title || r.current_company) && (
+                                    <div style={{ fontSize: 11, color: C.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      {[r.current_title, r.current_company].filter(Boolean).join(" at ")}
+                                    </div>
+                                  )}
+                                </div>
+                                <DegreeBadge degree={r.degree} />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {searchQuery.length >= 2 && !searchLoading && searchResults.length === 0 && (
+                          <div style={{
+                            position: "absolute", top: "100%", left: 0, right: 0,
+                            background: "#fff", border: `1px solid ${C.border}`,
+                            borderRadius: 8, marginTop: 4, zIndex: 10,
+                            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                            padding: "10px 12px", fontSize: 13, color: C.sub, fontFamily: FONT,
+                          }}>
+                            No results — only people open to chat are shown
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Topic input */}
+                      {selectedParticipants.length >= 2 && (
+                        <div style={{ marginBottom: 10 }}>
+                          <input
+                            value={threadTopic}
+                            onChange={e => setThreadTopic(e.target.value)}
+                            placeholder="What's this thread about?"
+                            style={{
+                              width: "100%", padding: "8px 10px",
+                              fontSize: 14, fontFamily: FONT, color: C.ink,
+                              background: "#fff", border: `1.5px solid ${C.border}`,
+                              borderRadius: 8, boxSizing: "border-box",
+                              WebkitAppearance: "none",
+                              transition: "border-color 0.15s",
+                            }}
+                            onFocus={e => { e.target.style.borderColor = C.accent; }}
+                            onBlur={e => { e.target.style.borderColor = C.border; }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Helper text */}
+                      {selectedParticipants.length < 2 && (
+                        <p style={{ fontSize: 12, color: C.sub, fontFamily: FONT, margin: 0, lineHeight: 1.5 }}>
+                          Add at least 2 people to start a group thread.
+                        </p>
+                      )}
+
+                      {/* Buttons */}
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+                        <button
+                          onClick={handleNewThreadCancel}
+                          style={{
+                            padding: "7px 14px", background: "#F5F5F4",
+                            color: C.sub, border: `1px solid ${C.border}`,
+                            borderRadius: 8, fontSize: 13, fontWeight: 600,
+                            fontFamily: FONT, cursor: "pointer",
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleDraftThread}
+                          disabled={selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading}
+                          style={{
+                            padding: "7px 14px",
+                            background: (selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading) ? "#C7D2FE" : C.accent,
+                            color: "#fff", border: "none", borderRadius: 8,
+                            fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                            cursor: (selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading) ? "not-allowed" : "pointer",
+                            transition: "background 0.15s",
+                          }}
+                        >
+                          {threadDraftLoading ? "Drafting..." : "Draft outreach"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ThreadDraftPanel (after draft is created) */}
+                  {threadDraft && (
+                    <div style={{ marginBottom: myThreads.length > 0 ? 12 : 0 }}>
+                      <ThreadDraftPanel
+                        threadId={threadDraft.threadId}
+                        creatorToken={threadDraft.creatorToken}
+                        topic={threadDraft.topic}
+                        draftSubject={threadDraft.draftSubject}
+                        draftBody={threadDraft.draftBody}
+                        participants={threadDraft.participants}
+                        onDone={handleNewThreadDone}
+                        onCancel={handleNewThreadCancel}
+                      />
+                    </div>
+                  )}
+
+                  {/* Existing thread cards */}
+                  {myThreads.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {myThreads.map(t => (
+                        <a
+                          key={t.thread_id}
+                          href={`/thread/${t.access_token}`}
+                          style={{
+                            display: "block", textDecoration: "none",
+                            padding: "10px 14px",
+                            background: "#FAFAF9", borderRadius: 10,
+                            border: `1px solid ${C.border}`,
+                            transition: "border-color 0.15s, box-shadow 0.15s",
+                            cursor: "pointer",
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 8px rgba(79,70,229,0.1)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            <span style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                              {t.topic}
+                            </span>
+                            <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginLeft: "auto", flexShrink: 0 }}>
+                              {t.participant_count} people
+                            </span>
+                          </div>
+                          {t.last_message_preview && (
+                            <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, lineHeight: 1.4 }}>
+                              <strong style={{ color: C.ink, fontWeight: 500 }}>{t.last_message_author?.split(" ")[0]}:</strong>{" "}
+                              {t.last_message_preview}
+                            </div>
+                          )}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Empty state */}
+                  {myThreads.length === 0 && !newThreadOpen && !threadDraft && (
+                    <div style={{
+                      textAlign: "center", padding: "12px 0",
+                      fontSize: 13, color: C.sub, fontFamily: FONT,
+                    }}>
+                      No threads yet — tap + to start one
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Quick Ask inline form */}
               {askOpen && !drafts && (
