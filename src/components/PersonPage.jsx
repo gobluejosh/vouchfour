@@ -1338,7 +1338,7 @@ export default function PersonPage() {
   const [selectedParticipants, setSelectedParticipants] = useState([]);
   const [threadTopic, setThreadTopic] = useState("");
   const [threadDraftLoading, setThreadDraftLoading] = useState(false);
-  const [threadDraft, setThreadDraft] = useState(null); // { threadId, creatorToken, topic, draftSubject, draftBody, participants }
+  const [threadDraft, setThreadDraft] = useState(null); // { threadId, creatorToken, topic, draftBody, participants }
 
   // Auth flow
   useEffect(() => {
@@ -1592,7 +1592,6 @@ export default function PersonPage() {
         threadId: d.thread_id,
         creatorToken: d.creator_token,
         topic: d.topic,
-        draftSubject: d.draft_subject,
         draftBody: d.draft_body,
         participants: d.participants,
       });
@@ -2010,7 +2009,6 @@ export default function PersonPage() {
                         threadId={threadDraft.threadId}
                         creatorToken={threadDraft.creatorToken}
                         topic={threadDraft.topic}
-                        draftSubject={threadDraft.draftSubject}
                         draftBody={threadDraft.draftBody}
                         participants={threadDraft.participants}
                         onDone={handleNewThreadDone}

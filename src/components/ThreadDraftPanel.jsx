@@ -38,8 +38,7 @@ function MiniAvatar({ name, photoUrl, size = 28 }) {
   );
 }
 
-export default function ThreadDraftPanel({ threadId, creatorToken, topic, draftSubject, draftBody, participants, onDone, onCancel }) {
-  const [subject, setSubject] = useState(draftSubject || "");
+export default function ThreadDraftPanel({ threadId, creatorToken, topic, draftBody, participants, onDone, onCancel }) {
   const [body, setBody] = useState(draftBody || "");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -48,19 +47,15 @@ export default function ThreadDraftPanel({ threadId, creatorToken, topic, draftS
   const saveTimer = useRef(null);
 
   // Fire-and-forget auto-save on edit
-  function handleEdit(field, value) {
-    if (field === "subject") setSubject(value);
-    else setBody(value);
+  function handleEdit(value) {
+    setBody(value);
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       fetch(`/api/threads/draft/${threadId}`, {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          draft_subject: field === "subject" ? value : subject,
-          draft_body: field === "body" ? value : body,
-        }),
+        body: JSON.stringify({ draft_body: value }),
       }).catch(() => {});
     }, 800);
   }
@@ -149,31 +144,12 @@ export default function ThreadDraftPanel({ threadId, creatorToken, topic, draftS
 
       {!sent ? (
         <>
-          {/* Subject */}
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: C.sub, fontFamily: FONT, textTransform: "uppercase", letterSpacing: 0.5 }}>Subject</label>
-            <input
-              value={subject}
-              onChange={e => handleEdit("subject", e.target.value)}
-              disabled={sending}
-              style={{
-                width: "100%", padding: "8px 10px", marginTop: 4,
-                fontSize: 16, border: `1.5px solid ${C.border}`,
-                borderRadius: 8, fontFamily: FONT, color: C.ink,
-                background: "#fff", WebkitAppearance: "none",
-                transition: "border-color 0.15s",
-              }}
-              onFocus={e => { e.target.style.borderColor = C.accent; }}
-              onBlur={e => { e.target.style.borderColor = C.border; }}
-            />
-          </div>
-
-          {/* Body */}
+          {/* Message */}
           <div>
             <label style={{ fontSize: 11, fontWeight: 600, color: C.sub, fontFamily: FONT, textTransform: "uppercase", letterSpacing: 0.5 }}>Message</label>
             <textarea
               value={body}
-              onChange={e => handleEdit("body", e.target.value)}
+              onChange={e => handleEdit(e.target.value)}
               disabled={sending}
               rows={5}
               style={{

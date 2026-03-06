@@ -486,7 +486,7 @@ export default function NetworkBrainPage() {
   // Group Thread state
   const [threadMode, setThreadMode] = useState(false);
   const [threadTopic, setThreadTopic] = useState("");
-  const [threadDraft, setThreadDraft] = useState(null); // { thread_id, creator_token, topic, draft_subject, draft_body, participants }
+  const [threadDraft, setThreadDraft] = useState(null); // { thread_id, creator_token, topic, draft_body, participants }
   const [threadDraftLoading, setThreadDraftLoading] = useState(false);
 
   // Auth flow on mount
@@ -1249,7 +1249,6 @@ export default function NetworkBrainPage() {
                                   threadId={threadDraft.thread_id}
                                   creatorToken={threadDraft.creator_token}
                                   topic={threadDraft.topic}
-                                  draftSubject={threadDraft.draft_subject}
                                   draftBody={threadDraft.draft_body}
                                   participants={threadDraft.participants}
                                   onDone={handleAskDone}

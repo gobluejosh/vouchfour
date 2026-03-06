@@ -3818,7 +3818,7 @@ What ${senderFirst} wants to ask:
       // Claude drafts one shared outreach message
       const senderFirst = sender.display_name.split(' ')[0]
       const participantNames = recipientProfiles.map(r => r.display_name).join(', ')
-      let draftSubject, draftBody
+      let draftBody
       try {
         const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
@@ -3829,8 +3829,8 @@ What ${senderFirst} wants to ask:
           },
           body: JSON.stringify({
             model: 'claude-sonnet-4-20250514',
-            max_tokens: 512,
-            system: `You are drafting a very short email inviting people to a group conversation on VouchFour.
+            max_tokens: 256,
+            system: `You are drafting a very short email body inviting people to a group conversation on VouchFour.
 
 Rules:
 - Write ONLY the email body. 1-2 sentences. Be brief.
@@ -3839,12 +3839,7 @@ Rules:
 - Mention it's a small group discussion.
 - Do NOT address anyone by name. Do NOT include a greeting or sign-off.
 - Tone: matter-of-fact, like a quick message to colleagues.
-- Generate a short subject line (max 60 chars).
-
-Format:
-SUBJECT: <subject line>
-BODY:
-<message body>`,
+- Output ONLY the message body text, nothing else.`,
             messages: [{ role: 'user', content: `Sender: ${sender.display_name}, ${sender.current_title || 'Professional'} at ${sender.current_company || 'N/A'}
 Participants: ${participantNames}
 Topic: ${topic}
@@ -3852,15 +3847,11 @@ What ${senderFirst} wants to discuss: "${question}"` }],
           }),
         })
         const data = await claudeRes.json()
-        const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
-        const subjectMatch = text.match(/SUBJECT:\s*(.+)/i)
-        const bodyMatch = text.match(/BODY:\s*([\s\S]+)/i)
-        draftSubject = subjectMatch ? subjectMatch[1].trim() : `Group conversation: ${topic}`
-        draftBody = bodyMatch ? bodyMatch[1].trim() : `I'm starting a group conversation about ${topic}. ${question}`
+        const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim()
+        draftBody = text || `I'm starting a small group conversation about ${topic}.`
       } catch (err) {
         console.warn('[Threads] Claude draft failed:', err.message)
-        draftSubject = `Group conversation: ${topic}`
-        draftBody = `I'm starting a group conversation about ${topic}. ${question}`
+        draftBody = `I'm starting a small group conversation about ${topic}.`
       }
 
       // Create recipient participants with the shared draft
@@ -3874,9 +3865,9 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         const ctx = recipient_context?.[String(recipient.id)] || {}
         const knowsRecipient = recipient.degree === 1 || (ctx.knows_them === true)
         await query(
-          `INSERT INTO thread_participants (thread_id, person_id, access_token, vouch_path, draft_subject, draft_body)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [threadId, recipient.id, token, JSON.stringify(vouchPath), draftSubject, draftBody]
+          `INSERT INTO thread_participants (thread_id, person_id, access_token, vouch_path, draft_body)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [threadId, recipient.id, token, JSON.stringify(vouchPath), draftBody]
         )
         participants.push({
           person_id: recipient.id,
@@ -3898,7 +3889,6 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         thread_id: threadId,
         creator_token: creatorToken,
         topic: topic.trim(),
-        draft_subject: draftSubject,
         draft_body: draftBody,
         participants,
         recipients_at_limit: recipientsAtLimit,
@@ -3919,7 +3909,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
       if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
       const threadId = Number(req.url.split('/').pop())
       const body = await readBody(req)
-      const { draft_subject, draft_body } = body
+      const { draft_body } = body
 
       // Verify ownership + draft status
       const threadRes = await query('SELECT id, creator_id, status FROM threads WHERE id = $1', [threadId])
@@ -3932,9 +3922,9 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
       // Update draft on all non-creator participant rows
       await query(
-        `UPDATE thread_participants SET draft_subject = $1, draft_body = $2
-         WHERE thread_id = $3 AND role = 'participant'`,
-        [draft_subject, draft_body, threadId]
+        `UPDATE thread_participants SET draft_body = $1
+         WHERE thread_id = $2 AND role = 'participant'`,
+        [draft_body, threadId]
       )
 
       res.writeHead(200)
