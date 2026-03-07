@@ -11,6 +11,7 @@ const ALIASES = {
   'fullcontact inc': 'fullcontact',
   'ibotta inc': 'ibotta',
   'havenly brands (havenly, interior define, burrow, the citizenry, the inside, and st. frank)': 'havenly',
+  'havenly brands': 'havenly',
 }
 
 export function normalizeOrgName(name) {
