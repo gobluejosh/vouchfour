@@ -412,6 +412,9 @@ export default function TalentPage() {
           if (data.user) {
             setUser(data.user);
             setAuthState("authenticated");
+            if (data.inviterName) sessionStorage.setItem("vouchfour_inviterName", data.inviterName);
+            if (data.jobFunction) sessionStorage.setItem("vouchfour_jobFunction", JSON.stringify(data.jobFunction));
+            if (data.vouchToken) sessionStorage.setItem("vouchfour_vouchToken", data.vouchToken);
             window.history.replaceState({}, "", window.location.pathname);
           } else {
             setAuthState("unauthenticated");
@@ -427,6 +430,9 @@ export default function TalentPage() {
         .then(data => {
           setUser(data.user);
           setAuthState("authenticated");
+          if (data.inviterName) sessionStorage.setItem("vouchfour_inviterName", data.inviterName);
+          if (data.jobFunction) sessionStorage.setItem("vouchfour_jobFunction", JSON.stringify(data.jobFunction));
+          if (data.vouchToken) sessionStorage.setItem("vouchfour_vouchToken", data.vouchToken);
         })
         .catch(() => setAuthState("unauthenticated"));
     }
@@ -820,6 +826,12 @@ export default function TalentPage() {
               <VouchStatusCard vouches={vouchVouches} vouchToken={vouchToken} shareToken={shareToken} label="" dropdown={vouchDropdown} />
             );
 
+            const inviterName = sessionStorage.getItem("vouchfour_inviterName");
+            const inviterFirstName = inviterName?.split(" ")[0];
+            const storedJobFunction = (() => { try { return JSON.parse(sessionStorage.getItem("vouchfour_jobFunction")); } catch { return null; } })();
+            const storedVouchToken = sessionStorage.getItem("vouchfour_vouchToken");
+            const hasNeverVouched = activeJobFunctions.length === 0;
+
             const keepBuildingCTA = availableJobFunctions.length > 0 ? (
               <div style={{
                 borderRadius: 14, marginTop: 24, marginBottom: 16,
@@ -827,63 +839,96 @@ export default function TalentPage() {
                 boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                 padding: "16px 18px",
               }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 4 }}>Keep Building Your Network</div>
-                  <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>Which function should we work on next?</p>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    <select value={selectedNextFn} onChange={e => setSelectedNextFn(e.target.value)}
+                  {hasNeverVouched ? (
+                    <>
+                      <div style={{ fontSize: 17, fontWeight: 700, color: C.ink, lineHeight: 1.4, marginBottom: 6 }}>
+                        {inviterFirstName
+                          ? <>Hi, {fullName?.split(" ")[0]}! {inviterFirstName} vouched for you as one of their all-time best colleagues.</>
+                          : <>Welcome to VouchFour!</>}
+                      </div>
+                      <p style={{ fontSize: 15, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>
+                        {inviterFirstName && storedVouchToken
+                          ? `They would like you to recommend your top ${storedJobFunction?.name ? storedJobFunction.name.toLowerCase() + " " : ""}colleagues.`
+                          : "Get started by vouching for the top 4 professionals you've worked with."}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 4 }}>Keep Building Your Network</div>
+                      <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>Which function should we work on next?</p>
+                    </>
+                  )}
+                  {hasNeverVouched && storedVouchToken ? (
+                    <a
+                      href={`/vouch?token=${storedVouchToken}&ready=1`}
                       style={{
-                        flex: "1 1 200px", minWidth: 0, padding: "10px 12px", fontSize: 14, fontFamily: FONT,
-                        border: `1.5px solid ${C.border}`, borderRadius: 10, color: selectedNextFn ? C.ink : C.sub,
-                        background: "#fff", cursor: "pointer", WebkitAppearance: "none", appearance: "none",
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center", paddingRight: 32,
+                        display: "inline-block", padding: "10px 22px", background: C.accent, color: "#fff",
+                        borderRadius: 10, fontSize: 14, fontWeight: 600, textDecoration: "none", fontFamily: FONT,
                       }}
                     >
-                      <option value="" disabled>Select a function</option>
-                      {availableJobFunctions.map(jf => (
-                        <option key={jf.id} value={jf.id}>{jf.practitionerLabel || jf.name}</option>
-                      ))}
-                    </select>
-                    <button disabled={!selectedNextFn || startingVouch}
-                      onClick={async () => {
-                        if (!selectedNextFn || startingVouch) return;
-                        setStartingVouch(true);
-                        try {
-                          const controller = new AbortController();
-                          const timeout = setTimeout(() => controller.abort(), 15000);
-                          const res = await fetch("/api/start-vouch", {
-                            method: "POST", headers: { "Content-Type": "application/json" },
-                            credentials: "include", body: JSON.stringify({ jobFunctionId: Number(selectedNextFn) }),
-                            signal: controller.signal,
-                          });
-                          clearTimeout(timeout);
-                          const data = await res.json();
-                          if (!res.ok) throw new Error(data.error || "Failed");
-                          window.location.href = `/vouch?token=${data.token}`;
-                        } catch (err) {
-                          console.error("[TalentPage] Start vouch error:", err);
-                          setStartingVouch(false);
+                      {storedJobFunction?.practitionerLabel && inviterFirstName
+                        ? `Recommend ${storedJobFunction.practitionerLabel} to ${inviterFirstName}`
+                        : storedJobFunction?.practitionerLabel
+                          ? `Recommend ${storedJobFunction.practitionerLabel}`
+                          : "Recommend Your Top 4"}
+                    </a>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <select value={selectedNextFn} onChange={e => setSelectedNextFn(e.target.value)}
+                        style={{
+                          flex: "1 1 200px", minWidth: 0, padding: "10px 12px", fontSize: 14, fontFamily: FONT,
+                          border: `1.5px solid ${C.border}`, borderRadius: 10, color: selectedNextFn ? C.ink : C.sub,
+                          background: "#fff", cursor: "pointer", WebkitAppearance: "none", appearance: "none",
+                          backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                          backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center", paddingRight: 32,
+                        }}
+                      >
+                        <option value="" disabled>Select a function</option>
+                        {availableJobFunctions.map(jf => (
+                          <option key={jf.id} value={jf.id}>{jf.practitionerLabel || jf.name}</option>
+                        ))}
+                      </select>
+                      <button disabled={!selectedNextFn || startingVouch}
+                        onClick={async () => {
+                          if (!selectedNextFn || startingVouch) return;
+                          setStartingVouch(true);
                           try {
-                            fetch('/api/client-error', {
-                              method: 'POST', headers: { 'Content-Type': 'application/json' },
-                              credentials: 'include',
-                              body: JSON.stringify({ message: err.message, stack: err.stack, context: 'talent_page_start_vouch', url: window.location.href, userAgent: navigator.userAgent }),
-                            }).catch(() => {})
-                          } catch {}
-                        }
-                      }}
-                      style={{
-                        padding: "10px 20px",
-                        background: selectedNextFn && !startingVouch ? C.accent : "#C7D2FE",
-                        color: "#fff", border: "1.5px solid transparent", borderRadius: 10,
-                        fontSize: 14, fontWeight: 600, fontFamily: FONT,
-                        cursor: selectedNextFn && !startingVouch ? "pointer" : "not-allowed",
-                        whiteSpace: "nowrap", flexShrink: 0,
-                      }}
-                    >
-                      {startingVouch ? "..." : "Let's go"}
-                    </button>
-                  </div>
+                            const controller = new AbortController();
+                            const timeout = setTimeout(() => controller.abort(), 15000);
+                            const res = await fetch("/api/start-vouch", {
+                              method: "POST", headers: { "Content-Type": "application/json" },
+                              credentials: "include", body: JSON.stringify({ jobFunctionId: Number(selectedNextFn) }),
+                              signal: controller.signal,
+                            });
+                            clearTimeout(timeout);
+                            const data = await res.json();
+                            if (!res.ok) throw new Error(data.error || "Failed");
+                            window.location.href = `/vouch?token=${data.token}`;
+                          } catch (err) {
+                            console.error("[TalentPage] Start vouch error:", err);
+                            setStartingVouch(false);
+                            try {
+                              fetch('/api/client-error', {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                credentials: 'include',
+                                body: JSON.stringify({ message: err.message, stack: err.stack, context: 'talent_page_start_vouch', url: window.location.href, userAgent: navigator.userAgent }),
+                              }).catch(() => {})
+                            } catch {}
+                          }
+                        }}
+                        style={{
+                          padding: "10px 20px",
+                          background: selectedNextFn && !startingVouch ? C.accent : "#C7D2FE",
+                          color: "#fff", border: "1.5px solid transparent", borderRadius: 10,
+                          fontSize: 14, fontWeight: 600, fontFamily: FONT,
+                          cursor: selectedNextFn && !startingVouch ? "pointer" : "not-allowed",
+                          whiteSpace: "nowrap", flexShrink: 0,
+                        }}
+                      >
+                        {startingVouch ? "..." : "Let's go"}
+                      </button>
+                    </div>
+                  )}
               </div>
             ) : null;
 
@@ -905,12 +950,13 @@ export default function TalentPage() {
                 <>
                   {userCard}
                   {brainPrompt}
+                  {hasNeverVouched && keepBuildingCTA}
                   {functionDropdown}
                   {shimmerPlaceholders}
                   {emptyState}
                   {talentList}
                   {vouchStatus}
-                  {keepBuildingCTA}
+                  {!hasNeverVouched && keepBuildingCTA}
                   {whatsNew}
                   {genericCTA}
                 </>

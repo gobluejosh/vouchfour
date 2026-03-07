@@ -5105,53 +5105,6 @@ What ${senderFirst} wants to discuss: "${question}"` }],
     return
   }
 
-  // ─── Network preview for pre-vouch homepage ─────────────────────
-  if (req.method === 'GET' && req.url === '/api/my-network-preview') {
-    try {
-      const person = await validateSession(req)
-      if (!person) {
-        res.writeHead(401)
-        res.end(JSON.stringify({ error: 'No valid session' }))
-        return
-      }
-
-      // Who vouched for this user (sponsors)
-      const sponsorsRes = await query(`
-        SELECT DISTINCT p.id, p.display_name, p.current_title, p.current_company, p.photo_url
-        FROM vouches v JOIN people p ON p.id = v.voucher_id
-        WHERE v.vouchee_id = $1
-      `, [person.id])
-
-      // Full network via existing graph traversal
-      const recommendations = await getTalentRecommendations(person.id, null)
-      const highlighted = recommendations.slice(0, 8).map(r => ({
-        id: r.id,
-        name: r.display_name,
-        title: r.current_title,
-        company: r.current_company,
-        photoUrl: r.photo_url,
-        degree: r.degree,
-      }))
-
-      res.writeHead(200)
-      res.end(JSON.stringify({
-        sponsors: sponsorsRes.rows.map(s => ({
-          name: s.display_name,
-          title: s.current_title,
-          company: s.current_company,
-          photoUrl: s.photo_url,
-        })),
-        networkSize: recommendations.length,
-        highlighted,
-      }))
-    } catch (err) {
-      console.error('[/api/my-network-preview error]', err)
-      res.writeHead(500)
-      res.end(JSON.stringify({ error: 'Internal server error' }))
-    }
-    return
-  }
-
   // Not an API route — try serving static files (production)
   if (fs.existsSync(DIST_DIR)) {
     if (serveStaticFile(req, res)) return
