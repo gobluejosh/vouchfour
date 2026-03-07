@@ -630,7 +630,7 @@ export default function TalentPage() {
                 <div
                   onClick={() => { window.location.href = "/brain"; }}
                   style={{
-                    background: "#EEF2FF", borderRadius: 14, padding: "28px 28px",
+                    background: "#EEF2FF", borderRadius: 14, padding: "28px 16px",
                     border: `1px solid #C7D2FE`, boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                     marginBottom: 16, cursor: "pointer",
                   }}
