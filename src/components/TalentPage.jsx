@@ -609,12 +609,22 @@ export default function TalentPage() {
 
             const brainPrompt = !loading && talent.length > 0 ? (
               isMobile ? (
-                <div style={{ marginBottom: 16 }}>
-                  <a href="/brain" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 8, textDecoration: "none" }}>
-                    <div style={{ color: C.accent, display: "flex", alignItems: "center" }}><BrainIcon size={14} /></div>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: C.accent, fontFamily: FONT }}>Network Brain</span>
-                  </a>
-                  {brainForm}
+                <div
+                  onClick={() => { window.location.href = "/brain"; }}
+                  style={{
+                    background: "#EEF2FF", borderRadius: 14, padding: "18px 16px",
+                    border: `1px solid #C7D2FE`, boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                    marginBottom: 16, cursor: "pointer",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <div style={{ color: C.accent, display: "flex", alignItems: "center" }}><BrainIcon size={16} /></div>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: C.ink, fontFamily: FONT, flex: 1 }}>Network Brain</span>
+                    <ChevronRightIcon />
+                  </div>
+                  <div onClick={e => e.stopPropagation()}>
+                    {brainForm}
+                  </div>
                 </div>
               ) : (
                 <div
@@ -637,10 +647,19 @@ export default function TalentPage() {
               )
             ) : null;
 
+            const feedTimeAgo = (dateStr) => {
+              const diffMin = Math.floor((Date.now() - new Date(dateStr)) / 60000);
+              if (diffMin < 1) return "just now";
+              if (diffMin < 60) return `${diffMin}m`;
+              const diffHr = Math.floor(diffMin / 60);
+              if (diffHr < 24) return `${diffHr}h`;
+              return `${Math.floor(diffHr / 24)}d`;
+            };
+
             const feedItemLabel = (item) => {
               if (item.type === "vouch") return <><b>{item.subject.name}</b> was vouched for by {item.actor.name}</>;
               if (item.type === "ask") return <><b>{item.actor.name}</b> sent you an Ask</>;
-              if (item.type === "thread") return <><b>{item.actor.name}</b> posted in {item.topic}</>;
+              if (item.type === "thread") return <><b>{item.actor.name}</b> posted in {item.topic} · {feedTimeAgo(item.ts)}</>;
               return "";
             };
 
