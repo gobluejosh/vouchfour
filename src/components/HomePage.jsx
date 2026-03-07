@@ -559,20 +559,6 @@ export default function HomePage() {
             return null;
           })()}
 
-          {/* Footer */}
-          <p style={{
-            marginTop: "auto", fontSize: 11, color: "#7C6FA0",
-            lineHeight: 1.5, textAlign: "center", padding: "0 12px",
-          }}>
-            Built by{" "}
-            <a
-              href="https://www.linkedin.com/in/joshscott/"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: "#7C6FA0", textDecoration: "underline" }}
-            >Josh Scott</a>{" "}
-            with significant help from Claude.
-          </p>
 
         </div>
       </div>
