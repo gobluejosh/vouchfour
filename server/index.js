@@ -11,6 +11,7 @@ import { sendVouchInviteEmail, sendLoginLinkEmail, sendEmail, loadTemplate, appl
 import { processNudges, processVoucherNudges } from './lib/nudge.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
 import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
+import { normalizeOrgName } from './lib/orgNormalize.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -1843,6 +1844,127 @@ Rules:
     return
   }
 
+  // ─── Career overlap for person page widgets ────────────────────────
+  const careerOverlapMatch = req.method === 'GET' && req.url.match(/^\/api\/person\/(\d+)\/career-overlap$/)
+  if (careerOverlapMatch) {
+    const session = await validateSession(req)
+    if (!session) { res.writeHead(401); res.end('{}'); return }
+    const personId = parseInt(careerOverlapMatch[1])
+    if (personId === session.person_id) { res.writeHead(200); res.end(JSON.stringify({ user_overlap: [], network_overlap: [] })); return }
+
+    try {
+      const [userHistoryRes, personHistoryRes, networkRes] = await Promise.all([
+        query('SELECT organization, title, start_date, end_date, is_current FROM employment_history WHERE person_id = $1', [session.person_id]),
+        query('SELECT organization, title, start_date, end_date, is_current FROM employment_history WHERE person_id = $1', [personId]),
+        query(`
+          WITH degree1 AS (
+            SELECT DISTINCT vouchee_id AS pid FROM vouches WHERE voucher_id = $1
+          ),
+          sponsors AS (
+            SELECT DISTINCT voucher_id AS pid FROM vouches WHERE vouchee_id = $1
+          ),
+          degree2 AS (
+            SELECT DISTINCT v.vouchee_id AS pid FROM degree1 d JOIN vouches v ON v.voucher_id = d.pid WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT pid FROM degree1)
+            UNION SELECT DISTINCT v.vouchee_id AS pid FROM sponsors s JOIN vouches v ON v.voucher_id = s.pid WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT pid FROM degree1)
+          ),
+          degree3 AS (
+            SELECT DISTINCT v.vouchee_id AS pid FROM degree2 d JOIN vouches v ON v.voucher_id = d.pid WHERE v.vouchee_id != $1 AND v.vouchee_id NOT IN (SELECT pid FROM degree1) AND v.vouchee_id NOT IN (SELECT pid FROM degree2)
+          ),
+          network AS (
+            SELECT pid, 1 AS degree FROM degree1 UNION SELECT pid, 1 FROM sponsors
+            UNION ALL SELECT pid, 2 FROM degree2
+            UNION ALL SELECT pid, 3 FROM degree3
+          ),
+          best AS (
+            SELECT DISTINCT ON (pid) pid, degree FROM network ORDER BY pid, degree
+          )
+          SELECT p.id, p.display_name, p.photo_url, b.degree,
+                 eh.organization, eh.title AS title_at_org, eh.start_date, eh.end_date, eh.is_current
+          FROM best b
+          JOIN people p ON p.id = b.pid
+          LEFT JOIN employment_history eh ON eh.person_id = b.pid
+          WHERE b.pid != $1 AND b.pid != $2
+          ORDER BY b.degree, p.display_name
+        `, [session.person_id, personId])
+      ])
+
+      const userHistory = userHistoryRes.rows
+      const personHistory = personHistoryRes.rows
+
+      // Helper: check if two employment records have overlapping dates
+      function datesOverlap(a, b) {
+        const aEnd = (a.is_current || !a.end_date) ? new Date() : new Date(a.end_date)
+        const bEnd = (b.is_current || !b.end_date) ? new Date() : new Date(b.end_date)
+        const aStart = a.start_date ? new Date(a.start_date) : new Date('1970-01-01')
+        const bStart = b.start_date ? new Date(b.start_date) : new Date('1970-01-01')
+        return aStart <= bEnd && bStart <= aEnd
+      }
+
+      // Widget 1: user ↔ person overlap
+      const overlapMap = new Map()
+      for (const uh of userHistory) {
+        const normU = normalizeOrgName(uh.organization)
+        for (const ph of personHistory) {
+          const normP = normalizeOrgName(ph.organization)
+          if (normU === normP && datesOverlap(uh, ph)) {
+            if (!overlapMap.has(normU)) overlapMap.set(normU, { organization: ph.organization, user_roles: [], person_roles: [], pairs: [] })
+            overlapMap.get(normU).pairs.push({ uh, ph })
+          }
+        }
+      }
+      const user_overlap = []
+      for (const [, val] of overlapMap) {
+        const seenUser = new Set(), seenPerson = new Set()
+        let earliestOverlap = null, latestOverlap = null
+        for (const { uh, ph } of val.pairs) {
+          const uKey = `${uh.title}|${uh.start_date}|${uh.end_date}`
+          const pKey = `${ph.title}|${ph.start_date}|${ph.end_date}`
+          if (!seenUser.has(uKey)) { seenUser.add(uKey); val.user_roles.push({ title: uh.title, start_date: uh.start_date, end_date: uh.end_date, is_current: uh.is_current }) }
+          if (!seenPerson.has(pKey)) { seenPerson.add(pKey); val.person_roles.push({ title: ph.title, start_date: ph.start_date, end_date: ph.end_date, is_current: ph.is_current }) }
+          const oStart = new Date(Math.max(uh.start_date ? new Date(uh.start_date) : new Date('1970-01-01'), ph.start_date ? new Date(ph.start_date) : new Date('1970-01-01')))
+          const oEnd = new Date(Math.min((uh.is_current || !uh.end_date) ? new Date() : new Date(uh.end_date), (ph.is_current || !ph.end_date) ? new Date() : new Date(ph.end_date)))
+          if (!earliestOverlap || oStart < earliestOverlap) earliestOverlap = oStart
+          if (!latestOverlap || oEnd > latestOverlap) latestOverlap = oEnd
+        }
+        user_overlap.push({
+          organization: val.organization, user_roles: val.user_roles, person_roles: val.person_roles,
+          overlap_start: earliestOverlap?.toISOString().split('T')[0] || null,
+          overlap_end: latestOverlap?.toISOString().split('T')[0] || null,
+        })
+      }
+
+      // Widget 2: network people who worked at person's companies
+      const personOrgs = new Set(personHistory.map(r => normalizeOrgName(r.organization)))
+      const networkByOrg = new Map()
+      for (const row of networkRes.rows) {
+        if (!row.organization) continue
+        const norm = normalizeOrgName(row.organization)
+        if (!personOrgs.has(norm)) continue
+        if (!networkByOrg.has(norm)) {
+          const displayOrg = personHistory.find(r => normalizeOrgName(r.organization) === norm)?.organization || row.organization
+          networkByOrg.set(norm, { organization: displayOrg, people: new Map() })
+        }
+        const entry = networkByOrg.get(norm)
+        if (!entry.people.has(row.id)) {
+          entry.people.set(row.id, { id: row.id, name: row.display_name, degree: row.degree, photo_url: row.photo_url, title_at_org: row.title_at_org })
+        }
+      }
+      const network_overlap = []
+      for (const [, val] of networkByOrg) {
+        network_overlap.push({ organization: val.organization, people: [...val.people.values()] })
+      }
+      network_overlap.sort((a, b) => b.people.length - a.people.length)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ user_overlap, network_overlap }))
+    } catch (err) {
+      console.error('[/api/person/career-overlap error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Person detail (auth required) ─────────────────────────────────
   if (req.method === 'GET' && req.url.startsWith('/api/person/')) {
     try {
@@ -2879,6 +3001,7 @@ Rules:
       }
 
       const userId = session.id
+      const maxRecipients = await getQuickAskLimit('quick_ask_max_recipients')
       console.log(`[NetworkBrain] Query from ${session.display_name}: "${question.slice(0, 80)}"`)
       const start = Date.now()
 
@@ -2997,7 +3120,7 @@ Rules:
         })
         console.log(`[NetworkBrain] Name shortcut: "${question}" → ${nameMatches.length} match(es) in ${Date.now() - start}ms`)
         res.writeHead(200)
-        res.end(JSON.stringify({ answer, people: matchedPeople }))
+        res.end(JSON.stringify({ answer, people: matchedPeople, max_recipients: maxRecipients }))
         return
       }
 
@@ -3077,7 +3200,7 @@ ${networkContext}`,
       })
 
       res.writeHead(200)
-      res.end(JSON.stringify({ answer, people: mentionedPeople }))
+      res.end(JSON.stringify({ answer, people: mentionedPeople, max_recipients: maxRecipients }))
     } catch (err) {
       console.error('[/api/network-brain error]', err)
       res.writeHead(500)
@@ -4525,6 +4648,95 @@ What ${senderFirst} wants to discuss: "${question}"` }],
     return
   }
 
+  // ─── What's New Feed ──────────────────────────────────────────────
+  if (req.method === 'GET' && req.url === '/api/feed') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+
+      const userId = session.id
+
+      // 1. New people in network: vouches by your 1st-degree connections (last 10 days)
+      const vouchesRes = await query(`
+        SELECT 'vouch' AS type, v.created_at AS ts,
+               p_voucher.display_name AS actor_name, p_voucher.id AS actor_id, p_voucher.photo_url AS actor_photo,
+               p_vouchee.display_name AS subject_name, p_vouchee.id AS subject_id, p_vouchee.photo_url AS subject_photo,
+               jf.name AS job_function
+        FROM vouches v
+        JOIN vouches my_vouches ON my_vouches.vouchee_id = v.voucher_id AND my_vouches.voucher_id = $1
+        JOIN people p_voucher ON p_voucher.id = v.voucher_id
+        JOIN people p_vouchee ON p_vouchee.id = v.vouchee_id
+        JOIN job_functions jf ON jf.id = v.job_function_id
+        WHERE v.created_at > NOW() - INTERVAL '10 days'
+          AND v.voucher_id != $1
+        ORDER BY v.created_at DESC
+        LIMIT 7
+      `, [userId])
+
+      // 2. Ask messages received (sent, last 10 days)
+      const asksRes = await query(`
+        SELECT 'ask' AS type, qar.sent_at AS ts,
+               p.display_name AS actor_name, p.id AS actor_id, p.photo_url AS actor_photo,
+               qa.question
+        FROM quick_ask_recipients qar
+        JOIN quick_asks qa ON qa.id = qar.ask_id
+        JOIN people p ON p.id = qa.sender_id
+        WHERE qar.recipient_id = $1
+          AND qar.status = 'sent'
+          AND qar.sent_at > NOW() - INTERVAL '10 days'
+        ORDER BY qar.sent_at DESC
+        LIMIT 7
+      `, [userId])
+
+      // 3. Thread messages (not by me, in threads I'm in, last 10 days)
+      const threadsRes = await query(`
+        SELECT 'thread' AS type, tm.created_at AS ts,
+               p.display_name AS actor_name, p.id AS actor_id, p.photo_url AS actor_photo,
+               t.topic, t.id AS thread_id,
+               tp_me.access_token
+        FROM thread_messages tm
+        JOIN threads t ON t.id = tm.thread_id
+        JOIN thread_participants tp_me ON tp_me.thread_id = t.id AND tp_me.person_id = $1
+        JOIN people p ON p.id = tm.author_id
+        WHERE tm.author_id != $1
+          AND t.status = 'active'
+          AND tm.created_at > NOW() - INTERVAL '10 days'
+        ORDER BY tm.created_at DESC
+        LIMIT 7
+      `, [userId])
+
+      // Merge, sort by timestamp, cap at 7
+      const items = [
+        ...vouchesRes.rows.map(r => ({
+          type: 'vouch', ts: r.ts,
+          actor: { id: r.actor_id, name: r.actor_name, photo_url: r.actor_photo },
+          subject: { id: r.subject_id, name: r.subject_name, photo_url: r.subject_photo },
+          job_function: r.job_function,
+        })),
+        ...asksRes.rows.map(r => ({
+          type: 'ask', ts: r.ts,
+          actor: { id: r.actor_id, name: r.actor_name, photo_url: r.actor_photo },
+          question: r.question,
+        })),
+        ...threadsRes.rows.map(r => ({
+          type: 'thread', ts: r.ts,
+          actor: { id: r.actor_id, name: r.actor_name, photo_url: r.actor_photo },
+          topic: r.topic, thread_id: r.thread_id, access_token: r.access_token,
+        })),
+      ]
+        .sort((a, b) => new Date(b.ts) - new Date(a.ts))
+        .slice(0, 5)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ items }))
+    } catch (err) {
+      console.error('[/api/feed error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Network search (for thread participant picker) ─────────────
   if (req.method === 'GET' && req.url.startsWith('/api/network-search')) {
     try {
@@ -4790,14 +5002,17 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
       const vouchCheck = await query('SELECT EXISTS(SELECT 1 FROM vouches WHERE voucher_id = $1) AS has_vouched', [person.id])
 
-      // Look up who vouched for this person (most recent voucher) + job function
+      // Look up who vouched for this person (most recent voucher) + job function + vouch token
       let inviterName = null
       let jobFunction = null
+      let vouchToken = null
       const vouchInfoRes = await query(`
-        SELECT p.display_name, jf.id, jf.name, jf.slug, jf.practitioner_label
+        SELECT p.display_name, jf.id, jf.name, jf.slug, jf.practitioner_label,
+               vi.token AS vouch_token
         FROM vouches v
         JOIN people p ON p.id = v.voucher_id
         JOIN job_functions jf ON jf.id = v.job_function_id
+        LEFT JOIN vouch_invites vi ON vi.invitee_id = v.vouchee_id AND vi.job_function_id = v.job_function_id AND vi.status = 'pending'
         WHERE v.vouchee_id = $1
         ORDER BY v.created_at DESC LIMIT 1
       `, [person.id])
@@ -4805,6 +5020,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         const vi = vouchInfoRes.rows[0]
         inviterName = vi.display_name
         jobFunction = { id: vi.id, name: vi.name, slug: vi.slug, practitionerLabel: vi.practitioner_label }
+        vouchToken = vi.vouch_token
       }
 
       res.writeHead(200)
@@ -4821,6 +5037,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         },
         ...(inviterName && { inviterName }),
         ...(jobFunction && { jobFunction }),
+        ...(vouchToken && { vouchToken }),
       }))
     } catch (err) {
       console.error('[/api/auth/validate error]', err)
@@ -4843,6 +5060,27 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
       const vouchCheck = await query('SELECT EXISTS(SELECT 1 FROM vouches WHERE voucher_id = $1) AS has_vouched', [person.id])
 
+      // Look up who vouched for this person + job function + vouch token
+      let inviterName = null
+      let jobFunction = null
+      let vouchToken = null
+      const vouchInfoRes = await query(`
+        SELECT p.display_name, jf.id, jf.name, jf.slug, jf.practitioner_label,
+               vi.token AS vouch_token
+        FROM vouches v
+        JOIN people p ON p.id = v.voucher_id
+        JOIN job_functions jf ON jf.id = v.job_function_id
+        LEFT JOIN vouch_invites vi ON vi.invitee_id = v.vouchee_id AND vi.job_function_id = v.job_function_id AND vi.status = 'pending'
+        WHERE v.vouchee_id = $1
+        ORDER BY v.created_at DESC LIMIT 1
+      `, [person.id])
+      if (vouchInfoRes.rows.length > 0) {
+        const vi = vouchInfoRes.rows[0]
+        inviterName = vi.display_name
+        jobFunction = { id: vi.id, name: vi.name, slug: vi.slug, practitionerLabel: vi.practitioner_label }
+        vouchToken = vi.vouch_token
+      }
+
       res.writeHead(200)
       res.end(JSON.stringify({
         user: {
@@ -4855,6 +5093,9 @@ What ${senderFirst} wants to discuss: "${question}"` }],
           current_company: person.current_company || null,
           photo_url: person.photo_url || null,
         },
+        ...(inviterName && { inviterName }),
+        ...(jobFunction && { jobFunction }),
+        ...(vouchToken && { vouchToken }),
       }))
     } catch (err) {
       console.error('[/api/auth/session error]', err)

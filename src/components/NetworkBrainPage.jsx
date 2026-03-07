@@ -137,19 +137,27 @@ function renderInline(text) {
   // Split on **bold** and [link](url) markers
   const parts = text.split(/(\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g);
   return parts.map((part, i) => {
-    // Bold: **text** (may contain a [link](url) inside)
+    // Bold: **text** — recursively render inner content to handle links inside bold
     if (part.startsWith("**") && part.endsWith("**")) {
       const inner = part.slice(2, -2);
-      const lm = inner.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-      if (lm) {
-        return <a key={i} href={lm[2]} style={{ fontWeight: 600, color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
-      }
-      return <strong key={i} style={{ fontWeight: 600 }}>{inner}</strong>;
+      return <strong key={i} style={{ fontWeight: 600 }}>{renderInlineLinks(inner)}</strong>;
     }
     // Link: [text](url)
     const lm = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (lm) {
       return <a key={i} href={lm[2]} style={{ color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
+    }
+    return part;
+  });
+}
+
+// Handle links inside already-matched bold sections
+function renderInlineLinks(text) {
+  const parts = text.split(/(\[[^\]]+\]\([^)]+\))/g);
+  return parts.map((part, i) => {
+    const lm = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (lm) {
+      return <a key={i} href={lm[2]} style={{ fontWeight: 600, color: C.accent, textDecoration: "none" }}>{lm[1]}</a>;
     }
     return part;
   });
@@ -201,166 +209,150 @@ function PhotoAvatar({ name, photoUrl, size = 36, degree }) {
 
 // ── Person card ────────────────────────────────────────────────────────
 
-function PersonCard({ person, inAskMode, isSelected, onToggle }) {
+function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
   const colors = DEGREE_COLORS[person.degree] || DEGREE_COLORS[3];
   const subtitle = [person.current_title, person.current_company].filter(Boolean).join(" at ");
+  const canCheck = person.can_ask !== false;
 
-  const inner = (
-    <>
-      {inAskMode && (
-        <div style={{
-          width: 20, height: 20, borderRadius: 6,
-          border: `2px solid ${isSelected ? C.accent : C.border}`,
-          background: isSelected ? C.accent : "#fff",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          flexShrink: 0, transition: "all 0.15s",
-        }}>
-          {isSelected && (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 14px",
+        background: isSelected ? C.accentLight : colors.bg,
+        borderRadius: 12,
+        border: `1.5px solid ${isSelected ? C.accent : colors.border}`,
+        transition: "all 0.15s",
+      }}
+    >
+      {showCheckbox && (
+        canCheck ? (
+          <div
+            onClick={e => { e.preventDefault(); e.stopPropagation(); onToggle?.(person.id); }}
+            style={{
+              width: 20, height: 20, borderRadius: 6,
+              border: `2px solid ${isSelected ? C.accent : C.border}`,
+              background: isSelected ? C.accent : "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0, transition: "all 0.15s", cursor: "pointer",
+            }}
+          >
+            {isSelected && (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
+          </div>
+        ) : (
+          <div className="disabled-check-tip" style={{ position: "relative", flexShrink: 0 }}>
+            <div style={{
+              width: 20, height: 20, borderRadius: 6,
+              border: `2px solid ${C.border}`,
+              background: "#F5F5F4", opacity: 0.5,
+              cursor: "not-allowed",
+            }} />
+          </div>
+        )
+      )}
+      <a
+        href={`/person/${person.id}`}
+        style={{
+          display: "flex", alignItems: "center", gap: 12,
+          flex: 1, minWidth: 0,
+          textDecoration: "none", cursor: "pointer",
+        }}
+      >
+        <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={36} degree={person.degree} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{person.name}</span>
+            <span style={{
+              fontSize: 9, fontWeight: 700, color: "#fff",
+              background: colors.badge, borderRadius: 4,
+              padding: "1px 5px", letterSpacing: 0.3,
+            }}>
+              {DEGREE_LABELS[person.degree]}
+            </span>
+          </div>
+          {subtitle && (
+            <div style={{ fontSize: 12, color: C.ink, fontFamily: FONT, marginTop: 2, opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {subtitle}
+            </div>
           )}
         </div>
-      )}
-      <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={36} degree={person.degree} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{person.name}</span>
-          <span style={{
-            fontSize: 9, fontWeight: 700, color: "#fff",
-            background: colors.badge, borderRadius: 4,
-            padding: "1px 5px", letterSpacing: 0.3,
-          }}>
-            {DEGREE_LABELS[person.degree]}
-          </span>
-        </div>
-        {subtitle && (
-          <div style={{ fontSize: 12, color: C.ink, fontFamily: FONT, marginTop: 2, opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {subtitle}
-          </div>
-        )}
-      </div>
-      {!inAskMode && (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
           <polyline points="9 18 15 12 9 6" />
         </svg>
-      )}
-    </>
-  );
-
-  if (inAskMode) {
-    return (
-      <div
-        onClick={() => onToggle?.(person.id)}
-        style={{
-          display: "flex", alignItems: "center", gap: 12,
-          padding: "10px 14px",
-          background: isSelected ? C.accentLight : colors.bg,
-          borderRadius: 12,
-          border: `1.5px solid ${isSelected ? C.accent : colors.border}`,
-          cursor: "pointer",
-          transition: "all 0.15s",
-        }}
-      >
-        {inner}
-      </div>
-    );
-  }
-
-  return (
-    <a
-      href={`/person/${person.id}`}
-      style={{
-        display: "flex", alignItems: "center", gap: 12,
-        padding: "10px 14px", background: colors.bg,
-        borderRadius: 12, border: `1.5px solid ${colors.border}`,
-        textDecoration: "none", cursor: "pointer",
-        transition: "box-shadow 0.15s",
-      }}
-    >
-      {inner}
-    </a>
+      </a>
+    </div>
   );
 }
 
 // ── People mentioned — avatar strip + expand ─────────────────────────
 
-function PeopleMentioned({ people, inAskMode, selectedPeople, onTogglePerson, style: outerStyle }) {
-  const [expanded, setExpanded] = useState(false);
+function PeopleMentioned({ people, selectedPeople, onTogglePerson, style: outerStyle, defaultExpanded = false, showCheckboxes = false, maxRecipients = 3 }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   if (!people || people.length === 0) return null;
 
-  // In ask mode, only show people who can be asked
-  const askablePeople = inAskMode ? people.filter(p => p.can_ask !== false) : people;
-
-  const showExpanded = expanded || inAskMode;
+  const selectedCount = selectedPeople?.size || 0;
 
   return (
     <div style={outerStyle}>
-      {/* Collapsed avatar strip — hidden in ask mode */}
-      {!inAskMode && (
-        <button
-          onClick={() => setExpanded(e => !e)}
-          style={{
-            display: "flex", alignItems: "center", gap: 0,
-            background: "none", border: "none", cursor: "pointer",
-            padding: "6px 0", fontFamily: FONT,
-          }}
-        >
-          {/* Stacked avatars */}
-          <div style={{ display: "flex", flexShrink: 0 }}>
-            {people.slice(0, 5).map((p, i) => (
-              <div
-                key={p.id}
-                style={{
-                  marginLeft: i === 0 ? 0 : -8,
-                  zIndex: people.length - i,
-                  borderRadius: "50%",
-                  border: "2px solid #fff",
-                  lineHeight: 0,
-                }}
-              >
-                <PhotoAvatar name={p.name} photoUrl={p.photo_url} size={28} degree={p.degree} />
-              </div>
-            ))}
-          </div>
-          <span style={{
-            fontSize: 12, color: C.sub, fontWeight: 500,
-            marginLeft: 10, whiteSpace: "nowrap",
-          }}>
-            {people.length} {people.length === 1 ? "person" : "people"} mentioned
-          </span>
-          <svg
-            width="14" height="14" viewBox="0 0 24 24" fill="none"
-            stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            style={{ marginLeft: 4, flexShrink: 0, transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-      )}
-
-      {/* Ask mode header */}
-      {inAskMode && (
-        <div style={{
-          fontSize: 12, fontWeight: 600, color: C.sub,
-          textTransform: "uppercase", letterSpacing: 0.5,
-          marginBottom: 8,
-        }}>
-          {askablePeople.length > 0
-            ? "Select up to 3 people to message"
-            : "None of the mentioned people are currently accepting asks from your connection degree."
-          }
+      {/* Collapsible header */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: "flex", alignItems: "center", gap: 0,
+          background: "none", border: "none", cursor: "pointer",
+          padding: "6px 0", fontFamily: FONT, width: "100%",
+        }}
+      >
+        {/* Stacked avatars */}
+        <div style={{ display: "flex", flexShrink: 0 }}>
+          {people.slice(0, 5).map((p, i) => (
+            <div
+              key={p.id}
+              style={{
+                marginLeft: i === 0 ? 0 : -8,
+                zIndex: people.length - i,
+                borderRadius: "50%",
+                border: "2px solid transparent",
+                lineHeight: 0,
+              }}
+            >
+              <PhotoAvatar name={p.name} photoUrl={p.photo_url} size={28} degree={p.degree} />
+            </div>
+          ))}
         </div>
-      )}
+        <span style={{
+          fontSize: 12, color: C.sub, fontWeight: 500,
+          marginLeft: 10, whiteSpace: "nowrap",
+        }}>
+          {people.length} {people.length === 1 ? "person" : "people"} mentioned
+          {selectedCount > 0 && ` · ${selectedCount} selected`}
+        </span>
+        <svg
+          width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ marginLeft: 4, flexShrink: 0, transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
 
       {/* Expanded cards */}
-      {showExpanded && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: inAskMode ? 0 : 6 }}>
-          {(inAskMode ? askablePeople : people).map(p => (
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+          {showCheckboxes && selectedCount === 0 && (
+            <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, padding: "0 2px 2px" }}>
+              Select (up to {maxRecipients}) people to draft a message
+            </div>
+          )}
+          {people.map(p => (
             <PersonCard
               key={p.id}
               person={p}
-              inAskMode={inAskMode}
+              showCheckbox={showCheckboxes}
               isSelected={selectedPeople?.has(p.id)}
               onToggle={onTogglePerson}
             />
@@ -458,6 +450,19 @@ function LoginPrompt() {
   );
 }
 
+// ── Responsive hook ──────────────────────────────────────────────────
+
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < breakpoint);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 // ── Main page ──────────────────────────────────────────────────────────
 
 export default function NetworkBrainPage() {
@@ -490,12 +495,19 @@ export default function NetworkBrainPage() {
   const [askId, setAskId] = useState(null);
   const [draftingLoading, setDraftingLoading] = useState(false);
   const [askError, setAskError] = useState(null);
+  const [maxRecipients, setMaxRecipients] = useState(3);
+
+  const isMobile = useIsMobile();
 
   // Group Thread state
   const [threadMode, setThreadMode] = useState(false);
   const [threadTopic, setThreadTopic] = useState("");
   const [threadDraft, setThreadDraft] = useState(null); // { thread_id, creator_token, topic, draft_body, participants }
   const [threadDraftLoading, setThreadDraftLoading] = useState(false);
+
+  // People from the most recent brain response (for right column on desktop)
+  const latestBrainMsg = [...messages].reverse().find(m => m.role === "brain" && m.people?.length > 0);
+  const latestBrainMsgIndex = latestBrainMsg ? messages.indexOf(latestBrainMsg) : -1;
 
   // Auth flow on mount
   useEffect(() => {
@@ -588,6 +600,7 @@ export default function NetworkBrainPage() {
       }
 
       const data = await res.json();
+      if (data.max_recipients) setMaxRecipients(data.max_recipients);
       const answerText = data.answer || "I couldn't generate a response. Try rephrasing your question.";
       setMessages(prev => [...prev, {
         role: "brain",
@@ -619,17 +632,6 @@ export default function NetworkBrainPage() {
   }
 
   // ── Quick Ask handlers ────────────────────────────────────────────
-  function handleEnterAskMode(msgIndex) {
-    setAskMode(msgIndex);
-    setSelectedPeople(new Set());
-    setRecipientContext({});
-    setShowContextStep(false);
-    setDrafts(null);
-    setAskId(null);
-    setAskError(null);
-    setDraftingLoading(false);
-  }
-
   function handleCancelAskMode() {
     setAskMode(null);
     setSelectedPeople(new Set());
@@ -646,13 +648,28 @@ export default function NetworkBrainPage() {
     setThreadDraftLoading(false);
   }
 
-  function handleTogglePerson(personId) {
+  // Auto-enter ask mode on first check, auto-exit when all unchecked
+  function handleCheckboxToggle(personId, msgIndex) {
     setSelectedPeople(prev => {
       const next = new Set(prev);
       if (next.has(personId)) {
         next.delete(personId);
-      } else if (next.size < 3) {
+        if (next.size === 0) {
+          setAskMode(null);
+          setRecipientContext({});
+          setShowContextStep(false);
+          setThreadMode(false);
+          setThreadTopic("");
+        }
+      } else if (next.size < maxRecipients) {
         next.add(personId);
+        if (askMode === null) {
+          setAskMode(msgIndex);
+          setDrafts(null);
+          setAskId(null);
+          setAskError(null);
+          setDraftingLoading(false);
+        }
       }
       return next;
     });
@@ -814,12 +831,19 @@ export default function NetworkBrainPage() {
     <div style={{
       minHeight: "100vh", background: "#000000", fontFamily: FONT,
       display: "flex", flexDirection: "column", alignItems: "center",
-      overflowX: "hidden",
+      overflowX: "clip",
     }}>
+      <style>{`.disabled-check-tip:hover::after {
+        content: "Not accepting messages";
+        position: absolute; left: 50%; top: 28px; transform: translateX(-50%);
+        white-space: nowrap; font-size: 11px; color: #fff; background: #374151;
+        padding: 4px 8px; border-radius: 6px; z-index: 10;
+        pointer-events: none; font-family: ${FONT};
+      }`}</style>
       {/* Fixed header — logo + back/brain branding */}
       <div style={{
         position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)",
-        zIndex: 100, width: "100%", maxWidth: 900,
+        zIndex: 100, width: "100%",
         background: "#FFFFFF", padding: "10px 20px 8px",
         display: "flex", flexDirection: "column", gap: 4,
       }}>
@@ -847,13 +871,13 @@ export default function NetworkBrainPage() {
 
       {/* Main content */}
       <div style={{
-        width: "100%", maxWidth: 900,
+        width: "100%",
         background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
         padding: "0 16px 120px", margin: "80px 0 0",
         minHeight: "calc(100vh - 80px)",
         display: "flex", flexDirection: "column",
       }}>
-        <div style={{ maxWidth: 480, margin: "0 auto", width: "100%", flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{ maxWidth: isMobile ? 480 : 1100, margin: "0 auto", width: "100%", flex: 1, display: "flex", flexDirection: "column" }}>
 
           {/* Checking auth */}
           {authState === "checking" && (
@@ -882,6 +906,8 @@ export default function NetworkBrainPage() {
               </p>
 
               {/* Conversation area */}
+              {isMobile ? (
+              /* ── MOBILE: single-column layout (unchanged) ── */
               <div style={{ flex: 1, paddingTop: 16, paddingBottom: 16 }}>
 
                 {/* Starter chips (only when no messages) */}
@@ -940,89 +966,43 @@ export default function NetworkBrainPage() {
                           }}>
                             {renderMarkdown(msg.text)}
                           </div>
-                          {/* People mentioned + Quick Ask — unified card */}
+                          {/* People mentioned — checkboxes for messaging */}
                           {msg.people?.length > 0 && (
                             <>
-                              {askMode === null && (
-                                <div
-                                  style={{
-                                    marginTop: 12,
-                                    background: "#FAFAF9",
-                                    border: `1.5px solid ${C.border}`,
-                                    borderRadius: 12,
-                                    overflow: "hidden",
-                                  }}
-                                >
-                                  {/* People strip inside the card */}
-                                  <div style={{ padding: "10px 14px" }}>
-                                    <PeopleMentioned
-                                      people={msg.people}
-                                      inAskMode={false}
-                                      selectedPeople={selectedPeople}
-                                      onTogglePerson={handleTogglePerson}
-                                      style={{}}
-                                    />
-                                  </div>
-                                  {/* CTA sub-box */}
-                                  <div
-                                    onClick={() => handleEnterAskMode(i)}
-                                    style={{
-                                      margin: "0 10px 10px",
-                                      padding: "10px 14px",
-                                      background: "linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)",
-                                      border: `1.5px solid #C7D2FE`,
-                                      borderRadius: 8, cursor: "pointer",
-                                      display: "flex", alignItems: "center", gap: 8,
-                                      transition: "all 0.15s",
-                                    }}
-                                    onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 8px rgba(79,70,229,0.12)"; }}
-                                    onMouseLeave={e => { e.currentTarget.style.borderColor = "#C7D2FE"; e.currentTarget.style.boxShadow = "none"; }}
-                                  >
-                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                                      <polyline points="22,6 12,13 2,6" />
-                                    </svg>
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: C.accent, fontFamily: FONT }}>
-                                      Select up to {msg.people.length === 1 ? "1 person" : "3 people"} to message
-                                    </span>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Ask mode: people selection + context + draft controls */}
-                              {askMode === i && !drafts && !threadDraft && (
+                              {!drafts && !threadDraft && (
                                 <div style={{ marginTop: 12 }}>
                                   <PeopleMentioned
                                     people={msg.people}
-                                    inAskMode={true}
-                                    selectedPeople={selectedPeople}
-                                    onTogglePerson={handleTogglePerson}
+                                    showCheckboxes
+                                    maxRecipients={maxRecipients}
+                                    selectedPeople={askMode === i ? selectedPeople : new Set()}
+                                    onTogglePerson={pid => handleCheckboxToggle(pid, i)}
                                     style={{}}
                                   />
-                                <div style={{ marginTop: 10 }}>
-                                  {draftingLoading || threadDraftLoading ? (
-                                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
-                                      <div style={{
-                                        width: 8, height: 8, borderRadius: "50%",
-                                        background: C.accent, animation: "pulse 1.2s infinite",
-                                      }} />
-                                      <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
-                                        {threadDraftLoading ? "Drafting thread outreach..." : "Drafting personalized messages..."}
-                                      </span>
-                                    </div>
-                                  ) : showContextStep ? (
-                                    /* Context step — ask about relationship with 2nd/3rd degree people */
-                                    <div style={{
-                                      background: "#FAFAF9", borderRadius: 12,
-                                      border: `1.5px solid ${C.border}`, padding: "14px 16px",
-                                    }}>
-                                      <div style={{
-                                        fontSize: 12, fontWeight: 700, color: C.sub,
-                                        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
-                                      }}>
-                                        {threadMode
-                                          ? (Object.keys(recipientContext).length > 0 ? "Context + thread topic" : "Set your thread topic")
-                                          : "Quick context for better drafts"}
+                                  {askMode === i && selectedPeople.size > 0 && (
+                                    <div style={{ marginTop: 10 }}>
+                                      {draftingLoading || threadDraftLoading ? (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
+                                          <div style={{
+                                            width: 8, height: 8, borderRadius: "50%",
+                                            background: C.accent, animation: "pulse 1.2s infinite",
+                                          }} />
+                                          <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
+                                            {threadDraftLoading ? "Drafting thread outreach..." : "Drafting personalized messages..."}
+                                          </span>
+                                        </div>
+                                      ) : showContextStep ? (
+                                        <div style={{
+                                          background: "#FAFAF9", borderRadius: 12,
+                                          border: `1.5px solid ${C.border}`, padding: "14px 16px",
+                                        }}>
+                                          <div style={{
+                                            fontSize: 12, fontWeight: 700, color: C.sub,
+                                            textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
+                                          }}>
+                                            {threadMode
+                                              ? (Object.keys(recipientContext).length > 0 ? "Context + thread topic" : "Set your thread topic")
+                                              : "Quick context for better drafts"}
                                       </div>
                                       {Object.keys(recipientContext).map(pid => {
                                         const person = (msg.people || []).find(p => p.id === Number(pid));
@@ -1115,7 +1095,6 @@ export default function NetworkBrainPage() {
                                           </div>
                                         );
                                       })}
-                                      {/* Thread topic input */}
                                       {threadMode && (
                                         <div style={{ marginBottom: 12, marginTop: Object.keys(recipientContext).length > 0 ? 8 : 0 }}>
                                           <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
@@ -1186,29 +1165,17 @@ export default function NetworkBrainPage() {
                                   ) : (
                                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                       <button
-                                        onClick={handleCancelAskMode}
-                                        style={{
-                                          padding: "8px 14px", background: "#F5F5F4",
-                                          color: C.sub, border: `1px solid ${C.border}`,
-                                          borderRadius: 8, fontSize: 13, fontWeight: 600,
-                                          fontFamily: FONT, cursor: "pointer",
-                                        }}
-                                      >
-                                        Cancel
-                                      </button>
-                                      <button
                                         onClick={handleProceedToContext}
-                                        disabled={selectedPeople.size === 0}
                                         style={{
                                           padding: "8px 16px",
-                                          background: selectedPeople.size > 0 ? C.accent : "#C7D2FE",
+                                          background: C.accent,
                                           color: "#fff", border: "none", borderRadius: 8,
                                           fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                                          cursor: selectedPeople.size > 0 ? "pointer" : "not-allowed",
+                                          cursor: "pointer",
                                           transition: "background 0.15s",
                                         }}
                                       >
-                                        {selectedPeople.size > 1 ? `Draft emails for review (${selectedPeople.size})` : `Draft email for review (${selectedPeople.size})`}
+                                        {selectedPeople.size > 1 ? `Draft emails (${selectedPeople.size})` : "Draft email"}
                                       </button>
                                       {selectedPeople.size >= 2 && (
                                         <button
@@ -1236,32 +1203,37 @@ export default function NetworkBrainPage() {
                                       {askError}
                                     </div>
                                   )}
-                                </div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
                               {/* Draft review panel */}
                               {askMode === i && drafts && (
-                                <QuickAskDraftPanel
-                                  drafts={drafts}
-                                  setDrafts={setDrafts}
-                                  askId={askId}
-                                  onDone={handleAskDone}
-                                  onCancel={handleCancelAskMode}
-                                />
+                                <div style={{ marginTop: 12 }}>
+                                  <QuickAskDraftPanel
+                                    drafts={drafts}
+                                    setDrafts={setDrafts}
+                                    askId={askId}
+                                    onDone={handleAskDone}
+                                    onCancel={handleCancelAskMode}
+                                  />
+                                </div>
                               )}
 
                               {/* Thread draft review panel */}
                               {askMode === i && threadDraft && (
-                                <ThreadDraftPanel
-                                  threadId={threadDraft.thread_id}
-                                  creatorToken={threadDraft.creator_token}
-                                  topic={threadDraft.topic}
-                                  draftBody={threadDraft.draft_body}
-                                  participants={threadDraft.participants}
-                                  onDone={handleAskDone}
-                                  onCancel={handleCancelAskMode}
-                                />
+                                <div style={{ marginTop: 12 }}>
+                                  <ThreadDraftPanel
+                                    threadId={threadDraft.thread_id}
+                                    creatorToken={threadDraft.creator_token}
+                                    topic={threadDraft.topic}
+                                    draftBody={threadDraft.draft_body}
+                                    participants={threadDraft.participants}
+                                    onDone={handleAskDone}
+                                    onCancel={handleCancelAskMode}
+                                  />
+                                </div>
                               )}
                             </>
                           )}
@@ -1386,18 +1358,488 @@ export default function NetworkBrainPage() {
 
                 <div ref={bottomRef} />
               </div>
+              ) : (
+              /* ── DESKTOP: two-column layout ── */
+              <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flex: 1, paddingTop: 16, paddingBottom: 16 }}>
+                {/* LEFT COLUMN — conversation */}
+                <div style={{ flex: 2, minWidth: 0, display: "flex", flexDirection: "column" }}>
+
+                  {/* Starter chips (only when no messages) */}
+                  {messages.length === 0 && !loading && (
+                    <div style={{ paddingTop: 20 }}>
+                      <div style={{ fontSize: 12, color: C.sub, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>
+                        Try asking
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {STARTER_QUESTIONS.map((q, qi) => (
+                          <button
+                            key={qi}
+                            onClick={() => askQuestion(q)}
+                            style={{
+                              display: "block", width: "100%", textAlign: "left",
+                              padding: "12px 16px",
+                              background: "#FFFFFF", border: `1.5px solid ${C.border}`,
+                              borderRadius: 12, fontSize: 14, color: C.ink,
+                              fontFamily: FONT, cursor: "pointer",
+                              transition: "border-color 0.15s, box-shadow 0.15s",
+                            }}
+                            onMouseEnter={e => { e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 2px 8px rgba(79,70,229,0.1)"; }}
+                            onMouseLeave={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "none"; }}
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Messages — text only, people/ask UI moves to right column */}
+                  {messages.map((msg, i) => {
+                    const isLastBrain = msg.role === "brain" && i === messages.length - 1;
+                    return (
+                      <div key={i} ref={isLastBrain ? lastBrainRef : undefined} style={{ marginBottom: 16 }}>
+                        {msg.role === "user" ? (
+                          /* User question bubble */
+                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <div style={{
+                              background: C.accent, color: "#fff",
+                              padding: "10px 16px", borderRadius: "16px 16px 4px 16px",
+                              fontSize: 14, lineHeight: 1.5, fontFamily: FONT,
+                              maxWidth: "85%",
+                            }}>
+                              {msg.text}
+                            </div>
+                          </div>
+                        ) : (
+                          /* Brain answer — text only on desktop */
+                          <div>
+                            <div style={{
+                              background: "#FFFFFF", border: `1px solid ${C.border}`,
+                              padding: "16px 18px", borderRadius: "4px 16px 16px 16px",
+                              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                            }}>
+                              {renderMarkdown(msg.text)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Pre-vouch nudge (after Brain results) */}
+                  {user && !user.has_vouched && messages.length > 0 && !loading && (
+                    <div style={{
+                      background: "linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)",
+                      border: `1.5px solid #C7D2FE`, borderRadius: 12,
+                      padding: "14px 16px", marginBottom: 16,
+                    }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 10 }}>
+                        Liked that? Vouching for your best colleagues grows your network and makes the Brain even better for you.
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <select
+                          id="brain-function-select-desktop"
+                          defaultValue=""
+                          style={{
+                            flex: 1, padding: "9px 12px", fontSize: 16, fontFamily: FONT,
+                            borderRadius: 8, border: `1.5px solid rgba(0,0,0,0.2)`,
+                            background: "#fff", color: C.ink, appearance: "none",
+                            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                            backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center",
+                            paddingRight: 28, cursor: "pointer",
+                          }}
+                        >
+                          <option value="" disabled>Choose a function…</option>
+                          {[
+                            { id: 15, name: "Clinicians", slug: "clinicians" },
+                            { id: 16, name: "Coaches", slug: "coaches" },
+                            { id: 17, name: "Communications / PR", slug: "communications" },
+                            { id: 18, name: "Consultants", slug: "consultants" },
+                            { id: 10, name: "Customer Success", slug: "customer-success" },
+                            { id: 6, name: "Data / Analytics", slug: "data" },
+                            { id: 5, name: "Design (Product/UX)", slug: "design" },
+                            { id: 19, name: "Educators", slug: "educators" },
+                            { id: 1, name: "Engineering", slug: "engineering" },
+                            { id: 11, name: "Executive", slug: "executive" },
+                            { id: 7, name: "Finance / Accounting", slug: "finance" },
+                            { id: 20, name: "Founders", slug: "founders" },
+                            { id: 14, name: "General Management", slug: "general-management" },
+                            { id: 21, name: "Generalists", slug: "generalists" },
+                            { id: 12, name: "Investor", slug: "investor" },
+                            { id: 13, name: "Legal", slug: "legal" },
+                            { id: 3, name: "Marketing", slug: "marketing" },
+                            { id: 8, name: "Operations", slug: "operations" },
+                            { id: 9, name: "People / HR", slug: "people-hr" },
+                            { id: 22, name: "People Managers", slug: "people-managers" },
+                            { id: 2, name: "Product Management", slug: "product" },
+                            { id: 4, name: "Sales", slug: "sales" },
+                            { id: 23, name: "Strategists", slug: "strategists" },
+                          ].map(jf => (
+                            <option key={jf.id} value={JSON.stringify(jf)}>{jf.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={async () => {
+                            const sel = document.getElementById("brain-function-select-desktop");
+                            if (!sel.value) return;
+                            const jf = JSON.parse(sel.value);
+                            try {
+                              const controller = new AbortController();
+                              const timeout = setTimeout(() => controller.abort(), 15000);
+                              const res = await fetch("/api/start-vouch", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                credentials: "include",
+                                body: JSON.stringify({ jobFunctionId: jf.id }),
+                                signal: controller.signal,
+                              });
+                              clearTimeout(timeout);
+                              const data = await res.json();
+                              if (!res.ok) throw new Error(data.error || "Failed");
+                              window.location.href = `/vouch?token=${data.token}&ready=1`;
+                            } catch (err) {
+                              alert(err.message);
+                              try {
+                                fetch('/api/client-error', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  credentials: 'include',
+                                  body: JSON.stringify({
+                                    message: err.message, stack: err.stack,
+                                    context: 'brain_page_start_vouch',
+                                    url: window.location.href, userAgent: navigator.userAgent,
+                                  }),
+                                }).catch(() => {})
+                              } catch {}
+                            }
+                          }}
+                          style={{
+                            padding: "9px 16px", background: C.accent, color: "#fff",
+                            border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                            fontFamily: FONT, cursor: "pointer", whiteSpace: "nowrap",
+                          }}
+                        >
+                          Vouch →
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Loading indicator */}
+                  {loading && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
+                      <div style={{
+                        width: 8, height: 8, borderRadius: "50%",
+                        background: C.accent, animation: "pulse 1.2s infinite",
+                      }} />
+                      <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
+                        Thinking about your network — this usually takes about 10 seconds...
+                      </span>
+                      <style>{`@keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }`}</style>
+                    </div>
+                  )}
+
+                  <div ref={bottomRef} />
+                </div>
+
+                {/* RIGHT COLUMN — people & ask UI from latest brain message */}
+                <div style={{ flex: 1, minWidth: 0, position: "sticky", top: 96, alignSelf: "flex-start" }}>
+                  {latestBrainMsg && latestBrainMsg.people?.length > 0 ? (
+                    <>
+                      {/* People cards with always-visible checkboxes */}
+                      {!drafts && !threadDraft && (
+                        <div>
+                          <PeopleMentioned
+                            people={latestBrainMsg.people}
+                            showCheckboxes
+                            maxRecipients={maxRecipients}
+                            selectedPeople={selectedPeople}
+                            onTogglePerson={pid => handleCheckboxToggle(pid, latestBrainMsgIndex)}
+                            defaultExpanded
+                            style={{}}
+                          />
+                        {selectedPeople.size > 0 && <div style={{ marginTop: 10 }}>
+                          {draftingLoading || threadDraftLoading ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
+                              <div style={{
+                                width: 8, height: 8, borderRadius: "50%",
+                                background: C.accent, animation: "pulse 1.2s infinite",
+                              }} />
+                              <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
+                                {threadDraftLoading ? "Drafting thread outreach..." : "Drafting personalized messages..."}
+                              </span>
+                            </div>
+                          ) : showContextStep ? (
+                            /* Context step — ask about relationship with 2nd/3rd degree people */
+                            <div style={{
+                              background: "#FAFAF9", borderRadius: 12,
+                              border: `1.5px solid ${C.border}`, padding: "14px 16px",
+                            }}>
+                              <div style={{
+                                fontSize: 12, fontWeight: 700, color: C.sub,
+                                textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
+                              }}>
+                                {threadMode
+                                  ? (Object.keys(recipientContext).length > 0 ? "Context + thread topic" : "Set your thread topic")
+                                  : "Quick context for better drafts"}
+                              </div>
+                              {Object.keys(recipientContext).map(pid => {
+                                const person = (latestBrainMsg.people || []).find(p => p.id === Number(pid));
+                                if (!person) return null;
+                                const ctx = recipientContext[pid];
+                                const personFirst = person.name.split(" ")[0];
+                                const intermediaryFirst = ctx.intermediary_name?.split(" ")[0];
+                                return (
+                                  <div key={pid} style={{ marginBottom: 14 }}>
+                                    {ctx.intermediary_name && (
+                                      <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginBottom: 8 }}>
+                                        Connected to {personFirst} via <strong style={{ color: C.ink }}>{ctx.intermediary_name}</strong>
+                                      </div>
+                                    )}
+                                    <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
+                                      Do you already know {personFirst}?
+                                    </div>
+                                    <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                                      {[
+                                        { label: "No", val: false },
+                                        { label: "Yes", val: true },
+                                      ].map(opt => (
+                                        <button
+                                          key={opt.label}
+                                          onClick={() => setRecipientContext(prev => ({
+                                            ...prev,
+                                            [pid]: { ...prev[pid], knows_them: opt.val, relationship: opt.val ? prev[pid]?.relationship || "" : "" },
+                                          }))}
+                                          style={{
+                                            padding: "5px 14px",
+                                            background: ctx.knows_them === opt.val ? (opt.val ? C.accent : "#6B7280") : "#fff",
+                                            color: ctx.knows_them === opt.val ? "#fff" : C.sub,
+                                            border: `1.5px solid ${ctx.knows_them === opt.val ? (opt.val ? C.accent : "#6B7280") : C.border}`,
+                                            borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                            fontFamily: FONT, cursor: "pointer",
+                                            transition: "all 0.15s",
+                                          }}
+                                        >
+                                          {opt.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    {ctx.knows_them && (
+                                      <input
+                                        type="text"
+                                        value={ctx.relationship}
+                                        onChange={e => setRecipientContext(prev => ({
+                                          ...prev,
+                                          [pid]: { ...prev[pid], relationship: e.target.value },
+                                        }))}
+                                        placeholder={`How do you know ${personFirst}? (e.g., worked together at Acme)`}
+                                        style={{
+                                          width: "100%", padding: "8px 10px",
+                                          fontSize: 16, fontFamily: FONT, color: C.ink,
+                                          background: "#fff", border: `1.5px solid ${C.border}`,
+                                          borderRadius: 6, boxSizing: "border-box",
+                                          WebkitAppearance: "none",
+                                          transition: "border-color 0.15s",
+                                        }}
+                                        onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                        onBlur={e => { e.target.style.borderColor = C.border; }}
+                                      />
+                                    )}
+                                    {!ctx.knows_them && intermediaryFirst && (
+                                      <>
+                                        <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6, marginTop: 10 }}>
+                                          How do you know {intermediaryFirst}?
+                                        </div>
+                                        <input
+                                          type="text"
+                                          value={ctx.intermediary_context}
+                                          onChange={e => setRecipientContext(prev => ({
+                                            ...prev,
+                                            [pid]: { ...prev[pid], intermediary_context: e.target.value },
+                                          }))}
+                                          placeholder={`e.g., ${intermediaryFirst} and I worked together at Google`}
+                                          style={{
+                                            width: "100%", padding: "8px 10px",
+                                            fontSize: 16, fontFamily: FONT, color: C.ink,
+                                            background: "#fff", border: `1.5px solid ${C.border}`,
+                                            borderRadius: 6, boxSizing: "border-box",
+                                            WebkitAppearance: "none",
+                                            transition: "border-color 0.15s",
+                                          }}
+                                          onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                          onBlur={e => { e.target.style.borderColor = C.border; }}
+                                        />
+                                      </>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {/* Thread topic input */}
+                              {threadMode && (
+                                <div style={{ marginBottom: 12, marginTop: Object.keys(recipientContext).length > 0 ? 8 : 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
+                                    Thread topic
+                                  </div>
+                                  <input
+                                    value={threadTopic}
+                                    onChange={e => setThreadTopic(e.target.value)}
+                                    placeholder="e.g., Exploring health tech opportunities"
+                                    style={{
+                                      width: "100%", padding: "8px 10px",
+                                      fontSize: 16, fontFamily: FONT, color: C.ink,
+                                      background: "#fff", border: `1.5px solid ${C.border}`,
+                                      borderRadius: 6, boxSizing: "border-box",
+                                      WebkitAppearance: "none",
+                                      transition: "border-color 0.15s",
+                                    }}
+                                    onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                    onBlur={e => { e.target.style.borderColor = C.border; }}
+                                  />
+                                </div>
+                              )}
+                              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                                <button
+                                  onClick={() => {
+                                    if (threadMode) { setThreadMode(false); setThreadTopic(""); }
+                                    setShowContextStep(false); setRecipientContext({});
+                                  }}
+                                  style={{
+                                    padding: "8px 14px", background: "#F5F5F4",
+                                    color: C.sub, border: `1px solid ${C.border}`,
+                                    borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                    fontFamily: FONT, cursor: "pointer",
+                                  }}
+                                >
+                                  Back
+                                </button>
+                                {threadMode ? (
+                                  <button
+                                    onClick={handleDraftThread}
+                                    disabled={!threadTopic.trim()}
+                                    style={{
+                                      padding: "8px 16px",
+                                      background: threadTopic.trim() ? C.accent : "#C7D2FE",
+                                      color: "#fff", border: "none", borderRadius: 8,
+                                      fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                      cursor: threadTopic.trim() ? "pointer" : "not-allowed",
+                                      transition: "background 0.15s",
+                                    }}
+                                  >
+                                    Draft thread outreach
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={handleDraftMessages}
+                                    style={{
+                                      padding: "8px 16px", background: C.accent,
+                                      color: "#fff", border: "none", borderRadius: 8,
+                                      fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                      cursor: "pointer", transition: "background 0.15s",
+                                    }}
+                                  >
+                                    Draft email for review
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                              <button
+                                onClick={handleProceedToContext}
+                                style={{
+                                  padding: "8px 16px",
+                                  background: C.accent,
+                                  color: "#fff", border: "none", borderRadius: 8,
+                                  fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                  cursor: "pointer",
+                                  transition: "background 0.15s",
+                                }}
+                              >
+                                {selectedPeople.size > 1 ? `Draft emails (${selectedPeople.size})` : "Draft email"}
+                              </button>
+                              {selectedPeople.size >= 2 && (
+                                <button
+                                  onClick={handleStartThreadMode}
+                                  style={{
+                                    padding: "8px 16px",
+                                    background: "linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)",
+                                    color: "#7C3AED", border: "1px solid #C4B5FD",
+                                    borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                    fontFamily: FONT, cursor: "pointer",
+                                    transition: "all 0.15s",
+                                  }}
+                                >
+                                  Start a group thread ({selectedPeople.size})
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {askError && (
+                            <div style={{
+                              marginTop: 8, padding: "8px 12px",
+                              background: "#FEF2F2", borderRadius: 8,
+                              fontSize: 13, color: "#DC2626", fontFamily: FONT,
+                            }}>
+                              {askError}
+                            </div>
+                          )}
+                        </div>}
+                        </div>
+                      )}
+
+                      {/* Draft review panel */}
+                      {askMode === latestBrainMsgIndex && drafts && (
+                        <QuickAskDraftPanel
+                          drafts={drafts}
+                          setDrafts={setDrafts}
+                          askId={askId}
+                          onDone={handleAskDone}
+                          onCancel={handleCancelAskMode}
+                        />
+                      )}
+
+                      {/* Thread draft review panel */}
+                      {askMode === latestBrainMsgIndex && threadDraft && (
+                        <ThreadDraftPanel
+                          threadId={threadDraft.thread_id}
+                          creatorToken={threadDraft.creator_token}
+                          topic={threadDraft.topic}
+                          draftBody={threadDraft.draft_body}
+                          participants={threadDraft.participants}
+                          onDone={handleAskDone}
+                          onCancel={handleCancelAskMode}
+                        />
+                      )}
+                    </>
+                  ) : messages.length > 0 && !loading ? (
+                    /* Empty state — no people mentioned */
+                    <div style={{
+                      background: "#FAFAF9", borderRadius: 12,
+                      border: `1.5px solid ${C.border}`, padding: "24px 18px",
+                      textAlign: "center", fontSize: 13, color: C.sub, fontFamily: FONT,
+                    }}>
+                      People mentioned in answers will appear here
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              )}
 
               {/* Fixed input bar */}
               <div style={{
                 position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
-                width: "100%", maxWidth: 900,
+                width: "100%",
                 background: "linear-gradient(0deg, #DDD0F0 0%, #DDD0F0 80%, transparent 100%)",
                 padding: "24px 16px 24px",
               }}>
+                <div style={{
+                  maxWidth: isMobile ? 480 : 1100, margin: "0 auto",
+                  display: isMobile ? "block" : "flex", gap: 24,
+                }}>
                 <form
                   onSubmit={handleSubmit}
                   style={{
-                    display: "flex", gap: 8, maxWidth: 480, margin: "0 auto",
+                    display: "flex", gap: 8, flex: isMobile ? undefined : 2, minWidth: 0,
                   }}
                 >
                   <input
@@ -1436,6 +1878,8 @@ export default function NetworkBrainPage() {
                     <SendIcon />
                   </button>
                 </form>
+                {!isMobile && <div style={{ flex: 1, minWidth: 0 }} />}
+                </div>
               </div>
             </>
           )}

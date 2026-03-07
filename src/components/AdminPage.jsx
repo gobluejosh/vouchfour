@@ -466,13 +466,13 @@ export default function AdminPage() {
   if (!authed) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
-        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", maxWidth: 900, background: "#FFFFFF", padding: "12px 20px" }}>
+        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>
           <span style={{ fontSize: 12, color: C.sub, marginLeft: 10, fontFamily: FONT }}>Admin</span>
         </div>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div style={{ paddingTop: 40 }}>
@@ -529,13 +529,13 @@ export default function AdminPage() {
   return (
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
       {/* Fixed logo bar */}
-      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", maxWidth: 900, background: "#FFFFFF", padding: "12px 20px" }}>
+      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
         <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
           Vouch<span style={{ color: C.accent }}>Four</span>
         </a>
         <span style={{ fontSize: 12, color: C.sub, marginLeft: 10, fontFamily: FONT }}>Admin</span>
       </div>
-      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+      <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
         <div style={{ maxWidth: 540, margin: "0 auto" }}>
 

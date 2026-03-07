@@ -517,7 +517,6 @@ export default function EnrichmentReviewPage() {
         transform: "translateX(-50%)",
         zIndex: 100,
         width: "100%",
-        maxWidth: 900,
         background: "#FFFFFF",
         padding: "12px 20px",
         display: "flex",
@@ -573,7 +572,6 @@ export default function EnrichmentReviewPage() {
         <div
           style={{
             width: "100%",
-            maxWidth: 900,
             background:
               "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
             padding: "0 16px 120px",
@@ -662,7 +660,6 @@ export default function EnrichmentReviewPage() {
       <div
         style={{
           width: "100%",
-          maxWidth: 900,
           background:
             "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
           padding: "0 16px 120px",

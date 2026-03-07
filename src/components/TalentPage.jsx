@@ -16,6 +16,19 @@ const C = {
 
 const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
+function useIsMobile(breakpoint = 768) {
+  const [mobile, setMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < breakpoint : true
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e) => setMobile(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return mobile;
+}
+
 const DEGREE_LABELS = { 1: "1st", 2: "2nd", 3: "3rd" };
 const DEGREE_COLORS = {
   1: { bg: "#EEF2FF", border: "#A5B4FC", badge: "linear-gradient(135deg, #6366F1, #4F46E5)" },
@@ -113,8 +126,9 @@ function TalentCard({ talent }) {
       onClick={() => capture("talent_card_clicked", { person_id: talent.id, degree: talent.degree, is_cross_function: talent.is_cross_function })}
       style={{
         display: "flex", alignItems: "center", gap: 12,
-        padding: "12px 14px", background: colors.bg,
-        borderRadius: 12, border: `1.5px solid ${colors.border}`,
+        padding: "12px 14px", background: "#FFFFFF",
+        borderRadius: 12, border: `1px solid ${C.border}`,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
         textDecoration: "none", cursor: "pointer",
         transition: "box-shadow 0.15s",
       }}
@@ -149,7 +163,7 @@ function TalentCard({ talent }) {
   );
 }
 
-function VouchStatusCard({ vouches, vouchToken, shareToken, label }) {
+function VouchStatusCard({ vouches, vouchToken, shareToken, label, dropdown }) {
   const [expanded, setExpanded] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const responded = vouches.filter(v => v.inviteStatus === "completed").length;
@@ -160,36 +174,23 @@ function VouchStatusCard({ vouches, vouchToken, shareToken, label }) {
       background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
       padding: "14px 18px", marginTop: 24,
     }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>
+        Vouch Invite Status{label ? ` — ${label}` : ""}
+      </div>
+      {dropdown && <div style={{ marginTop: 10 }}>{dropdown}</div>}
       <div
         onClick={() => setExpanded(e => !e)}
         style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
-          cursor: "pointer", userSelect: "none",
+          cursor: "pointer", userSelect: "none", marginTop: 10,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
-            Your vouches{label ? ` — ${label}` : ""}
-          </div>
           <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT }}>
             {responded} of {vouches.length} responded
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {vouchToken && (
-            <a
-              href={`/vouch?token=${vouchToken}`}
-              onClick={e => e.stopPropagation()}
-              style={{
-                fontSize: 12, color: C.accent, fontWeight: 600,
-                textDecoration: "none", fontFamily: FONT,
-                background: C.accentLight, padding: "4px 12px", borderRadius: 6,
-                border: `1px solid ${C.chipBorder}`,
-              }}
-            >
-              Edit
-            </a>
-          )}
           <svg
             width="16" height="16" viewBox="0 0 24 24" fill="none"
             stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -229,10 +230,18 @@ function VouchStatusCard({ vouches, vouchToken, shareToken, label }) {
               )}
             </div>
           ))}
+          {vouchToken && (
+            <a
+              href={`/vouch?token=${vouchToken}`}
+              style={{ fontSize: 12, color: C.accent, fontFamily: FONT, marginTop: 8, display: "block", textAlign: "right" }}
+            >
+              Edit vouches →
+            </a>
+          )}
           {inviteLink && (
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
-              padding: "8px 10px", marginTop: 4,
+              padding: "8px 10px", marginTop: 8,
               background: "#F9FAFB", borderRadius: 8,
               border: `1px solid ${C.border}`,
             }}>
@@ -382,6 +391,8 @@ export default function TalentPage() {
   const [visibleCount, setVisibleCount] = useState(10);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [feedItems, setFeedItems] = useState([]);
+  const [vouchFunction, setVouchFunction] = useState(null);
 
   // Auth flow on mount
   useEffect(() => {
@@ -438,8 +449,19 @@ export default function TalentPage() {
         setMyVouches(data.myVouches || {});
         setVouchTokens(data.vouchTokens || {});
         setActiveJobFunctions(data.activeJobFunctions || []);
-        setReachableFunctions(data.reachableFunctions || data.activeJobFunctions || []);
+        const rf = data.reachableFunctions || data.activeJobFunctions || [];
+        setReachableFunctions(rf);
         setAvailableJobFunctions(data.availableJobFunctions || []);
+        if (!activeFunction) {
+          const mv = data.myVouches || {};
+          const slugsWithVouches = Object.keys(mv).filter(s => mv[s]?.vouches?.length > 0);
+          const sorted = slugsWithVouches.sort((a, b) => {
+            const la = (rf.find(f => f.slug === a)?.practitionerLabel || a).toLowerCase();
+            const lb = (rf.find(f => f.slug === b)?.practitionerLabel || b).toLowerCase();
+            return la.localeCompare(lb);
+          });
+          if (sorted.length > 0) setVouchFunction(sorted[0]);
+        }
         if (data.shareToken) setShareToken(data.shareToken);
 
         if (data.user?.id) identify(data.user.id, { name: data.user.name });
@@ -453,6 +475,16 @@ export default function TalentPage() {
       .finally(() => setLoading(false));
   }, [authState, slug, activeFunction]);
 
+  // Fetch What's New feed
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    fetch("/api/feed", { credentials: "include" })
+      .then(res => res.ok ? res.json() : { items: [] })
+      .then(data => setFeedItems(data.items || []))
+      .catch(() => {});
+  }, [authState]);
+
+  const isMobile = useIsMobile();
   const firstName = user?.name?.split(" ")[0] || "";
   const fullName = user?.name || "";
 
@@ -463,16 +495,16 @@ export default function TalentPage() {
   const currentVouchToken = displayedFunctionSlug ? vouchTokens[displayedFunctionSlug] : null;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
+    <div style={{ minHeight: "100vh", background: "#FFFFFF", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
       {/* Fixed logo bar */}
-      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", maxWidth: 900, background: "#FFFFFF", padding: "12px 20px" }}>
+      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
         <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
           Vouch<span style={{ color: C.accent }}>Four</span>
         </a>
       </div>
-      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+      <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
-        <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 12 }}>
+        <div style={{ maxWidth: isMobile ? 480 : 1100, margin: "0 auto", paddingTop: 12 }}>
 
           {/* Checking auth — show heading + shimmers */}
           {authState === "checking" && (
@@ -510,29 +542,24 @@ export default function TalentPage() {
           )}
 
           {/* Authenticated — talent network */}
-          {authState === "authenticated" && !error && (
-            <>
-              {/* User card */}
+          {authState === "authenticated" && !error && (() => {
+            /* ---- Shared blocks ---- */
+            const userCard = (
               <a
                 href={user?.id ? `/person/${user.id}` : "#"}
                 onClick={() => capture("own_profile_clicked", { source: "talent_page" })}
                 style={{
                   display: "flex", alignItems: "center", gap: 14,
                   padding: "14px 16px", marginBottom: 20,
-                  background: "linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)",
-                  borderRadius: 14, border: `1.5px solid #C7D2FE`,
+                  background: "#FFFFFF",
+                  borderRadius: 14, border: `1px solid ${C.border}`,
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                   textDecoration: "none", cursor: "pointer",
                 }}
               >
-                <PhotoAvatar
-                  name={fullName}
-                  photoUrl={user?.photo_url}
-                  size={48}
-                />
+                <PhotoAvatar name={fullName} photoUrl={user?.photo_url} size={48} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>
-                    {fullName}
-                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>{fullName}</div>
                   {(user?.current_title || user?.current_company) && (
                     <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.3, marginTop: 2 }}>
                       {[user.current_title, user.current_company].filter(Boolean).join(" at ")}
@@ -546,236 +573,259 @@ export default function TalentPage() {
                 </div>
                 <ChevronRightIcon />
               </a>
+            );
 
-              {/* Network Brain prompt */}
-              {!loading && talent.length > 0 && (
+            const brainForm = (
+              <form
+                onSubmit={e => {
+                  e.preventDefault();
+                  const q = e.target.elements.brainQ.value.trim();
+                  capture("brain_cta_clicked", { source: "talent_page", has_query: !!q });
+                  window.location.href = q ? `/brain?q=${encodeURIComponent(q)}` : "/brain";
+                }}
+                style={{ display: "flex", gap: 6 }}
+              >
+                <input
+                  name="brainQ"
+                  placeholder="Ask anything about your network..."
+                  autoComplete="off"
+                  style={{
+                    flex: 1, padding: isMobile ? "12px 14px" : "14px 16px", fontSize: isMobile ? 16 : 17, fontFamily: FONT,
+                    color: C.ink, background: isMobile ? "#fff" : "#F9FAFB", border: `1.5px solid ${C.border}`,
+                    borderRadius: 10, WebkitAppearance: "none",
+                    transition: "border-color 0.15s, box-shadow 0.15s",
+                  }}
+                  onFocus={e => { e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(37,99,235,0.12)"; e.target.style.background = "#fff"; }}
+                  onBlur={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "none"; e.target.style.background = isMobile ? "#fff" : "#F9FAFB"; }}
+                />
+                <button type="submit" style={{
+                  padding: "10px 16px", background: C.accent, border: "none", borderRadius: 10,
+                  cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff",
+                }}>
+                  <BrainIcon size={18} />
+                </button>
+              </form>
+            );
+
+            const brainPrompt = !loading && talent.length > 0 ? (
+              isMobile ? (
                 <div style={{ marginBottom: 16 }}>
                   <a href="/brain" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 8, textDecoration: "none" }}>
-                    <div style={{ color: C.accent, display: "flex", alignItems: "center" }}>
-                      <BrainIcon size={14} />
-                    </div>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: C.accent, fontFamily: FONT }}>
-                      Network Brain
-                    </span>
+                    <div style={{ color: C.accent, display: "flex", alignItems: "center" }}><BrainIcon size={14} /></div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: C.accent, fontFamily: FONT }}>Network Brain</span>
                   </a>
-                  <form
-                    onSubmit={e => {
-                      e.preventDefault();
-                      const q = e.target.elements.brainQ.value.trim();
-                      capture("brain_cta_clicked", { source: "talent_page", has_query: !!q });
-                      if (q) {
-                        window.location.href = `/brain?q=${encodeURIComponent(q)}`;
-                      } else {
-                        window.location.href = "/brain";
-                      }
-                    }}
-                    style={{ display: "flex", gap: 6 }}
-                  >
-                    <input
-                      name="brainQ"
-                      placeholder="Ask anything about your network..."
-                      autoComplete="off"
-                      style={{
-                        flex: 1, padding: "12px 14px",
-                        fontSize: 16, fontFamily: FONT,
-                        color: C.ink, background: "#fff",
-                        border: `1.5px solid ${C.border}`,
-                        borderRadius: 10,
-                        WebkitAppearance: "none",
-                        transition: "border-color 0.15s, box-shadow 0.15s",
-                      }}
-                      onFocus={e => { e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(37,99,235,0.12)"; }}
-                      onBlur={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "none"; }}
-                    />
-                    <button
-                      type="submit"
-                      style={{
-                        padding: "10px 12px",
-                        background: C.accent, border: "none", borderRadius: 10,
-                        cursor: "pointer", flexShrink: 0,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        color: "#fff",
-                      }}
-                    >
-                      <BrainIcon size={18} />
-                    </button>
-                  </form>
+                  {brainForm}
                 </div>
-              )}
+              ) : (
+                <div
+                  onClick={() => { window.location.href = "/brain"; }}
+                  style={{
+                    background: "#EEF2FF", borderRadius: 14, padding: "28px 28px",
+                    border: `1px solid #C7D2FE`, boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                    marginBottom: 16, cursor: "pointer",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                    <div style={{ color: C.accent, display: "flex", alignItems: "center" }}><BrainIcon size={18} /></div>
+                    <span style={{ fontSize: 17, fontWeight: 700, color: C.ink, fontFamily: FONT, flex: 1 }}>Network Brain</span>
+                    <ChevronRightIcon />
+                  </div>
+                  <div onClick={e => e.stopPropagation()}>
+                    {brainForm}
+                  </div>
+                </div>
+              )
+            ) : null;
 
-              {/* Job function filter */}
-              {!loading && reachableFunctions.length === 1 && (
-                <div style={{ marginBottom: 20 }}>
-                  <select
-                    disabled
-                    style={{
-                      width: "100%", padding: "10px 14px",
-                      fontSize: 16, fontFamily: FONT, fontWeight: 600,
-                      border: `1.5px solid ${C.accent}`,
-                      borderRadius: 10, color: C.accent,
+            const feedItemLabel = (item) => {
+              if (item.type === "vouch") return <><b>{item.subject.name}</b> was vouched for by {item.actor.name}</>;
+              if (item.type === "ask") return <><b>{item.actor.name}</b> sent you an Ask</>;
+              if (item.type === "thread") return <><b>{item.actor.name}</b> posted in {item.topic}</>;
+              return "";
+            };
+
+            const feedAvatar = (item) => {
+              if (item.type === "vouch") return { name: item.subject.name, photo: item.subject.photo_url };
+              return { name: item.actor.name, photo: item.actor.photo_url };
+            };
+
+            const whatsNew = (
+              <div style={{
+                background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+                border: `1px solid ${C.border}`, boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                marginBottom: 16,
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, marginBottom: feedItems.length ? 12 : 4 }}>What's New</div>
+                {feedItems.length === 0 ? (
+                  <div style={{ fontSize: 13, color: C.sub }}>Activity from your network will appear here.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {feedItems.slice(0, 5).map((item, i) => {
+                      const av = feedAvatar(item);
+                      return (
+                        <a
+                          key={i}
+                          href={item.type === "vouch" ? `/person/${item.subject.id}` : item.type === "thread" ? `/thread/${item.access_token}` : undefined}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit",
+                            padding: "6px 10px", borderRadius: 10, background: "#F9FAFB",
+                            transition: "background 0.15s",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = "#F3F4F6"}
+                          onMouseLeave={e => e.currentTarget.style.background = "#F9FAFB"}
+                        >
+                          <PhotoAvatar name={av.name} photoUrl={av.photo} size={28} />
+                          <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.ink, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {feedItemLabel(item)}
+                          </div>
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+
+            const functionDropdown = (
+              <>
+                {!loading && reachableFunctions.length === 1 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <select disabled style={{
+                      width: "100%", padding: "10px 14px", fontSize: 16, fontFamily: FONT, fontWeight: 600,
+                      border: `1.5px solid ${C.accent}`, borderRadius: 10, color: C.accent,
                       background: C.accentLight, cursor: "default",
                       WebkitAppearance: "none", appearance: "none",
                       backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%234F46E5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                      backgroundRepeat: "no-repeat",
-                      backgroundPosition: "right 14px center",
-                    }}
-                  >
-                    <option>{reachableFunctions[0].practitionerLabel || reachableFunctions[0].name}</option>
-                  </select>
-                </div>
-              )}
-              {!loading && reachableFunctions.length >= 2 && (
-                <div style={{
-                  marginBottom: 20, borderRadius: 12, padding: 2,
-                  background: "linear-gradient(135deg, #6366F1, #EC4899)",
-                }}>
-                  <select
-                    value={activeFunction || ""}
-                    onChange={e => {
-                      const val = e.target.value || null;
-                      setActiveFunction(val);
-                      setVisibleCount(10);
-                      capture("talent_filter_changed", { function_filter: val || "all" });
-                    }}
-                    style={{
-                      width: "100%", padding: "10px 14px",
-                      fontSize: 16, fontFamily: FONT, fontWeight: 600,
-                      border: "none",
-                      borderRadius: 10, color: C.ink,
-                      background: "#fff", cursor: "pointer",
-                      WebkitAppearance: "none", appearance: "none",
-                      backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                      backgroundRepeat: "no-repeat",
-                      backgroundPosition: "right 14px center",
-                    }}
-                  >
-                    <option value="">All functions</option>
-                    {reachableFunctions.map(jf => (
-                      <option key={jf.slug} value={jf.slug}>
-                        {jf.practitionerLabel || jf.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* Shimmer placeholders while loading */}
-              {loading && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {[0, 1, 2, 3, 4].map(i => (
-                    <div key={i} style={{
-                      height: 62, borderRadius: 12,
-                      background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)",
-                      backgroundSize: "200% 100%",
-                      animation: `shimmer 1.2s ${i * 0.15}s infinite`,
-                    }} />
-                  ))}
-                  <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
-                </div>
-              )}
-
-              {/* Empty state */}
-              {!loading && talent.length === 0 && (
-                <div style={{
-                  background: C.accentLight, borderRadius: 12, padding: "16px 18px",
-                  border: `1px solid ${C.chipBorder}`,
-                }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, marginBottom: 4 }}>
-                    No recommendations yet
+                      backgroundRepeat: "no-repeat", backgroundPosition: "right 14px center",
+                    }}>
+                      <option>{reachableFunctions[0].practitionerLabel || reachableFunctions[0].name}</option>
+                    </select>
                   </div>
-                  <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: 0 }}>
-                    Ask your all-time best colleagues for recommendations by selecting a function in the box below.
-                  </p>
-                </div>
-              )}
-
-              {/* Talent list */}
-              {!loading && talent.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {talent.slice(0, visibleCount).map((t) => (
-                    <TalentCard key={t.id} talent={t} />
-                  ))}
-                  {talent.length > visibleCount && (
-                    <a
-                      href="#"
-                      onClick={e => { e.preventDefault(); setVisibleCount(v => v + 10); }}
+                )}
+                {!loading && reachableFunctions.length >= 2 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <select
+                      value={activeFunction || ""}
+                      onChange={e => {
+                        const val = e.target.value || null;
+                        setActiveFunction(val);
+                        setVisibleCount(10);
+                        capture("talent_filter_changed", { function_filter: val || "all" });
+                      }}
                       style={{
-                        display: "block", textAlign: "center",
-                        fontSize: 14, color: C.accent, fontWeight: 600,
-                        fontFamily: FONT, textDecoration: "none",
-                        padding: "8px 0", marginTop: 4,
+                        width: "100%", padding: "10px 14px", fontSize: 16, fontFamily: FONT, fontWeight: 600,
+                        border: `1.5px solid ${C.border}`, borderRadius: 10, color: C.ink, background: "#fff", cursor: "pointer",
+                        WebkitAppearance: "none", appearance: "none",
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                        backgroundRepeat: "no-repeat", backgroundPosition: "right 14px center",
                       }}
                     >
-                      Show more ({talent.length - visibleCount} remaining)
-                    </a>
-                  )}
-                </div>
-              )}
-
-              {/* Per-function vouch status (collapsed by default, hidden in "All" view) */}
-              {activeFunction !== null && currentVouches.length > 0 && (
-                <VouchStatusCard
-                  vouches={currentVouches}
-                  vouchToken={currentVouchToken}
-                  shareToken={shareToken}
-                  label={displayedFunctionSlug && reachableFunctions.length > 1
-                    ? (reachableFunctions.find(f => f.slug === displayedFunctionSlug)?.practitionerLabel || "")
-                    : ""}
-                />
-              )}
-              {/* Single-function user: show vouch status when there's only one reachable function */}
-              {activeFunction === null && reachableFunctions.length === 1 && currentVouches.length > 0 && (
-                <VouchStatusCard
-                  vouches={currentVouches}
-                  vouchToken={currentVouchToken}
-                  shareToken={shareToken}
-                  label=""
-                />
-              )}
-
-              {/* Keep building CTA */}
-              {availableJobFunctions.length > 0 && (
-                <div style={{
-                  borderRadius: 16, padding: 2, marginTop: 24,
-                  background: "linear-gradient(135deg, #6366F1, #EC4899)",
-                  boxShadow: "0 12px 40px rgba(99,102,241,0.20), 0 4px 16px rgba(236,72,153,0.12)",
-                }}>
-                <div style={{
-                  background: "#fff", borderRadius: 14,
-                  padding: "16px 18px",
-                }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 4 }}>
-                    Keep building your network
+                      <option value="">Filter Your Network</option>
+                      {reachableFunctions.map(jf => (
+                        <option key={jf.slug} value={jf.slug}>{jf.practitionerLabel || jf.name}</option>
+                      ))}
+                    </select>
                   </div>
-                  <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>
-                    Which function should we work on next?
-                  </p>
+                )}
+              </>
+            );
+
+            const shimmerPlaceholders = loading ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {[0, 1, 2, 3, 4].map(i => (
+                  <div key={i} style={{
+                    height: 62, borderRadius: 12,
+                    background: "linear-gradient(90deg, #c0ddd0 25%, #b7d4c7 50%, #c0ddd0 75%)",
+                    backgroundSize: "200% 100%", animation: `shimmer 1.2s ${i * 0.15}s infinite`,
+                  }} />
+                ))}
+                <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+              </div>
+            ) : null;
+
+            const emptyState = !loading && talent.length === 0 ? (
+              <div style={{ background: C.accentLight, borderRadius: 12, padding: "16px 18px", border: `1px solid ${C.chipBorder}` }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, marginBottom: 4 }}>No recommendations yet</div>
+                <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: 0 }}>
+                  Ask your all-time best colleagues for recommendations by selecting a function in the box below.
+                </p>
+              </div>
+            ) : null;
+
+            const talentList = !loading && talent.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {talent.slice(0, visibleCount).map((t) => (
+                  <TalentCard key={t.id} talent={t} />
+                ))}
+                {talent.length > visibleCount && (
+                  <a href="#" onClick={e => { e.preventDefault(); setVisibleCount(v => v + 10); }}
+                    style={{ display: "block", textAlign: "center", fontSize: 14, color: C.accent, fontWeight: 600, fontFamily: FONT, textDecoration: "none", padding: "8px 0", marginTop: 4 }}>
+                    Show more ({talent.length - visibleCount} remaining)
+                  </a>
+                )}
+              </div>
+            ) : null;
+
+            const vouchFunctionSlugs = Object.keys(myVouches)
+              .filter(s => myVouches[s]?.vouches?.length > 0)
+              .sort((a, b) => {
+                const la = (reachableFunctions.find(f => f.slug === a)?.practitionerLabel || a).toLowerCase();
+                const lb = (reachableFunctions.find(f => f.slug === b)?.practitionerLabel || b).toLowerCase();
+                return la.localeCompare(lb);
+              });
+            const vouchVouches = vouchFunction ? (myVouches[vouchFunction]?.vouches || []) : [];
+            const vouchToken = vouchFunction ? vouchTokens[vouchFunction] : null;
+
+            const vouchDropdown = vouchFunctionSlugs.length >= 2 ? (
+              <select
+                value={vouchFunction || ""}
+                onChange={e => setVouchFunction(e.target.value)}
+                style={{
+                  width: "100%", padding: "10px 14px", fontSize: 14, fontFamily: FONT,
+                  color: C.ink, background: "#fff", border: `1.5px solid ${C.border}`,
+                  borderRadius: 10, WebkitAppearance: "none", MozAppearance: "none",
+                  appearance: "none", cursor: "pointer",
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
+                  backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center",
+                }}
+              >
+                {vouchFunctionSlugs.map(slug => (
+                  <option key={slug} value={slug}>
+                    {reachableFunctions.find(f => f.slug === slug)?.practitionerLabel || slug}
+                  </option>
+                ))}
+              </select>
+            ) : null;
+
+            const vouchStatus = vouchFunctionSlugs.length === 0 || vouchVouches.length === 0 ? null : (
+              <VouchStatusCard vouches={vouchVouches} vouchToken={vouchToken} shareToken={shareToken} label="" dropdown={vouchDropdown} />
+            );
+
+            const keepBuildingCTA = availableJobFunctions.length > 0 ? (
+              <div style={{
+                borderRadius: 14, marginTop: 24, marginBottom: 16,
+                background: isMobile ? "#F5F3FF" : "#FFFFFF", border: `1px solid ${isMobile ? "#E9E5F5" : C.border}`,
+                boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                padding: "16px 18px",
+              }}>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 4 }}>Keep Building Your Network</div>
+                  <p style={{ fontSize: 13, color: C.sub, lineHeight: 1.5, margin: "0 0 14px" }}>Which function should we work on next?</p>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    <select
-                      value={selectedNextFn}
-                      onChange={e => setSelectedNextFn(e.target.value)}
+                    <select value={selectedNextFn} onChange={e => setSelectedNextFn(e.target.value)}
                       style={{
-                        flex: "1 1 200px", minWidth: 0, padding: "10px 12px",
-                        fontSize: 14, fontFamily: FONT,
-                        border: `1.5px solid ${C.border}`,
-                        borderRadius: 10, color: selectedNextFn ? C.ink : C.sub,
-                        background: "#fff", cursor: "pointer",
-                        WebkitAppearance: "none", appearance: "none",
+                        flex: "1 1 200px", minWidth: 0, padding: "10px 12px", fontSize: 14, fontFamily: FONT,
+                        border: `1.5px solid ${C.border}`, borderRadius: 10, color: selectedNextFn ? C.ink : C.sub,
+                        background: "#fff", cursor: "pointer", WebkitAppearance: "none", appearance: "none",
                         backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: "no-repeat",
-                        backgroundPosition: "right 12px center",
-                        paddingRight: 32,
+                        backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center", paddingRight: 32,
                       }}
                     >
                       <option value="" disabled>Select a function</option>
                       {availableJobFunctions.map(jf => (
-                        <option key={jf.id} value={jf.id}>
-                          {jf.practitionerLabel || jf.name}
-                        </option>
+                        <option key={jf.id} value={jf.id}>{jf.practitionerLabel || jf.name}</option>
                       ))}
                     </select>
-                    <button
-                      disabled={!selectedNextFn || startingVouch}
+                    <button disabled={!selectedNextFn || startingVouch}
                       onClick={async () => {
                         if (!selectedNextFn || startingVouch) return;
                         setStartingVouch(true);
@@ -783,10 +833,8 @@ export default function TalentPage() {
                           const controller = new AbortController();
                           const timeout = setTimeout(() => controller.abort(), 15000);
                           const res = await fetch("/api/start-vouch", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            credentials: "include",
-                            body: JSON.stringify({ jobFunctionId: Number(selectedNextFn) }),
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            credentials: "include", body: JSON.stringify({ jobFunctionId: Number(selectedNextFn) }),
                             signal: controller.signal,
                           });
                           clearTimeout(timeout);
@@ -798,16 +846,9 @@ export default function TalentPage() {
                           setStartingVouch(false);
                           try {
                             fetch('/api/client-error', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
+                              method: 'POST', headers: { 'Content-Type': 'application/json' },
                               credentials: 'include',
-                              body: JSON.stringify({
-                                message: err.message,
-                                stack: err.stack,
-                                context: 'talent_page_start_vouch',
-                                url: window.location.href,
-                                userAgent: navigator.userAgent,
-                              }),
+                              body: JSON.stringify({ message: err.message, stack: err.stack, context: 'talent_page_start_vouch', url: window.location.href, userAgent: navigator.userAgent }),
                             }).catch(() => {})
                           } catch {}
                         }
@@ -824,29 +865,58 @@ export default function TalentPage() {
                       {startingVouch ? "..." : "Let's go"}
                     </button>
                   </div>
-                </div>
-                </div>
-              )}
+              </div>
+            ) : null;
 
-              {/* If no available functions but also no active ones, show generic CTA */}
-              {!loading && availableJobFunctions.length === 0 && activeJobFunctions.length === 0 && (
-                <div style={{
-                  background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
-                  padding: "16px 18px", marginTop: 24,
-                  textAlign: "center",
-                }}>
-                  <a href="/start-vouch" style={{
-                    display: "inline-block", padding: "10px 22px",
-                    background: C.accent, color: "#fff", borderRadius: 10,
-                    fontSize: 14, fontWeight: 600, textDecoration: "none",
-                    fontFamily: FONT,
-                  }}>
-                    Start Vouching
-                  </a>
+            const genericCTA = !loading && availableJobFunctions.length === 0 && activeJobFunctions.length === 0 ? (
+              <div style={{
+                background: "#FFFFFF", borderRadius: 14, border: `1.5px solid ${C.border}`,
+                padding: "16px 18px", marginTop: 24, textAlign: "center",
+              }}>
+                <a href="/start-vouch" style={{
+                  display: "inline-block", padding: "10px 22px", background: C.accent, color: "#fff",
+                  borderRadius: 10, fontSize: 14, fontWeight: 600, textDecoration: "none", fontFamily: FONT,
+                }}>Start Vouching</a>
+              </div>
+            ) : null;
+
+            /* ---- Layout ---- */
+            if (isMobile) {
+              return (
+                <>
+                  {userCard}
+                  {brainPrompt}
+                  {functionDropdown}
+                  {shimmerPlaceholders}
+                  {emptyState}
+                  {talentList}
+                  {vouchStatus}
+                  {keepBuildingCTA}
+                  {whatsNew}
+                  {genericCTA}
+                </>
+              );
+            }
+
+            return (
+              <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+                <div style={{ flex: 2, minWidth: 0 }}>
+                  {userCard}
+                  {brainPrompt}
+                  {keepBuildingCTA}
+                  {whatsNew}
+                  {vouchStatus}
+                  {genericCTA}
                 </div>
-              )}
-            </>
-          )}
+                <div style={{ flex: 1, minWidth: 0, position: "sticky", top: 76, alignSelf: "flex-start" }}>
+                  {functionDropdown}
+                  {shimmerPlaceholders}
+                  {emptyState}
+                  {talentList}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Footer */}
           <p style={{

@@ -380,6 +380,9 @@ export default function HomePage() {
             if (data.jobFunction) {
               sessionStorage.setItem("vouchfour_jobFunction", JSON.stringify(data.jobFunction));
             }
+            if (data.vouchToken) {
+              sessionStorage.setItem("vouchfour_vouchToken", data.vouchToken);
+            }
             window.history.replaceState({}, "", window.location.pathname);
           }
         })
@@ -391,7 +394,12 @@ export default function HomePage() {
           if (res.ok) return res.json();
           throw new Error("No session");
         })
-        .then(data => setUser(data.user))
+        .then(data => {
+          setUser(data.user);
+          if (data.inviterName) sessionStorage.setItem("vouchfour_inviterName", data.inviterName);
+          if (data.jobFunction) sessionStorage.setItem("vouchfour_jobFunction", JSON.stringify(data.jobFunction));
+          if (data.vouchToken) sessionStorage.setItem("vouchfour_vouchToken", data.vouchToken);
+        })
         .catch(() => {})
         .finally(() => setSessionChecked(true));
     }
@@ -433,7 +441,7 @@ export default function HomePage() {
       {/* Fixed logo bar */}
       <div style={{
         position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100,
-        width: "100%", maxWidth: 900,
+        width: "100%",
         background: "#FFFFFF",
         padding: "12px 20px",
       }}>
@@ -443,7 +451,7 @@ export default function HomePage() {
       </div>
 
       <div style={{
-        width: "100%", maxWidth: 900,
+        width: "100%",
         background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 40px",
         borderRadius: 0, margin: "56px 0 0",
         minHeight: "calc(100vh - 56px)",

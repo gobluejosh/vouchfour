@@ -209,7 +209,7 @@ export default function ThreadPage() {
         display: "flex", flexDirection: "column", alignItems: "center",
       }}>
         <div style={{
-          width: "100%", maxWidth: 900,
+          width: "100%",
           background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
           minHeight: "100vh", padding: "80px 16px",
         }}>
@@ -236,7 +236,7 @@ export default function ThreadPage() {
         display: "flex", flexDirection: "column", alignItems: "center",
       }}>
         <div style={{
-          width: "100%", maxWidth: 900,
+          width: "100%",
           background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
           minHeight: "100vh", padding: "80px 16px",
         }}>
@@ -263,7 +263,7 @@ export default function ThreadPage() {
       {/* Fixed header */}
       <div style={{
         position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)",
-        zIndex: 100, width: "100%", maxWidth: 900,
+        zIndex: 100, width: "100%",
         background: "#FFFFFF", padding: "10px 20px 10px",
         borderBottom: `1px solid ${C.border}`,
       }}>
@@ -298,7 +298,7 @@ export default function ThreadPage() {
 
       {/* Main content */}
       <div style={{
-        width: "100%", maxWidth: 900,
+        width: "100%",
         background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
         padding: "80px 16px 140px",
         minHeight: "100vh",
@@ -367,7 +367,7 @@ export default function ThreadPage() {
       {/* Fixed reply input */}
       <div style={{
         position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
-        width: "100%", maxWidth: 900,
+        width: "100%",
         background: "linear-gradient(0deg, #DDD0F0 0%, #DDD0F0 80%, transparent 100%)",
         padding: "24px 16px 24px",
       }}>

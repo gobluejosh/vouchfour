@@ -915,12 +915,12 @@ export default function App() {
   if (tokenLoading) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
-        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", maxWidth: 900, background: "#FFFFFF", padding: "12px 20px" }}>
+        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>
         </div>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
           <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
             <div style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
@@ -951,12 +951,12 @@ export default function App() {
   if (token && tokenError) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
-        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", maxWidth: 900, background: "#FFFFFF", padding: "12px 20px" }}>
+        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>
         </div>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
           <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center", paddingTop: 40 }}>
             <div style={{ fontSize: 17, fontWeight: 600, color: C.ink }}>Invalid Invite</div>
             <div style={{ marginTop: 8, fontSize: 14, color: C.sub }}>{tokenError}</div>
@@ -981,12 +981,12 @@ export default function App() {
 
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
-        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", maxWidth: 900, background: "#FFFFFF", padding: "12px 20px" }}>
+        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
           <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
             Vouch<span style={{ color: C.accent }}>Four</span>
           </a>
         </div>
-        <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
           <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
             <div style={{ fontSize: 24, fontWeight: 700, color: C.ink, marginBottom: 12, lineHeight: 1.3 }}>
@@ -1013,7 +1013,7 @@ export default function App() {
                         : <><strong>{activeVoucheeNames.join(" and ")}</strong> are already on VouchFour, so they're all set.</>}
                     </p>
                     <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
-                      Share this invite with {totalVouchees - activeVoucheeNames.length === 1 ? "the other person" : "the others"} you recommended so they can access their network:
+                      So, just share your invite with {totalVouchees - activeVoucheeNames.length === 1 ? "the other person" : "the others"} you recommended via whatever method is easiest for you:
                     </p>
                     <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
                   </>
@@ -1201,14 +1201,14 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
 
       {/* Fixed logo bar */}
-      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", maxWidth: 900, background: "#FFFFFF", padding: "12px 20px" }}>
+      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
         <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
           Vouch<span style={{ color: C.accent }}>Four</span>
         </a>
       </div>
 
       {/* Phone-width container */}
-      <div style={{ width: "100%", maxWidth: 900, background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+      <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
 
        <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
         <div style={{ marginBottom: 20 }}>

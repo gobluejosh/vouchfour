@@ -159,9 +159,7 @@ function PathAvatar({ name, photoUrl, size = 24 }) {
   );
 }
 
-function RecommendationPath({ path, degree, degreeMismatch, canAsk, personFirstName, askOpen, onAskClick, gives, givesFreeText }) {
-  const [givesExpanded, setGivesExpanded] = useState(false);
-  const hasGives = (gives && gives.length > 0) || givesFreeText;
+function RecommendationPath({ path, degree, degreeMismatch, personFirstName, userOverlap }) {
   if (!path || path.length < 2) return null;
 
   const degreeLabel = degree != null ? (DEGREE_LABELS[degree] || `${degree}°`) : null;
@@ -169,13 +167,18 @@ function RecommendationPath({ path, degree, degreeMismatch, canAsk, personFirstN
 
   return (
     <div style={{
-      marginTop: 14, marginBottom: 8,
       background: "#FAFAF9", border: `1px solid ${C.border}`,
-      borderRadius: 10, padding: "10px 14px",
+      borderRadius: 10, padding: "10px 14px", marginBottom: 16,
     }}>
       <div style={{
+        fontSize: 12, fontWeight: 700, color: C.sub,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 14,
+      }}>
+        You & {personFirstName}
+      </div>
+      <div style={{
         fontSize: 10, fontWeight: 700, color: C.sub,
-        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
       }}>
         Recommendation Pathway
       </div>
@@ -234,62 +237,21 @@ function RecommendationPath({ path, degree, degreeMismatch, canAsk, personFirstN
           {degreeLabel} degree by forward recommendation
         </div>
       )}
-      {canAsk && !askOpen && (
-        <button
-          onClick={onAskClick}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            padding: "6px 12px", marginTop: 10,
-            background: "#FFFFFF", border: `1.5px solid ${C.border}`,
-            borderRadius: 7, fontSize: 12, fontWeight: 600,
-            color: C.accent, fontFamily: FONT, cursor: "pointer",
-            transition: "all 0.15s",
-          }}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-            <polyline points="22,6 12,13 2,6" />
-          </svg>
-          Ask {personFirstName}
-        </button>
-      )}
-      {/* Gives section — collapsible, only if person has gives */}
-      {hasGives && (
-        <div style={{ marginTop: canAsk ? 8 : 10 }}>
-          <button
-            onClick={() => setGivesExpanded(e => !e)}
-            style={{
-              display: "flex", alignItems: "center", gap: 5,
-              background: "none", border: "none", cursor: "pointer",
-              padding: "4px 0", fontFamily: FONT,
-            }}
-          >
-            <svg
-              width="12" height="12" viewBox="0 0 24 24" fill="none"
-              stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-              style={{ transition: "transform 0.2s", transform: givesExpanded ? "rotate(180deg)" : "rotate(0deg)" }}
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-            <span style={{ fontSize: 12, fontWeight: 600, color: C.sub }}>
-              {personFirstName} Gives
-            </span>
-          </button>
-          {givesExpanded && (
-            <div style={{ paddingLeft: 4, marginTop: 4 }}>
-              <ul style={{
-                margin: 0, paddingLeft: 18,
-                fontSize: 12, color: C.ink, fontFamily: FONT,
-                lineHeight: 1.7, listStyleType: "disc",
-              }}>
-                {(gives || []).map(key => {
-                  const gt = GIVE_TYPES.find(g => g.key === key);
-                  return <li key={key}>{gt ? gt.label : key}</li>;
-                })}
-                {givesFreeText && <li>{givesFreeText}</li>}
-              </ul>
+      {userOverlap?.length > 0 && (
+        <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, color: C.sub,
+            textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
+          }}>
+            Career Overlap
+          </div>
+          {userOverlap.map((overlap, i) => (
+            <div key={i} style={{
+              fontSize: 12, color: C.ink, fontFamily: FONT, lineHeight: 1.6,
+            }}>
+              {overlap.organization} · {formatOverlapDate(overlap.overlap_start)} – {formatOverlapDate(overlap.overlap_end)}
             </div>
-          )}
+          ))}
         </div>
       )}
     </div>
@@ -1300,10 +1262,159 @@ function CareerHistoryEditForm({ person, employmentHistory, onSave, onCancel }) 
   );
 }
 
+// ── Career Overlap Widgets ─────────────────────────────────────────────
+
+function parseDate(dateStr) {
+  if (!dateStr) return null;
+  // Handle both "2010-06-01" and "2010-06-01T04:00:00.000Z"
+  return new Date(dateStr.length === 10 ? dateStr + "T00:00:00" : dateStr);
+}
+
+function formatOverlapDate(dateStr) {
+  const d = parseDate(dateStr);
+  if (!d) return "?";
+  return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+function formatRolePeriod(role) {
+  const startD = parseDate(role.start_date);
+  const start = startD ? startD.getFullYear() : "?";
+  const end = role.is_current ? "Present" : (parseDate(role.end_date)?.getFullYear() || "?");
+  return `${start}–${end}`;
+}
+
+function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onAskClick, isSelf, onEditPrefs }) {
+  return (
+    <div style={{
+      background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+      border: `1px solid ${C.border}`, marginBottom: 16,
+      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: C.sub,
+          textTransform: "uppercase", letterSpacing: 0.5,
+        }}>
+          Gives & Asks
+        </div>
+        {isSelf && (
+          <button
+            onClick={onEditPrefs}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              background: "none", border: "none", cursor: "pointer",
+              fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT,
+              padding: "2px 6px", borderRadius: 4,
+            }}
+          >
+            <PencilIcon size={11} /> Preferences
+          </button>
+        )}
+      </div>
+      {canAsk && !askOpen && (
+        <button
+          onClick={onAskClick}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "6px 12px", marginBottom: 12,
+            background: "#FFFFFF", border: `1.5px solid ${C.border}`,
+            borderRadius: 7, fontSize: 12, fontWeight: 600,
+            color: C.accent, fontFamily: FONT, cursor: "pointer",
+            transition: "all 0.15s",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+            <polyline points="22,6 12,13 2,6" />
+          </svg>
+          Ask {personFirstName}
+        </button>
+      )}
+      {((gives && gives.length > 0) || givesFreeText) && (<>
+        <ul style={{
+          margin: 0, paddingLeft: 18,
+          fontSize: 13, color: C.ink, fontFamily: FONT,
+          lineHeight: 1.8, listStyleType: "disc",
+        }}>
+          {(gives || []).map(key => {
+            const gt = GIVE_TYPES.find(g => g.key === key);
+            return <li key={key}>{gt ? gt.label : key}</li>;
+          })}
+          {givesFreeText && <li>{givesFreeText}</li>}
+        </ul>
+      </>)}
+    </div>
+  );
+}
+
+function NetworkOverlapWidget({ networkOverlap, personFirstName }) {
+  // Filter to 1st & 2nd degree only, then drop empty groups
+  const filtered = (networkOverlap || [])
+    .map(group => ({ ...group, people: group.people.filter(p => p.degree <= 2) }))
+    .filter(group => group.people.length > 0);
+  if (!filtered.length) return null;
+  return (
+    <div style={{
+      background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+      border: `1px solid ${C.border}`, marginBottom: 16,
+      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    }}>
+      <div style={{
+        fontSize: 12, fontWeight: 700, color: C.sub,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
+      }}>
+        Your Network at {personFirstName}'s Companies
+      </div>
+      {filtered.map((group, i) => (
+        <div key={i} style={{
+          ...(i > 0 ? { borderTop: `1px solid ${C.border}`, marginTop: 12, paddingTop: 12 } : {}),
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 8 }}>
+            {group.organization}
+          </div>
+          {group.people.map(person => (
+            <div key={person.id} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              marginBottom: 6, cursor: "pointer",
+            }} onClick={() => { window.location.href = `/person/${person.id}`; }}>
+              <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={28} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                    {person.name}
+                  </span>
+                  <DegreeBadge degree={person.degree} />
+                </div>
+                {person.title_at_org && (
+                  <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 1 }}>
+                    {person.title_at_org}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main PersonPage ────────────────────────────────────────────────────
+
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < breakpoint);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return isMobile;
+}
 
 export default function PersonPage() {
   const personId = Number(window.location.pathname.split("/person/")[1]) || 0;
+  const isMobile = useIsMobile();
 
   const [authState, setAuthState] = useState("checking");
   const [authSlug, setAuthSlug] = useState(null);
@@ -1330,6 +1441,7 @@ export default function PersonPage() {
   const [askJustCompleted, setAskJustCompleted] = useState(false);
   const [myThreads, setMyThreads] = useState(null); // fetched for self-view only
   const [showThreads, setShowThreads] = useState(false);
+  const [showAllThreads, setShowAllThreads] = useState(false);
   // New thread creation from profile
   const [newThreadOpen, setNewThreadOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1339,6 +1451,7 @@ export default function PersonPage() {
   const [threadTopic, setThreadTopic] = useState("");
   const [threadDraftLoading, setThreadDraftLoading] = useState(false);
   const [threadDraft, setThreadDraft] = useState(null); // { threadId, creatorToken, topic, draftBody, participants }
+  const [overlapData, setOverlapData] = useState(null);
 
   // Auth flow
   useEffect(() => {
@@ -1407,6 +1520,15 @@ export default function PersonPage() {
       .then(d => { if (d) setMyThreads(d.threads); })
       .catch(() => {});
   }, [data?.is_self]);
+
+  // Fetch career overlap data (not for self-view)
+  useEffect(() => {
+    if (!data || data.is_self) return;
+    fetch(`/api/person/${personId}/career-overlap`, { credentials: "include" })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => { if (d) setOverlapData(d); })
+      .catch(() => {});
+  }, [data?.is_self, personId]);
 
   // Auto-open reply mode if ?reply_to= param present
   // Fetches the original message context, then creates a blank reply draft
@@ -1617,7 +1739,7 @@ export default function PersonPage() {
       {/* Fixed logo bar */}
       <div style={{
         position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)",
-        zIndex: 100, width: "100%", maxWidth: 900,
+        zIndex: 100, width: "100%",
         background: "#FFFFFF", padding: "12px 20px",
       }}>
         <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
@@ -1627,12 +1749,12 @@ export default function PersonPage() {
 
       {/* Main content */}
       <div style={{
-        width: "100%", maxWidth: 900,
+        width: "100%",
         background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
         padding: "0 16px 80px", margin: "52px 0 0",
         minHeight: "calc(100vh - 52px)",
       }}>
-        <div style={{ maxWidth: 480, margin: "0 auto", width: "100%" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%", padding: "0 8px" }}>
 
           {/* Checking auth */}
           {authState === "checking" && (
@@ -1724,14 +1846,6 @@ export default function PersonPage() {
                   </div>
                 </div>
 
-                {/* Recommendation pathway box (includes Ask button) */}
-                <RecommendationPath
-                  path={data.vouch_path} degree={data.degree} degreeMismatch={data.degree_mismatch}
-                  canAsk={canAsk} personFirstName={personFirstName} askOpen={askOpen}
-                  onAskClick={() => setAskOpen(true)}
-                  gives={person.gives} givesFreeText={person.gives_free_text}
-                />
-
                 {/* Action buttons (self-view only) */}
                 {data.is_self && !editingProfile && !editingPreferences && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1747,236 +1861,444 @@ export default function PersonPage() {
                     >
                       <PencilIcon size={12} /> Edit Profile
                     </button>
-                    <button
-                      onClick={() => { setEditingPreferences(true); capture("preferences_opened"); }}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 5,
-                        padding: "8px 14px",
-                        background: "#FFFFFF", border: `1.5px solid ${C.border}`,
-                        borderRadius: 8, fontSize: 13, fontWeight: 600,
-                        color: C.sub, fontFamily: FONT, cursor: "pointer",
-                      }}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="3" />
-                        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-                      </svg>
-                      Gives & Asks
-                    </button>
-                    {myThreads !== null && (
-                      <button
-                        onClick={() => setShowThreads(v => !v)}
-                        style={{
-                          display: "inline-flex", alignItems: "center", gap: 5,
-                          padding: "8px 14px",
-                          background: showThreads ? "#F5F3FF" : "#FFFFFF",
-                          border: `1.5px solid ${showThreads ? "#C4B5FD" : C.border}`,
-                          borderRadius: 8, fontSize: 13, fontWeight: 600,
-                          color: showThreads ? "#7C3AED" : C.sub,
-                          fontFamily: FONT, cursor: "pointer",
-                          transition: "all 0.15s",
-                        }}
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                        </svg>
-                        Group Threads{myThreads.length > 0 ? ` (${myThreads.length})` : ""}
-                      </button>
-                    )}
                   </div>
                 )}
               </div>
 
-              {/* Group Threads (revealed by button) */}
-              {showThreads && myThreads && (
-                <div style={{
-                  background: "#FFFFFF", borderRadius: 14,
-                  padding: "16px 18px", marginBottom: 16,
-                  border: `1px solid ${C.border}`,
-                }}>
-                  {/* Header with + button */}
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    marginBottom: 12,
-                  }}>
-                    <div style={{
-                      fontSize: 11, fontWeight: 700, color: C.sub, fontFamily: FONT,
-                      textTransform: "uppercase", letterSpacing: 0.5,
-                    }}>
-                      Group Threads
-                    </div>
-                    {!newThreadOpen && !threadDraft && (
-                      <button
-                        onClick={() => setNewThreadOpen(true)}
-                        title="New thread"
-                        style={{
-                          width: 26, height: 26, borderRadius: 7,
-                          background: "#F5F3FF", border: "1px solid #C4B5FD",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          cursor: "pointer", transition: "all 0.15s",
-                          padding: 0,
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = "#EDE9FE"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="12" y1="5" x2="12" y2="19" />
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
+              {/* ── Layout: two-column (desktop) / flat (mobile) ── */}
+              {isMobile ? (
+                /* ── MOBILE: flat list, custom card order ── */
+                <div>
 
-                  {/* New thread creation panel */}
-                  {newThreadOpen && !threadDraft && (
+                  {/* You & Name */}
+                  {!data.is_self && (
+                    <RecommendationPath
+                      path={data.vouch_path} degree={data.degree} degreeMismatch={data.degree_mismatch}
+                      personFirstName={personFirstName}
+                      userOverlap={overlapData?.user_overlap}
+                    />
+                  )}
+
+                  {/* Threads card */}
+                  {data.is_self && myThreads && (
                     <div style={{
-                      background: "#FAFAF9", borderRadius: 12,
+                      background: "#FFFFFF", borderRadius: 14,
+                      padding: "16px 18px", marginBottom: 16,
+                      border: `1px solid ${C.border}`,
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                    }}>
+                      {/* Header with + button */}
+                      <div style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        marginBottom: 12,
+                      }}>
+                        <div style={{
+                          fontSize: 12, fontWeight: 700, color: C.sub, fontFamily: FONT,
+                          textTransform: "uppercase", letterSpacing: 0.5,
+                        }}>
+                          Group Threads
+                        </div>
+                        {!newThreadOpen && !threadDraft && (
+                          <button
+                            onClick={() => setNewThreadOpen(true)}
+                            title="New thread"
+                            style={{
+                              width: 26, height: 26, borderRadius: 7,
+                              background: "#F5F3FF", border: "1px solid #C4B5FD",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              cursor: "pointer", transition: "all 0.15s",
+                              padding: 0,
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = "#EDE9FE"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <line x1="12" y1="5" x2="12" y2="19" />
+                              <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* New thread creation panel */}
+                      {newThreadOpen && !threadDraft && (
+                        <div style={{
+                          background: "#FAFAF9", borderRadius: 12,
+                          border: `1.5px solid ${C.accent}`, padding: "14px 16px",
+                          marginBottom: myThreads.length > 0 ? 12 : 0,
+                        }}>
+                          <div style={{
+                            fontSize: 11, fontWeight: 700, color: C.accent,
+                            textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
+                          }}>
+                            New Thread
+                          </div>
+
+                          {selectedParticipants.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                              {selectedParticipants.map(p => (
+                                <div key={p.person_id} style={{
+                                  display: "inline-flex", alignItems: "center", gap: 5,
+                                  padding: "4px 8px 4px 4px",
+                                  background: "#EEF2FF", border: "1px solid #A5B4FC",
+                                  borderRadius: 20, fontSize: 12, fontWeight: 500,
+                                  color: C.ink, fontFamily: FONT,
+                                }}>
+                                  <PhotoAvatar name={p.display_name} photoUrl={p.photo_url} size={20} />
+                                  <span>{p.display_name.split(" ")[0]}</span>
+                                  <button
+                                    onClick={() => handleRemoveParticipant(p.person_id)}
+                                    style={{
+                                      background: "none", border: "none", cursor: "pointer",
+                                      padding: "0 2px", color: C.sub, fontSize: 14, lineHeight: 1,
+                                      display: "flex", alignItems: "center",
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div style={{ position: "relative", marginBottom: 10 }}>
+                            <input
+                              value={searchQuery}
+                              onChange={e => setSearchQuery(e.target.value)}
+                              placeholder="Search your network to add people..."
+                              autoFocus
+                              style={{
+                                width: "100%", padding: "8px 10px",
+                                fontSize: 14, fontFamily: FONT, color: C.ink,
+                                background: "#fff", border: `1.5px solid ${C.border}`,
+                                borderRadius: 8, boxSizing: "border-box",
+                                WebkitAppearance: "none",
+                                transition: "border-color 0.15s",
+                              }}
+                              onFocus={e => { e.target.style.borderColor = C.accent; }}
+                              onBlur={e => { setTimeout(() => { e.target.style.borderColor = C.border; }, 150); }}
+                            />
+                            {searchQuery.length >= 2 && (searchResults.length > 0 || searchLoading) && (
+                              <div style={{
+                                position: "absolute", top: "100%", left: 0, right: 0,
+                                background: "#fff", border: `1px solid ${C.border}`,
+                                borderRadius: 8, marginTop: 4, zIndex: 10,
+                                boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                                maxHeight: 200, overflowY: "auto",
+                              }}>
+                                {searchLoading && searchResults.length === 0 ? (
+                                  <div style={{ padding: "10px 12px", fontSize: 13, color: C.sub, fontFamily: FONT }}>
+                                    Searching...
+                                  </div>
+                                ) : searchResults.map(r => (
+                                  <button
+                                    key={r.person_id}
+                                    onMouseDown={(e) => { e.preventDefault(); handleSelectParticipant(r); }}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: 8,
+                                      width: "100%", padding: "8px 12px",
+                                      background: "none", border: "none", cursor: "pointer",
+                                      fontFamily: FONT, textAlign: "left",
+                                      transition: "background 0.1s",
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = "#F5F3FF"; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
+                                  >
+                                    <PhotoAvatar name={r.display_name} photoUrl={r.photo_url} size={28} />
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>
+                                        {r.display_name}
+                                      </div>
+                                      {(r.current_title || r.current_company) && (
+                                        <div style={{ fontSize: 11, color: C.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                          {[r.current_title, r.current_company].filter(Boolean).join(" at ")}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <DegreeBadge degree={r.degree} />
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {searchQuery.length >= 2 && !searchLoading && searchResults.length === 0 && (
+                              <div style={{
+                                position: "absolute", top: "100%", left: 0, right: 0,
+                                background: "#fff", border: `1px solid ${C.border}`,
+                                borderRadius: 8, marginTop: 4, zIndex: 10,
+                                boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                                padding: "10px 12px", fontSize: 13, color: C.sub, fontFamily: FONT,
+                              }}>
+                                No results — only people open to chat are shown
+                              </div>
+                            )}
+                          </div>
+
+                          {selectedParticipants.length >= 2 && (
+                            <div style={{ marginBottom: 10 }}>
+                              <input
+                                value={threadTopic}
+                                onChange={e => setThreadTopic(e.target.value)}
+                                placeholder="What's this thread about?"
+                                style={{
+                                  width: "100%", padding: "8px 10px",
+                                  fontSize: 14, fontFamily: FONT, color: C.ink,
+                                  background: "#fff", border: `1.5px solid ${C.border}`,
+                                  borderRadius: 8, boxSizing: "border-box",
+                                  WebkitAppearance: "none",
+                                  transition: "border-color 0.15s",
+                                }}
+                                onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                onBlur={e => { e.target.style.borderColor = C.border; }}
+                              />
+                            </div>
+                          )}
+
+                          {selectedParticipants.length < 2 && (
+                            <p style={{ fontSize: 12, color: C.sub, fontFamily: FONT, margin: 0, lineHeight: 1.5 }}>
+                              Add at least 2 people to start a group thread.
+                            </p>
+                          )}
+
+                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+                            <button
+                              onClick={handleNewThreadCancel}
+                              style={{
+                                padding: "7px 14px", background: "#F5F5F4",
+                                color: C.sub, border: `1px solid ${C.border}`,
+                                borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                fontFamily: FONT, cursor: "pointer",
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleDraftThread}
+                              disabled={selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading}
+                              style={{
+                                padding: "7px 14px",
+                                background: (selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading) ? "#C7D2FE" : C.accent,
+                                color: "#fff", border: "none", borderRadius: 8,
+                                fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                cursor: (selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading) ? "not-allowed" : "pointer",
+                                transition: "background 0.15s",
+                              }}
+                            >
+                              {threadDraftLoading ? "Drafting..." : "Draft outreach"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {threadDraft && (
+                        <div style={{ marginBottom: myThreads.length > 0 ? 12 : 0 }}>
+                          <ThreadDraftPanel
+                            threadId={threadDraft.threadId}
+                            creatorToken={threadDraft.creatorToken}
+                            topic={threadDraft.topic}
+                            draftBody={threadDraft.draftBody}
+                            participants={threadDraft.participants}
+                            onDone={handleNewThreadDone}
+                            onCancel={handleNewThreadCancel}
+                          />
+                        </div>
+                      )}
+
+                      {myThreads.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {(showAllThreads ? myThreads : myThreads.slice(0, 3)).map(t => (
+                            <a
+                              key={t.thread_id}
+                              href={`/thread/${t.access_token}`}
+                              style={{
+                                display: "block", textDecoration: "none",
+                                padding: "10px 14px",
+                                background: "#FAFAF9", borderRadius: 10,
+                                border: `1px solid ${C.border}`,
+                                transition: "border-color 0.15s, box-shadow 0.15s",
+                                cursor: "pointer",
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 8px rgba(79,70,229,0.1)"; }}
+                              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                </svg>
+                                <span style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                                  {t.topic}
+                                </span>
+                                <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginLeft: "auto", flexShrink: 0 }}>
+                                  {t.participant_count} people
+                                </span>
+                              </div>
+                              {t.last_message_preview && (
+                                <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, lineHeight: 1.4 }}>
+                                  <strong style={{ color: C.ink, fontWeight: 500 }}>{t.last_message_author?.split(" ")[0]}:</strong>{" "}
+                                  {t.last_message_preview}
+                                </div>
+                              )}
+                            </a>
+                          ))}
+                          {!showAllThreads && myThreads.length > 3 && (
+                            <button
+                              onClick={() => setShowAllThreads(true)}
+                              style={{
+                                background: "none", border: "none", cursor: "pointer",
+                                fontSize: 13, color: C.accent, fontFamily: FONT,
+                                padding: "4px 0", textAlign: "center",
+                              }}
+                            >
+                              See {myThreads.length - 3} more →
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {myThreads.length === 0 && !newThreadOpen && !threadDraft && (
+                        <div style={{
+                          textAlign: "center", padding: "12px 0",
+                          fontSize: 13, color: C.sub, fontFamily: FONT,
+                        }}>
+                          No threads yet — tap + to start one
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Gives card */}
+                  {(data.is_self || canAsk || (person.gives && person.gives.length > 0) || person.gives_free_text) && (
+                    <GivesCard gives={person.gives} givesFreeText={person.gives_free_text} personFirstName={personFirstName} canAsk={canAsk} askOpen={askOpen} onAskClick={() => setAskOpen(true)} isSelf={data.is_self} onEditPrefs={() => { setEditingPreferences(true); capture("preferences_opened"); }} />
+                  )}
+
+                  {/* Left column content */}
+
+                  {/* Quick Ask inline form */}
+                  {askOpen && !drafts && (
+                    <div style={{
+                      background: "#FAFAF9", borderRadius: 14,
                       border: `1.5px solid ${C.accent}`, padding: "14px 16px",
-                      marginBottom: myThreads.length > 0 ? 12 : 0,
+                      marginBottom: 16,
                     }}>
                       <div style={{
                         fontSize: 11, fontWeight: 700, color: C.accent,
                         textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
                       }}>
-                        New Thread
+                        Ask {personFirstName}
                       </div>
-
-                      {/* Selected participants as chips */}
-                      {selectedParticipants.length > 0 && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                          {selectedParticipants.map(p => (
-                            <div key={p.person_id} style={{
-                              display: "inline-flex", alignItems: "center", gap: 5,
-                              padding: "4px 8px 4px 4px",
-                              background: "#EEF2FF", border: "1px solid #A5B4FC",
-                              borderRadius: 20, fontSize: 12, fontWeight: 500,
-                              color: C.ink, fontFamily: FONT,
-                            }}>
-                              <PhotoAvatar name={p.display_name} photoUrl={p.photo_url} size={20} />
-                              <span>{p.display_name.split(" ")[0]}</span>
-                              <button
-                                onClick={() => handleRemoveParticipant(p.person_id)}
-                                style={{
-                                  background: "none", border: "none", cursor: "pointer",
-                                  padding: "0 2px", color: C.sub, fontSize: 14, lineHeight: 1,
-                                  display: "flex", alignItems: "center",
-                                }}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Search input */}
-                      <div style={{ position: "relative", marginBottom: 10 }}>
-                        <input
-                          value={searchQuery}
-                          onChange={e => setSearchQuery(e.target.value)}
-                          placeholder="Search your network to add people..."
-                          autoFocus
-                          style={{
-                            width: "100%", padding: "8px 10px",
-                            fontSize: 14, fontFamily: FONT, color: C.ink,
-                            background: "#fff", border: `1.5px solid ${C.border}`,
-                            borderRadius: 8, boxSizing: "border-box",
-                            WebkitAppearance: "none",
-                            transition: "border-color 0.15s",
-                          }}
-                          onFocus={e => { e.target.style.borderColor = C.accent; }}
-                          onBlur={e => { setTimeout(() => { e.target.style.borderColor = C.border; }, 150); }}
-                        />
-                        {/* Search results dropdown */}
-                        {searchQuery.length >= 2 && (searchResults.length > 0 || searchLoading) && (
-                          <div style={{
-                            position: "absolute", top: "100%", left: 0, right: 0,
-                            background: "#fff", border: `1px solid ${C.border}`,
-                            borderRadius: 8, marginTop: 4, zIndex: 10,
-                            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-                            maxHeight: 200, overflowY: "auto",
-                          }}>
-                            {searchLoading && searchResults.length === 0 ? (
-                              <div style={{ padding: "10px 12px", fontSize: 13, color: C.sub, fontFamily: FONT }}>
-                                Searching...
+                      <textarea
+                        value={askQuestion}
+                        onChange={e => setAskQuestion(e.target.value)}
+                        placeholder={`What would you like to ask ${personFirstName}?`}
+                        rows={3}
+                        autoFocus
+                        disabled={draftingLoading}
+                        style={{
+                          width: "100%", padding: "10px 12px",
+                          fontSize: 16, fontFamily: FONT, color: C.ink,
+                          background: "#fff", border: `1.5px solid ${C.border}`,
+                          borderRadius: 8, resize: "vertical", lineHeight: 1.5,
+                          boxSizing: "border-box", WebkitAppearance: "none",
+                          transition: "border-color 0.15s",
+                        }}
+                        onFocus={e => { e.target.style.borderColor = C.accent; }}
+                        onBlur={e => { e.target.style.borderColor = C.border; }}
+                      />
+                      {!replyContext && data?.degree >= 2 && (() => {
+                        const intermediaryFirst = data.intermediary_name?.split(" ")[0];
+                        return (
+                          <div style={{ marginTop: 10 }}>
+                            {data.intermediary_name && (
+                              <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginBottom: 8 }}>
+                                Connected to {personFirstName} via <strong style={{ color: C.ink }}>{data.intermediary_name}</strong>
                               </div>
-                            ) : searchResults.map(r => (
-                              <button
-                                key={r.person_id}
-                                onMouseDown={(e) => { e.preventDefault(); handleSelectParticipant(r); }}
+                            )}
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
+                              Do you already know {personFirstName}?
+                            </div>
+                            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                              {[
+                                { label: "No", val: false },
+                                { label: "Yes", val: true },
+                              ].map(opt => (
+                                <button
+                                  key={opt.label}
+                                  onClick={() => { setKnowsThem(opt.val); if (!opt.val) setKnowsThemHow(""); }}
+                                  disabled={draftingLoading}
+                                  style={{
+                                    padding: "5px 14px",
+                                    background: knowsThem === opt.val ? (opt.val ? C.accent : "#6B7280") : "#fff",
+                                    color: knowsThem === opt.val ? "#fff" : C.sub,
+                                    border: `1.5px solid ${knowsThem === opt.val ? (opt.val ? C.accent : "#6B7280") : C.border}`,
+                                    borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                    fontFamily: FONT, cursor: "pointer",
+                                    transition: "all 0.15s",
+                                  }}
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                            {knowsThem && (
+                              <input
+                                type="text"
+                                value={knowsThemHow}
+                                onChange={e => setKnowsThemHow(e.target.value)}
+                                placeholder={`How do you know ${personFirstName}? (e.g., worked together at Acme)`}
+                                disabled={draftingLoading}
                                 style={{
-                                  display: "flex", alignItems: "center", gap: 8,
-                                  width: "100%", padding: "8px 12px",
-                                  background: "none", border: "none", cursor: "pointer",
-                                  fontFamily: FONT, textAlign: "left",
-                                  transition: "background 0.1s",
+                                  width: "100%", padding: "8px 10px",
+                                  fontSize: 16, fontFamily: FONT, color: C.ink,
+                                  background: "#fff", border: `1.5px solid ${C.border}`,
+                                  borderRadius: 6, boxSizing: "border-box",
+                                  WebkitAppearance: "none",
+                                  transition: "border-color 0.15s",
                                 }}
-                                onMouseEnter={e => { e.currentTarget.style.background = "#F5F3FF"; }}
-                                onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
-                              >
-                                <PhotoAvatar name={r.display_name} photoUrl={r.photo_url} size={28} />
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>
-                                    {r.display_name}
-                                  </div>
-                                  {(r.current_title || r.current_company) && (
-                                    <div style={{ fontSize: 11, color: C.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                      {[r.current_title, r.current_company].filter(Boolean).join(" at ")}
-                                    </div>
-                                  )}
+                                onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                onBlur={e => { e.target.style.borderColor = C.border; }}
+                              />
+                            )}
+                            {knowsThem === false && intermediaryFirst && (
+                              <>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6, marginTop: 10 }}>
+                                  How do you know {intermediaryFirst}?
                                 </div>
-                                <DegreeBadge degree={r.degree} />
-                              </button>
-                            ))}
+                                <input
+                                  type="text"
+                                  value={intermediaryContext}
+                                  onChange={e => setIntermediaryContext(e.target.value)}
+                                  placeholder={`e.g., ${intermediaryFirst} and I worked together at Google`}
+                                  disabled={draftingLoading}
+                                  style={{
+                                    width: "100%", padding: "8px 10px",
+                                    fontSize: 16, fontFamily: FONT, color: C.ink,
+                                    background: "#fff", border: `1.5px solid ${C.border}`,
+                                    borderRadius: 6, boxSizing: "border-box",
+                                    WebkitAppearance: "none",
+                                    transition: "border-color 0.15s",
+                                  }}
+                                  onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                  onBlur={e => { e.target.style.borderColor = C.border; }}
+                                />
+                              </>
+                            )}
                           </div>
-                        )}
-                        {searchQuery.length >= 2 && !searchLoading && searchResults.length === 0 && (
-                          <div style={{
-                            position: "absolute", top: "100%", left: 0, right: 0,
-                            background: "#fff", border: `1px solid ${C.border}`,
-                            borderRadius: 8, marginTop: 4, zIndex: 10,
-                            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-                            padding: "10px 12px", fontSize: 13, color: C.sub, fontFamily: FONT,
-                          }}>
-                            No results — only people open to chat are shown
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Topic input */}
-                      {selectedParticipants.length >= 2 && (
-                        <div style={{ marginBottom: 10 }}>
-                          <input
-                            value={threadTopic}
-                            onChange={e => setThreadTopic(e.target.value)}
-                            placeholder="What's this thread about?"
-                            style={{
-                              width: "100%", padding: "8px 10px",
-                              fontSize: 14, fontFamily: FONT, color: C.ink,
-                              background: "#fff", border: `1.5px solid ${C.border}`,
-                              borderRadius: 8, boxSizing: "border-box",
-                              WebkitAppearance: "none",
-                              transition: "border-color 0.15s",
-                            }}
-                            onFocus={e => { e.target.style.borderColor = C.accent; }}
-                            onBlur={e => { e.target.style.borderColor = C.border; }}
-                          />
+                        );
+                      })()}
+                      {askError && (
+                        <div style={{
+                          marginTop: 8, padding: "8px 12px",
+                          background: "#FEF2F2", borderRadius: 8,
+                          fontSize: 13, color: "#DC2626", fontFamily: FONT,
+                        }}>
+                          {askError}
                         </div>
                       )}
-
-                      {/* Helper text */}
-                      {selectedParticipants.length < 2 && (
-                        <p style={{ fontSize: 12, color: C.sub, fontFamily: FONT, margin: 0, lineHeight: 1.5 }}>
-                          Add at least 2 people to start a group thread.
-                        </p>
-                      )}
-
-                      {/* Buttons */}
-                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                         <button
-                          onClick={handleNewThreadCancel}
+                          onClick={handleAskCancel}
+                          disabled={draftingLoading}
                           style={{
-                            padding: "7px 14px", background: "#F5F5F4",
+                            padding: "8px 14px", background: "#F5F5F4",
                             color: C.sub, border: `1px solid ${C.border}`,
                             borderRadius: 8, fontSize: 13, fontWeight: 600,
                             fontFamily: FONT, cursor: "pointer",
@@ -1984,524 +2306,1063 @@ export default function PersonPage() {
                         >
                           Cancel
                         </button>
-                        <button
-                          onClick={handleDraftThread}
-                          disabled={selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading}
-                          style={{
-                            padding: "7px 14px",
-                            background: (selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading) ? "#C7D2FE" : C.accent,
-                            color: "#fff", border: "none", borderRadius: 8,
-                            fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                            cursor: (selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading) ? "not-allowed" : "pointer",
-                            transition: "background 0.15s",
-                          }}
-                        >
-                          {threadDraftLoading ? "Drafting..." : "Draft outreach"}
-                        </button>
+                        {draftingLoading ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 8px" }}>
+                            <div style={{
+                              width: 8, height: 8, borderRadius: "50%",
+                              background: C.accent, animation: "pulse 1.2s infinite",
+                            }} />
+                            <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
+                              Drafting message...
+                            </span>
+                            <style>{`@keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }`}</style>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={handleDraftAsk}
+                            disabled={!askQuestion.trim() || (data?.degree >= 2 && knowsThem === null)}
+                            style={{
+                              padding: "8px 16px",
+                              background: (askQuestion.trim() && !(data?.degree >= 2 && knowsThem === null)) ? C.accent : "#C7D2FE",
+                              color: "#fff", border: "none", borderRadius: 8,
+                              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                              cursor: (askQuestion.trim() && !(data?.degree >= 2 && knowsThem === null)) ? "pointer" : "not-allowed",
+                              transition: "background 0.15s",
+                            }}
+                          >
+                            Draft email for review
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
 
-                  {/* ThreadDraftPanel (after draft is created) */}
-                  {threadDraft && (
-                    <div style={{ marginBottom: myThreads.length > 0 ? 12 : 0 }}>
-                      <ThreadDraftPanel
-                        threadId={threadDraft.threadId}
-                        creatorToken={threadDraft.creatorToken}
-                        topic={threadDraft.topic}
-                        draftBody={threadDraft.draftBody}
-                        participants={threadDraft.participants}
-                        onDone={handleNewThreadDone}
-                        onCancel={handleNewThreadCancel}
+                  {/* Quick Ask draft panel */}
+                  {askOpen && drafts && (
+                    <div style={{ marginBottom: 16 }}>
+                      <QuickAskDraftPanel
+                        drafts={drafts}
+                        setDrafts={setDrafts}
+                        askId={askId}
+                        onDone={handleAskDone}
+                        onCancel={handleAskCancel}
+                        replyContext={replyContext}
                       />
                     </div>
                   )}
 
-                  {/* Existing thread cards */}
-                  {myThreads.length > 0 && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {myThreads.map(t => (
-                        <a
-                          key={t.thread_id}
-                          href={`/thread/${t.access_token}`}
-                          style={{
-                            display: "block", textDecoration: "none",
-                            padding: "10px 14px",
-                            background: "#FAFAF9", borderRadius: 10,
-                            border: `1px solid ${C.border}`,
-                            transition: "border-color 0.15s, box-shadow 0.15s",
-                            cursor: "pointer",
-                          }}
-                          onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 8px rgba(79,70,229,0.1)"; }}
-                          onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                            </svg>
-                            <span style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
-                              {t.topic}
-                            </span>
-                            <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginLeft: "auto", flexShrink: 0 }}>
-                              {t.participant_count} people
-                            </span>
-                          </div>
-                          {t.last_message_preview && (
-                            <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, lineHeight: 1.4 }}>
-                              <strong style={{ color: C.ink, fontWeight: 500 }}>{t.last_message_author?.split(" ")[0]}:</strong>{" "}
-                              {t.last_message_preview}
-                            </div>
-                          )}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Empty state */}
-                  {myThreads.length === 0 && !newThreadOpen && !threadDraft && (
+                  {/* Post-Quick-Ask vouch nudge */}
+                  {askJustCompleted && !hasVouched && (
                     <div style={{
-                      textAlign: "center", padding: "12px 0",
-                      fontSize: 13, color: C.sub, fontFamily: FONT,
+                      background: "linear-gradient(135deg, #FEF3C7 0%, #ECFDF5 100%)",
+                      border: `1.5px solid #FDE68A`, borderRadius: 12,
+                      padding: "16px 18px", marginBottom: 16,
                     }}>
-                      No threads yet — tap + to start one
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 4 }}>
+                        {(() => {
+                          const invName = sessionStorage.getItem("vouchfour_inviterName");
+                          const first = invName?.split(" ")[0];
+                          return first
+                            ? `Remember how it felt when ${first} recommended you? You can do that for someone.`
+                            : "Someone believed in you enough to recommend you. You can do that for someone too.";
+                        })()}
+                      </div>
+                      <a
+                        href={(() => {
+                          const t = sessionStorage.getItem("vouchfour_vouchToken");
+                          return t ? `/vouch?token=${t}` : "/start-vouch";
+                        })()}
+                        style={{
+                          display: "inline-block", padding: "10px 20px", marginTop: 6,
+                          background: C.accent, color: "#fff", borderRadius: 8,
+                          fontSize: 13, fontWeight: 600, textDecoration: "none", fontFamily: FONT,
+                        }}
+                      >
+                        Vouch for your top 4 →
+                      </a>
+                      <button
+                        onClick={() => setAskJustCompleted(false)}
+                        style={{
+                          background: "none", border: "none", cursor: "pointer",
+                          fontSize: 12, color: C.sub, fontFamily: FONT, marginLeft: 12,
+                        }}
+                      >
+                        Dismiss
+                      </button>
                     </div>
                   )}
-                </div>
-              )}
 
-              {/* Quick Ask inline form */}
-              {askOpen && !drafts && (
-                <div style={{
-                  background: "#FAFAF9", borderRadius: 14,
-                  border: `1.5px solid ${C.accent}`, padding: "14px 16px",
-                  marginBottom: 16,
-                }}>
-                  <div style={{
-                    fontSize: 11, fontWeight: 700, color: C.accent,
-                    textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
-                  }}>
-                    Ask {personFirstName}
-                  </div>
-                  <textarea
-                    value={askQuestion}
-                    onChange={e => setAskQuestion(e.target.value)}
-                    placeholder={`What would you like to ask ${personFirstName}?`}
-                    rows={3}
-                    autoFocus
-                    disabled={draftingLoading}
-                    style={{
-                      width: "100%", padding: "10px 12px",
-                      fontSize: 16, fontFamily: FONT, color: C.ink,
-                      background: "#fff", border: `1.5px solid ${C.border}`,
-                      borderRadius: 8, resize: "vertical", lineHeight: 1.5,
-                      boxSizing: "border-box", WebkitAppearance: "none",
-                      transition: "border-color 0.15s",
-                    }}
-                    onFocus={e => { e.target.style.borderColor = C.accent; }}
-                    onBlur={e => { e.target.style.borderColor = C.border; }}
-                  />
-                  {/* Relationship context for 2nd/3rd degree (hidden in reply mode) */}
-                  {!replyContext && data?.degree >= 2 && (() => {
-                    const intermediaryFirst = data.intermediary_name?.split(" ")[0];
-                    return (
-                      <div style={{ marginTop: 10 }}>
-                        {data.intermediary_name && (
-                          <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginBottom: 8 }}>
-                            Connected to {personFirstName} via <strong style={{ color: C.ink }}>{data.intermediary_name}</strong>
+                  {/* Profile edit form */}
+                  {editingProfile && (
+                    <ProfileEditForm
+                      person={person}
+                      onSave={(updated) => {
+                        setData(prev => ({
+                          ...prev,
+                          person: {
+                            ...prev.person,
+                            name: updated.name,
+                            linkedin_url: updated.linkedin_url,
+                            email: updated.email,
+                          },
+                        }));
+                        setEditingProfile(false);
+                      }}
+                      onCancel={() => setEditingProfile(false)}
+                    />
+                  )}
+
+                  {/* Preferences form */}
+                  {editingPreferences && (
+                    <PreferencesForm
+                      person={person}
+                      hasVouched={hasVouched}
+                      onSave={() => {}}
+                      onCancel={() => {
+                        fetch(`/api/person/${personId}`, { credentials: "include" })
+                          .then(res => res.ok ? res.json() : null)
+                          .then(d => { if (d) setData(d); });
+                        setEditingPreferences(false);
+                      }}
+                    />
+                  )}
+
+                  {/* AI Summary */}
+                  {editingSummary ? (
+                    <SummaryEditForm
+                      summary={data.ai_summary}
+                      personId={person.id}
+                      onSave={(newSummary) => {
+                        setData(prev => ({ ...prev, ai_summary: newSummary }));
+                        setEditingSummary(false);
+                      }}
+                      onCancel={() => setEditingSummary(false)}
+                    />
+                  ) : data.ai_summary ? (
+                    <div style={{
+                      background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+                      border: `1px solid ${C.border}`, marginBottom: 16,
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                    }}>
+                      <div style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        marginBottom: 8,
+                      }}>
+                        <div style={{
+                          fontSize: 12, fontWeight: 700, color: C.sub,
+                          textTransform: "uppercase", letterSpacing: 0.5,
+                        }}>
+                          Professional Summary
+                        </div>
+                        {data.is_self && (
+                          <button
+                            onClick={() => setEditingSummary(true)}
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              background: "none", border: "none", cursor: "pointer",
+                              fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT,
+                              padding: "2px 6px", borderRadius: 4,
+                            }}
+                          >
+                            <PencilIcon size={11} /> Edit
+                          </button>
+                        )}
+                      </div>
+                      <p style={{ fontSize: 14, lineHeight: 1.7, color: C.ink, margin: 0, fontFamily: FONT }}>
+                        {data.ai_summary}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {/* Career History */}
+                  {editingCareerHistory ? (
+                    <CareerHistoryEditForm
+                      person={person}
+                      employmentHistory={data.employment_history}
+                      onSave={(newRoles, newSummary) => {
+                        const mapped = newRoles.map(r => ({
+                          title: r.title,
+                          organization: r.organization,
+                          start_date: r.start_date ? `${r.start_date}-01` : null,
+                          end_date: r.is_current ? null : (r.end_date ? `${r.end_date}-01` : null),
+                          is_current: r.is_current,
+                          location: r.location,
+                          description: r.description,
+                        }));
+                        setData(prev => ({
+                          ...prev,
+                          employment_history: mapped,
+                          ...(newSummary ? { ai_summary: newSummary } : {}),
+                        }));
+                        setEditingCareerHistory(false);
+                      }}
+                      onCancel={() => setEditingCareerHistory(false)}
+                    />
+                  ) : (data.employment_history?.length > 0 || data.is_self) && (
+                    <div style={{
+                      background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+                      border: `1px solid ${C.border}`, marginBottom: 16,
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                    }}>
+                      <div style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        marginBottom: 12,
+                      }}>
+                        <div style={{
+                          fontSize: 12, fontWeight: 700, color: C.sub,
+                          textTransform: "uppercase", letterSpacing: 0.5,
+                        }}>
+                          Career History
+                        </div>
+                        {data.is_self ? (
+                          <button
+                            onClick={() => { setEditingCareerHistory(true); capture("career_history_edit_opened"); }}
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              background: "none", border: "none", cursor: "pointer",
+                              fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT,
+                              padding: "2px 6px", borderRadius: 4,
+                            }}
+                          >
+                            <PencilIcon size={11} /> Edit
+                          </button>
+                        ) : person.linkedin_url ? (
+                          <a
+                            href={person.linkedin_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              fontSize: 12, fontWeight: 600, color: C.sub,
+                              fontFamily: FONT, textDecoration: "none",
+                            }}
+                          >
+                            LinkedIn <ExternalLinkIcon size={11} color={C.sub} />
+                          </a>
+                        ) : null}
+                      </div>
+                      {data.employment_history?.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                          {data.employment_history.map((job, i) => {
+                            const startYear = job.start_date ? new Date(job.start_date).getFullYear() : null;
+                            const endYear = job.is_current ? "Present" : (job.end_date ? new Date(job.end_date).getFullYear() : null);
+                            const dateStr = startYear ? `${startYear} – ${endYear || "?"}` : "";
+
+                            return (
+                              <div key={i} style={{
+                                display: "flex", gap: 12, padding: "10px 0",
+                                borderTop: i > 0 ? `1px solid #F3F4F6` : "none",
+                              }}>
+                                <div style={{ paddingTop: 2 }}>
+                                  <BriefcaseIcon />
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                                    {job.title || "Role"}
+                                  </div>
+                                  <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT }}>
+                                    {job.organization}
+                                  </div>
+                                  {(dateStr || job.location) && (
+                                    <div style={{ fontSize: 11, color: "#9CA3AF", fontFamily: FONT, marginTop: 2 }}>
+                                      {[dateStr, job.location].filter(Boolean).join(" · ")}
+                                    </div>
+                                  )}
+                                  {job.description && (
+                                    <div style={{
+                                      fontSize: 12, color: C.sub, fontFamily: FONT,
+                                      marginTop: 4, lineHeight: 1.5, whiteSpace: "pre-line",
+                                    }}>
+                                      {job.description}
+                                    </div>
+                                  )}
+                                </div>
+                                {job.is_current && (
+                                  <span style={{
+                                    fontSize: 10, fontWeight: 600, color: C.success,
+                                    background: C.successLight, padding: "2px 6px",
+                                    borderRadius: 4, alignSelf: "flex-start", marginTop: 2,
+                                  }}>
+                                    Current
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div style={{
+                          fontSize: 13, color: C.sub, fontFamily: FONT,
+                          padding: "10px 0", textAlign: "center",
+                        }}>
+                          No career history yet. Click Edit to add your roles.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Network Overlap card */}
+                  {overlapData?.network_overlap?.length > 0 && (
+                    <NetworkOverlapWidget
+                      networkOverlap={overlapData.network_overlap}
+                      personFirstName={person.name?.split(" ")[0]}
+                    />
+                  )}
+
+                </div>
+              ) : (
+                /* ── DESKTOP: two-column flex layout ── */
+                <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+                  {/* LEFT COLUMN */}
+                  <div style={{ flex: 2, minWidth: 0 }}>
+
+                    {/* You & Name */}
+                    {!data.is_self && (
+                      <RecommendationPath
+                        path={data.vouch_path} degree={data.degree} degreeMismatch={data.degree_mismatch}
+                        personFirstName={personFirstName}
+                        userOverlap={overlapData?.user_overlap}
+                      />
+                    )}
+
+                    {/* Quick Ask inline form */}
+                    {askOpen && !drafts && (
+                      <div style={{
+                        background: "#FAFAF9", borderRadius: 14,
+                        border: `1.5px solid ${C.accent}`, padding: "14px 16px",
+                        marginBottom: 16,
+                      }}>
+                        <div style={{
+                          fontSize: 11, fontWeight: 700, color: C.accent,
+                          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
+                        }}>
+                          Ask {personFirstName}
+                        </div>
+                        <textarea
+                          value={askQuestion}
+                          onChange={e => setAskQuestion(e.target.value)}
+                          placeholder={`What would you like to ask ${personFirstName}?`}
+                          rows={3}
+                          autoFocus
+                          disabled={draftingLoading}
+                          style={{
+                            width: "100%", padding: "10px 12px",
+                            fontSize: 16, fontFamily: FONT, color: C.ink,
+                            background: "#fff", border: `1.5px solid ${C.border}`,
+                            borderRadius: 8, resize: "vertical", lineHeight: 1.5,
+                            boxSizing: "border-box", WebkitAppearance: "none",
+                            transition: "border-color 0.15s",
+                          }}
+                          onFocus={e => { e.target.style.borderColor = C.accent; }}
+                          onBlur={e => { e.target.style.borderColor = C.border; }}
+                        />
+                        {!replyContext && data?.degree >= 2 && (() => {
+                          const intermediaryFirst = data.intermediary_name?.split(" ")[0];
+                          return (
+                            <div style={{ marginTop: 10 }}>
+                              {data.intermediary_name && (
+                                <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginBottom: 8 }}>
+                                  Connected to {personFirstName} via <strong style={{ color: C.ink }}>{data.intermediary_name}</strong>
+                                </div>
+                              )}
+                              <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
+                                Do you already know {personFirstName}?
+                              </div>
+                              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                                {[
+                                  { label: "No", val: false },
+                                  { label: "Yes", val: true },
+                                ].map(opt => (
+                                  <button
+                                    key={opt.label}
+                                    onClick={() => { setKnowsThem(opt.val); if (!opt.val) setKnowsThemHow(""); }}
+                                    disabled={draftingLoading}
+                                    style={{
+                                      padding: "5px 14px",
+                                      background: knowsThem === opt.val ? (opt.val ? C.accent : "#6B7280") : "#fff",
+                                      color: knowsThem === opt.val ? "#fff" : C.sub,
+                                      border: `1.5px solid ${knowsThem === opt.val ? (opt.val ? C.accent : "#6B7280") : C.border}`,
+                                      borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                      fontFamily: FONT, cursor: "pointer",
+                                      transition: "all 0.15s",
+                                    }}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                              {knowsThem && (
+                                <input
+                                  type="text"
+                                  value={knowsThemHow}
+                                  onChange={e => setKnowsThemHow(e.target.value)}
+                                  placeholder={`How do you know ${personFirstName}? (e.g., worked together at Acme)`}
+                                  disabled={draftingLoading}
+                                  style={{
+                                    width: "100%", padding: "8px 10px",
+                                    fontSize: 16, fontFamily: FONT, color: C.ink,
+                                    background: "#fff", border: `1.5px solid ${C.border}`,
+                                    borderRadius: 6, boxSizing: "border-box",
+                                    WebkitAppearance: "none",
+                                    transition: "border-color 0.15s",
+                                  }}
+                                  onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                  onBlur={e => { e.target.style.borderColor = C.border; }}
+                                />
+                              )}
+                              {knowsThem === false && intermediaryFirst && (
+                                <>
+                                  <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6, marginTop: 10 }}>
+                                    How do you know {intermediaryFirst}?
+                                  </div>
+                                  <input
+                                    type="text"
+                                    value={intermediaryContext}
+                                    onChange={e => setIntermediaryContext(e.target.value)}
+                                    placeholder={`e.g., ${intermediaryFirst} and I worked together at Google`}
+                                    disabled={draftingLoading}
+                                    style={{
+                                      width: "100%", padding: "8px 10px",
+                                      fontSize: 16, fontFamily: FONT, color: C.ink,
+                                      background: "#fff", border: `1.5px solid ${C.border}`,
+                                      borderRadius: 6, boxSizing: "border-box",
+                                      WebkitAppearance: "none",
+                                      transition: "border-color 0.15s",
+                                    }}
+                                    onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                    onBlur={e => { e.target.style.borderColor = C.border; }}
+                                  />
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {askError && (
+                          <div style={{
+                            marginTop: 8, padding: "8px 12px",
+                            background: "#FEF2F2", borderRadius: 8,
+                            fontSize: 13, color: "#DC2626", fontFamily: FONT,
+                          }}>
+                            {askError}
                           </div>
                         )}
-                        <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6 }}>
-                          Do you already know {personFirstName}?
-                        </div>
-                        <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                          {[
-                            { label: "No", val: false },
-                            { label: "Yes", val: true },
-                          ].map(opt => (
-                            <button
-                              key={opt.label}
-                              onClick={() => { setKnowsThem(opt.val); if (!opt.val) setKnowsThemHow(""); }}
-                              disabled={draftingLoading}
-                              style={{
-                                padding: "5px 14px",
-                                background: knowsThem === opt.val ? (opt.val ? C.accent : "#6B7280") : "#fff",
-                                color: knowsThem === opt.val ? "#fff" : C.sub,
-                                border: `1.5px solid ${knowsThem === opt.val ? (opt.val ? C.accent : "#6B7280") : C.border}`,
-                                borderRadius: 6, fontSize: 12, fontWeight: 600,
-                                fontFamily: FONT, cursor: "pointer",
-                                transition: "all 0.15s",
-                              }}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                        {knowsThem && (
-                          <input
-                            type="text"
-                            value={knowsThemHow}
-                            onChange={e => setKnowsThemHow(e.target.value)}
-                            placeholder={`How do you know ${personFirstName}? (e.g., worked together at Acme)`}
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                          <button
+                            onClick={handleAskCancel}
                             disabled={draftingLoading}
                             style={{
-                              width: "100%", padding: "8px 10px",
-                              fontSize: 16, fontFamily: FONT, color: C.ink,
-                              background: "#fff", border: `1.5px solid ${C.border}`,
-                              borderRadius: 6, boxSizing: "border-box",
-                              WebkitAppearance: "none",
-                              transition: "border-color 0.15s",
+                              padding: "8px 14px", background: "#F5F5F4",
+                              color: C.sub, border: `1px solid ${C.border}`,
+                              borderRadius: 8, fontSize: 13, fontWeight: 600,
+                              fontFamily: FONT, cursor: "pointer",
                             }}
-                            onFocus={e => { e.target.style.borderColor = C.accent; }}
-                            onBlur={e => { e.target.style.borderColor = C.border; }}
-                          />
-                        )}
-                        {knowsThem === false && intermediaryFirst && (
-                          <>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 6, marginTop: 10 }}>
-                              How do you know {intermediaryFirst}?
-                            </div>
-                            <input
-                              type="text"
-                              value={intermediaryContext}
-                              onChange={e => setIntermediaryContext(e.target.value)}
-                              placeholder={`e.g., ${intermediaryFirst} and I worked together at Google`}
-                              disabled={draftingLoading}
-                              style={{
-                                width: "100%", padding: "8px 10px",
-                                fontSize: 16, fontFamily: FONT, color: C.ink,
-                                background: "#fff", border: `1.5px solid ${C.border}`,
-                                borderRadius: 6, boxSizing: "border-box",
-                                WebkitAppearance: "none",
-                                transition: "border-color 0.15s",
-                              }}
-                              onFocus={e => { e.target.style.borderColor = C.accent; }}
-                              onBlur={e => { e.target.style.borderColor = C.border; }}
-                            />
-                          </>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  {askError && (
-                    <div style={{
-                      marginTop: 8, padding: "8px 12px",
-                      background: "#FEF2F2", borderRadius: 8,
-                      fontSize: 13, color: "#DC2626", fontFamily: FONT,
-                    }}>
-                      {askError}
-                    </div>
-                  )}
-                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                    <button
-                      onClick={handleAskCancel}
-                      disabled={draftingLoading}
-                      style={{
-                        padding: "8px 14px", background: "#F5F5F4",
-                        color: C.sub, border: `1px solid ${C.border}`,
-                        borderRadius: 8, fontSize: 13, fontWeight: 600,
-                        fontFamily: FONT, cursor: "pointer",
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    {draftingLoading ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 8px" }}>
-                        <div style={{
-                          width: 8, height: 8, borderRadius: "50%",
-                          background: C.accent, animation: "pulse 1.2s infinite",
-                        }} />
-                        <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
-                          Drafting message...
-                        </span>
-                        <style>{`@keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }`}</style>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={handleDraftAsk}
-                        disabled={!askQuestion.trim() || (data?.degree >= 2 && knowsThem === null)}
-                        style={{
-                          padding: "8px 16px",
-                          background: (askQuestion.trim() && !(data?.degree >= 2 && knowsThem === null)) ? C.accent : "#C7D2FE",
-                          color: "#fff", border: "none", borderRadius: 8,
-                          fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                          cursor: (askQuestion.trim() && !(data?.degree >= 2 && knowsThem === null)) ? "pointer" : "not-allowed",
-                          transition: "background 0.15s",
-                        }}
-                      >
-                        Draft email for review
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Quick Ask draft panel */}
-              {askOpen && drafts && (
-                <div style={{ marginBottom: 16 }}>
-                  <QuickAskDraftPanel
-                    drafts={drafts}
-                    setDrafts={setDrafts}
-                    askId={askId}
-                    onDone={handleAskDone}
-                    onCancel={handleAskCancel}
-                    replyContext={replyContext}
-                  />
-                </div>
-              )}
-
-              {/* Post-Quick-Ask vouch nudge — generosity angle */}
-              {askJustCompleted && !hasVouched && (
-                <div style={{
-                  background: "linear-gradient(135deg, #FEF3C7 0%, #ECFDF5 100%)",
-                  border: `1.5px solid #FDE68A`, borderRadius: 12,
-                  padding: "16px 18px", marginBottom: 16,
-                }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 4 }}>
-                    {(() => {
-                      const invName = sessionStorage.getItem("vouchfour_inviterName");
-                      const first = invName?.split(" ")[0];
-                      return first
-                        ? `Remember how it felt when ${first} recommended you? You can do that for someone.`
-                        : "Someone believed in you enough to recommend you. You can do that for someone too.";
-                    })()}
-                  </div>
-                  <a
-                    href={(() => {
-                      const t = sessionStorage.getItem("vouchfour_vouchToken");
-                      return t ? `/vouch?token=${t}` : "/start-vouch";
-                    })()}
-                    style={{
-                      display: "inline-block", padding: "10px 20px", marginTop: 6,
-                      background: C.accent, color: "#fff", borderRadius: 8,
-                      fontSize: 13, fontWeight: 600, textDecoration: "none", fontFamily: FONT,
-                    }}
-                  >
-                    Vouch for your top 4 →
-                  </a>
-                  <button
-                    onClick={() => setAskJustCompleted(false)}
-                    style={{
-                      background: "none", border: "none", cursor: "pointer",
-                      fontSize: 12, color: C.sub, fontFamily: FONT, marginLeft: 12,
-                    }}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              )}
-
-              {/* Profile edit form (inline, replaces hero area visually) */}
-              {editingProfile && (
-                <ProfileEditForm
-                  person={person}
-                  onSave={(updated) => {
-                    setData(prev => ({
-                      ...prev,
-                      person: {
-                        ...prev.person,
-                        name: updated.name,
-                        linkedin_url: updated.linkedin_url,
-                        email: updated.email,
-                      },
-                    }));
-                    setEditingProfile(false);
-                  }}
-                  onCancel={() => setEditingProfile(false)}
-                />
-              )}
-
-              {/* Preferences form (inline) */}
-              {editingPreferences && (
-                <PreferencesForm
-                  person={person}
-                  hasVouched={hasVouched}
-                  onSave={() => {}}
-                  onCancel={() => {
-                    // Refetch person data on close to pick up auto-saved changes
-                    fetch(`/api/person/${personId}`, { credentials: "include" })
-                      .then(res => res.ok ? res.json() : null)
-                      .then(d => { if (d) setData(d); });
-                    setEditingPreferences(false);
-                  }}
-                />
-              )}
-
-              {/* AI Summary */}
-              {editingSummary ? (
-                <SummaryEditForm
-                  summary={data.ai_summary}
-                  personId={person.id}
-                  onSave={(newSummary) => {
-                    setData(prev => ({ ...prev, ai_summary: newSummary }));
-                    setEditingSummary(false);
-                  }}
-                  onCancel={() => setEditingSummary(false)}
-                />
-              ) : data.ai_summary ? (
-                <div style={{
-                  background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
-                  border: `1px solid ${C.border}`, marginBottom: 16,
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                }}>
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    marginBottom: 8,
-                  }}>
-                    <div style={{
-                      fontSize: 11, fontWeight: 700, color: C.sub,
-                      textTransform: "uppercase", letterSpacing: 0.5,
-                    }}>
-                      Professional Summary
-                    </div>
-                    {data.is_self && (
-                      <button
-                        onClick={() => setEditingSummary(true)}
-                        style={{
-                          display: "inline-flex", alignItems: "center", gap: 4,
-                          background: "none", border: "none", cursor: "pointer",
-                          fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT,
-                          padding: "2px 6px", borderRadius: 4,
-                        }}
-                      >
-                        <PencilIcon size={11} /> Edit
-                      </button>
-                    )}
-                  </div>
-                  <p style={{ fontSize: 14, lineHeight: 1.7, color: C.ink, margin: 0, fontFamily: FONT }}>
-                    {data.ai_summary}
-                  </p>
-                </div>
-              ) : null}
-
-              {/* Career History */}
-              {editingCareerHistory ? (
-                <CareerHistoryEditForm
-                  person={person}
-                  employmentHistory={data.employment_history}
-                  onSave={(newRoles, newSummary) => {
-                    // Re-map roles back to the format the read-only card expects
-                    const mapped = newRoles.map(r => ({
-                      title: r.title,
-                      organization: r.organization,
-                      start_date: r.start_date ? `${r.start_date}-01` : null,
-                      end_date: r.is_current ? null : (r.end_date ? `${r.end_date}-01` : null),
-                      is_current: r.is_current,
-                      location: r.location,
-                      description: r.description,
-                    }));
-                    setData(prev => ({
-                      ...prev,
-                      employment_history: mapped,
-                      ...(newSummary ? { ai_summary: newSummary } : {}),
-                    }));
-                    setEditingCareerHistory(false);
-                  }}
-                  onCancel={() => setEditingCareerHistory(false)}
-                />
-              ) : (data.employment_history?.length > 0 || data.is_self) && (
-                <div style={{
-                  background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
-                  border: `1px solid ${C.border}`, marginBottom: 16,
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                }}>
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    marginBottom: 12,
-                  }}>
-                    <div style={{
-                      fontSize: 11, fontWeight: 700, color: C.sub,
-                      textTransform: "uppercase", letterSpacing: 0.5,
-                    }}>
-                      Career History
-                    </div>
-                    {data.is_self ? (
-                      <button
-                        onClick={() => { setEditingCareerHistory(true); capture("career_history_edit_opened"); }}
-                        style={{
-                          display: "inline-flex", alignItems: "center", gap: 4,
-                          background: "none", border: "none", cursor: "pointer",
-                          fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT,
-                          padding: "2px 6px", borderRadius: 4,
-                        }}
-                      >
-                        <PencilIcon size={11} /> Edit
-                      </button>
-                    ) : person.linkedin_url ? (
-                      <a
-                        href={person.linkedin_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          display: "inline-flex", alignItems: "center", gap: 4,
-                          fontSize: 12, fontWeight: 600, color: C.sub,
-                          fontFamily: FONT, textDecoration: "none",
-                        }}
-                      >
-                        LinkedIn <ExternalLinkIcon size={11} color={C.sub} />
-                      </a>
-                    ) : null}
-                  </div>
-                  {data.employment_history?.length > 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                      {data.employment_history.map((job, i) => {
-                        const startYear = job.start_date ? new Date(job.start_date).getFullYear() : null;
-                        const endYear = job.is_current ? "Present" : (job.end_date ? new Date(job.end_date).getFullYear() : null);
-                        const dateStr = startYear ? `${startYear} – ${endYear || "?"}` : "";
-
-                        return (
-                          <div key={i} style={{
-                            display: "flex", gap: 12, padding: "10px 0",
-                            borderTop: i > 0 ? `1px solid #F3F4F6` : "none",
-                          }}>
-                            <div style={{ paddingTop: 2 }}>
-                              <BriefcaseIcon />
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
-                                {job.title || "Role"}
-                              </div>
-                              <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT }}>
-                                {job.organization}
-                              </div>
-                              {(dateStr || job.location) && (
-                                <div style={{ fontSize: 11, color: "#9CA3AF", fontFamily: FONT, marginTop: 2 }}>
-                                  {[dateStr, job.location].filter(Boolean).join(" · ")}
-                                </div>
-                              )}
-                              {job.description && (
-                                <div style={{
-                                  fontSize: 12, color: C.sub, fontFamily: FONT,
-                                  marginTop: 4, lineHeight: 1.5, whiteSpace: "pre-line",
-                                }}>
-                                  {job.description}
-                                </div>
-                              )}
-                            </div>
-                            {job.is_current && (
-                              <span style={{
-                                fontSize: 10, fontWeight: 600, color: C.success,
-                                background: C.successLight, padding: "2px 6px",
-                                borderRadius: 4, alignSelf: "flex-start", marginTop: 2,
-                              }}>
-                                Current
+                          >
+                            Cancel
+                          </button>
+                          {draftingLoading ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 8px" }}>
+                              <div style={{
+                                width: 8, height: 8, borderRadius: "50%",
+                                background: C.accent, animation: "pulse 1.2s infinite",
+                              }} />
+                              <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
+                                Drafting message...
                               </span>
+                              <style>{`@keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }`}</style>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={handleDraftAsk}
+                              disabled={!askQuestion.trim() || (data?.degree >= 2 && knowsThem === null)}
+                              style={{
+                                padding: "8px 16px",
+                                background: (askQuestion.trim() && !(data?.degree >= 2 && knowsThem === null)) ? C.accent : "#C7D2FE",
+                                color: "#fff", border: "none", borderRadius: 8,
+                                fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                cursor: (askQuestion.trim() && !(data?.degree >= 2 && knowsThem === null)) ? "pointer" : "not-allowed",
+                                transition: "background 0.15s",
+                              }}
+                            >
+                              Draft email for review
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Quick Ask draft panel */}
+                    {askOpen && drafts && (
+                      <div style={{ marginBottom: 16 }}>
+                        <QuickAskDraftPanel
+                          drafts={drafts}
+                          setDrafts={setDrafts}
+                          askId={askId}
+                          onDone={handleAskDone}
+                          onCancel={handleAskCancel}
+                          replyContext={replyContext}
+                        />
+                      </div>
+                    )}
+
+                    {/* Post-Quick-Ask vouch nudge */}
+                    {askJustCompleted && !hasVouched && (
+                      <div style={{
+                        background: "linear-gradient(135deg, #FEF3C7 0%, #ECFDF5 100%)",
+                        border: `1.5px solid #FDE68A`, borderRadius: 12,
+                        padding: "16px 18px", marginBottom: 16,
+                      }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 4 }}>
+                          {(() => {
+                            const invName = sessionStorage.getItem("vouchfour_inviterName");
+                            const first = invName?.split(" ")[0];
+                            return first
+                              ? `Remember how it felt when ${first} recommended you? You can do that for someone.`
+                              : "Someone believed in you enough to recommend you. You can do that for someone too.";
+                          })()}
+                        </div>
+                        <a
+                          href={(() => {
+                            const t = sessionStorage.getItem("vouchfour_vouchToken");
+                            return t ? `/vouch?token=${t}` : "/start-vouch";
+                          })()}
+                          style={{
+                            display: "inline-block", padding: "10px 20px", marginTop: 6,
+                            background: C.accent, color: "#fff", borderRadius: 8,
+                            fontSize: 13, fontWeight: 600, textDecoration: "none", fontFamily: FONT,
+                          }}
+                        >
+                          Vouch for your top 4 →
+                        </a>
+                        <button
+                          onClick={() => setAskJustCompleted(false)}
+                          style={{
+                            background: "none", border: "none", cursor: "pointer",
+                            fontSize: 12, color: C.sub, fontFamily: FONT, marginLeft: 12,
+                          }}
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Profile edit form */}
+                    {editingProfile && (
+                      <ProfileEditForm
+                        person={person}
+                        onSave={(updated) => {
+                          setData(prev => ({
+                            ...prev,
+                            person: {
+                              ...prev.person,
+                              name: updated.name,
+                              linkedin_url: updated.linkedin_url,
+                              email: updated.email,
+                            },
+                          }));
+                          setEditingProfile(false);
+                        }}
+                        onCancel={() => setEditingProfile(false)}
+                      />
+                    )}
+
+                    {/* Preferences form */}
+                    {editingPreferences && (
+                      <PreferencesForm
+                        person={person}
+                        hasVouched={hasVouched}
+                        onSave={() => {}}
+                        onCancel={() => {
+                          fetch(`/api/person/${personId}`, { credentials: "include" })
+                            .then(res => res.ok ? res.json() : null)
+                            .then(d => { if (d) setData(d); });
+                          setEditingPreferences(false);
+                        }}
+                      />
+                    )}
+
+                    {/* AI Summary */}
+                    {editingSummary ? (
+                      <SummaryEditForm
+                        summary={data.ai_summary}
+                        personId={person.id}
+                        onSave={(newSummary) => {
+                          setData(prev => ({ ...prev, ai_summary: newSummary }));
+                          setEditingSummary(false);
+                        }}
+                        onCancel={() => setEditingSummary(false)}
+                      />
+                    ) : data.ai_summary ? (
+                      <div style={{
+                        background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+                        border: `1px solid ${C.border}`, marginBottom: 16,
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                      }}>
+                        <div style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          marginBottom: 8,
+                        }}>
+                          <div style={{
+                            fontSize: 12, fontWeight: 700, color: C.sub,
+                            textTransform: "uppercase", letterSpacing: 0.5,
+                          }}>
+                            Professional Summary
+                          </div>
+                          {data.is_self && (
+                            <button
+                              onClick={() => setEditingSummary(true)}
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                                background: "none", border: "none", cursor: "pointer",
+                                fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT,
+                                padding: "2px 6px", borderRadius: 4,
+                              }}
+                            >
+                              <PencilIcon size={11} /> Edit
+                            </button>
+                          )}
+                        </div>
+                        <p style={{ fontSize: 14, lineHeight: 1.7, color: C.ink, margin: 0, fontFamily: FONT }}>
+                          {data.ai_summary}
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {/* Career History */}
+                    {editingCareerHistory ? (
+                      <CareerHistoryEditForm
+                        person={person}
+                        employmentHistory={data.employment_history}
+                        onSave={(newRoles, newSummary) => {
+                          const mapped = newRoles.map(r => ({
+                            title: r.title,
+                            organization: r.organization,
+                            start_date: r.start_date ? `${r.start_date}-01` : null,
+                            end_date: r.is_current ? null : (r.end_date ? `${r.end_date}-01` : null),
+                            is_current: r.is_current,
+                            location: r.location,
+                            description: r.description,
+                          }));
+                          setData(prev => ({
+                            ...prev,
+                            employment_history: mapped,
+                            ...(newSummary ? { ai_summary: newSummary } : {}),
+                          }));
+                          setEditingCareerHistory(false);
+                        }}
+                        onCancel={() => setEditingCareerHistory(false)}
+                      />
+                    ) : (data.employment_history?.length > 0 || data.is_self) && (
+                      <div style={{
+                        background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+                        border: `1px solid ${C.border}`, marginBottom: 16,
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                      }}>
+                        <div style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          marginBottom: 12,
+                        }}>
+                          <div style={{
+                            fontSize: 12, fontWeight: 700, color: C.sub,
+                            textTransform: "uppercase", letterSpacing: 0.5,
+                          }}>
+                            Career History
+                          </div>
+                          {data.is_self ? (
+                            <button
+                              onClick={() => { setEditingCareerHistory(true); capture("career_history_edit_opened"); }}
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                                background: "none", border: "none", cursor: "pointer",
+                                fontSize: 12, fontWeight: 600, color: C.sub, fontFamily: FONT,
+                                padding: "2px 6px", borderRadius: 4,
+                              }}
+                            >
+                              <PencilIcon size={11} /> Edit
+                            </button>
+                          ) : person.linkedin_url ? (
+                            <a
+                              href={person.linkedin_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                                fontSize: 12, fontWeight: 600, color: C.sub,
+                                fontFamily: FONT, textDecoration: "none",
+                              }}
+                            >
+                              LinkedIn <ExternalLinkIcon size={11} color={C.sub} />
+                            </a>
+                          ) : null}
+                        </div>
+                        {data.employment_history?.length > 0 ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                            {data.employment_history.map((job, i) => {
+                              const startYear = job.start_date ? new Date(job.start_date).getFullYear() : null;
+                              const endYear = job.is_current ? "Present" : (job.end_date ? new Date(job.end_date).getFullYear() : null);
+                              const dateStr = startYear ? `${startYear} – ${endYear || "?"}` : "";
+
+                              return (
+                                <div key={i} style={{
+                                  display: "flex", gap: 12, padding: "10px 0",
+                                  borderTop: i > 0 ? `1px solid #F3F4F6` : "none",
+                                }}>
+                                  <div style={{ paddingTop: 2 }}>
+                                    <BriefcaseIcon />
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                                      {job.title || "Role"}
+                                    </div>
+                                    <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT }}>
+                                      {job.organization}
+                                    </div>
+                                    {(dateStr || job.location) && (
+                                      <div style={{ fontSize: 11, color: "#9CA3AF", fontFamily: FONT, marginTop: 2 }}>
+                                        {[dateStr, job.location].filter(Boolean).join(" · ")}
+                                      </div>
+                                    )}
+                                    {job.description && (
+                                      <div style={{
+                                        fontSize: 12, color: C.sub, fontFamily: FONT,
+                                        marginTop: 4, lineHeight: 1.5, whiteSpace: "pre-line",
+                                      }}>
+                                        {job.description}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {job.is_current && (
+                                    <span style={{
+                                      fontSize: 10, fontWeight: 600, color: C.success,
+                                      background: C.successLight, padding: "2px 6px",
+                                      borderRadius: 4, alignSelf: "flex-start", marginTop: 2,
+                                    }}>
+                                      Current
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div style={{
+                            fontSize: 13, color: C.sub, fontFamily: FONT,
+                            padding: "10px 0", textAlign: "center",
+                          }}>
+                            No career history yet. Click Edit to add your roles.
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                  </div>
+
+                  {/* RIGHT COLUMN */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+
+                    {/* Threads card */}
+                    {data.is_self && myThreads && (
+                      <div style={{
+                        background: "#FFFFFF", borderRadius: 14,
+                        padding: "16px 18px", marginBottom: 16,
+                        border: `1px solid ${C.border}`,
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                      }}>
+                        {/* Header with + button */}
+                        <div style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          marginBottom: 12,
+                        }}>
+                          <div style={{
+                            fontSize: 12, fontWeight: 700, color: C.sub, fontFamily: FONT,
+                            textTransform: "uppercase", letterSpacing: 0.5,
+                          }}>
+                            Group Threads
+                          </div>
+                          {!newThreadOpen && !threadDraft && (
+                            <button
+                              onClick={() => setNewThreadOpen(true)}
+                              title="New thread"
+                              style={{
+                                width: 26, height: 26, borderRadius: 7,
+                                background: "#F5F3FF", border: "1px solid #C4B5FD",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                cursor: "pointer", transition: "all 0.15s",
+                                padding: 0,
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.background = "#EDE9FE"; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* New thread creation panel */}
+                        {newThreadOpen && !threadDraft && (
+                          <div style={{
+                            background: "#FAFAF9", borderRadius: 12,
+                            border: `1.5px solid ${C.accent}`, padding: "14px 16px",
+                            marginBottom: myThreads.length > 0 ? 12 : 0,
+                          }}>
+                            <div style={{
+                              fontSize: 11, fontWeight: 700, color: C.accent,
+                              textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
+                            }}>
+                              New Thread
+                            </div>
+
+                            {selectedParticipants.length > 0 && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                                {selectedParticipants.map(p => (
+                                  <div key={p.person_id} style={{
+                                    display: "inline-flex", alignItems: "center", gap: 5,
+                                    padding: "4px 8px 4px 4px",
+                                    background: "#EEF2FF", border: "1px solid #A5B4FC",
+                                    borderRadius: 20, fontSize: 12, fontWeight: 500,
+                                    color: C.ink, fontFamily: FONT,
+                                  }}>
+                                    <PhotoAvatar name={p.display_name} photoUrl={p.photo_url} size={20} />
+                                    <span>{p.display_name.split(" ")[0]}</span>
+                                    <button
+                                      onClick={() => handleRemoveParticipant(p.person_id)}
+                                      style={{
+                                        background: "none", border: "none", cursor: "pointer",
+                                        padding: "0 2px", color: C.sub, fontSize: 14, lineHeight: 1,
+                                        display: "flex", alignItems: "center",
+                                      }}
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            <div style={{ position: "relative", marginBottom: 10 }}>
+                              <input
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                                placeholder="Search your network to add people..."
+                                autoFocus
+                                style={{
+                                  width: "100%", padding: "8px 10px",
+                                  fontSize: 14, fontFamily: FONT, color: C.ink,
+                                  background: "#fff", border: `1.5px solid ${C.border}`,
+                                  borderRadius: 8, boxSizing: "border-box",
+                                  WebkitAppearance: "none",
+                                  transition: "border-color 0.15s",
+                                }}
+                                onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                onBlur={e => { setTimeout(() => { e.target.style.borderColor = C.border; }, 150); }}
+                              />
+                              {searchQuery.length >= 2 && (searchResults.length > 0 || searchLoading) && (
+                                <div style={{
+                                  position: "absolute", top: "100%", left: 0, right: 0,
+                                  background: "#fff", border: `1px solid ${C.border}`,
+                                  borderRadius: 8, marginTop: 4, zIndex: 10,
+                                  boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                                  maxHeight: 200, overflowY: "auto",
+                                }}>
+                                  {searchLoading && searchResults.length === 0 ? (
+                                    <div style={{ padding: "10px 12px", fontSize: 13, color: C.sub, fontFamily: FONT }}>
+                                      Searching...
+                                    </div>
+                                  ) : searchResults.map(r => (
+                                    <button
+                                      key={r.person_id}
+                                      onMouseDown={(e) => { e.preventDefault(); handleSelectParticipant(r); }}
+                                      style={{
+                                        display: "flex", alignItems: "center", gap: 8,
+                                        width: "100%", padding: "8px 12px",
+                                        background: "none", border: "none", cursor: "pointer",
+                                        fontFamily: FONT, textAlign: "left",
+                                        transition: "background 0.1s",
+                                      }}
+                                      onMouseEnter={e => { e.currentTarget.style.background = "#F5F3FF"; }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
+                                    >
+                                      <PhotoAvatar name={r.display_name} photoUrl={r.photo_url} size={28} />
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>
+                                          {r.display_name}
+                                        </div>
+                                        {(r.current_title || r.current_company) && (
+                                          <div style={{ fontSize: 11, color: C.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                            {[r.current_title, r.current_company].filter(Boolean).join(" at ")}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <DegreeBadge degree={r.degree} />
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {searchQuery.length >= 2 && !searchLoading && searchResults.length === 0 && (
+                                <div style={{
+                                  position: "absolute", top: "100%", left: 0, right: 0,
+                                  background: "#fff", border: `1px solid ${C.border}`,
+                                  borderRadius: 8, marginTop: 4, zIndex: 10,
+                                  boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                                  padding: "10px 12px", fontSize: 13, color: C.sub, fontFamily: FONT,
+                                }}>
+                                  No results — only people open to chat are shown
+                                </div>
+                              )}
+                            </div>
+
+                            {selectedParticipants.length >= 2 && (
+                              <div style={{ marginBottom: 10 }}>
+                                <input
+                                  value={threadTopic}
+                                  onChange={e => setThreadTopic(e.target.value)}
+                                  placeholder="What's this thread about?"
+                                  style={{
+                                    width: "100%", padding: "8px 10px",
+                                    fontSize: 14, fontFamily: FONT, color: C.ink,
+                                    background: "#fff", border: `1.5px solid ${C.border}`,
+                                    borderRadius: 8, boxSizing: "border-box",
+                                    WebkitAppearance: "none",
+                                    transition: "border-color 0.15s",
+                                  }}
+                                  onFocus={e => { e.target.style.borderColor = C.accent; }}
+                                  onBlur={e => { e.target.style.borderColor = C.border; }}
+                                />
+                              </div>
+                            )}
+
+                            {selectedParticipants.length < 2 && (
+                              <p style={{ fontSize: 12, color: C.sub, fontFamily: FONT, margin: 0, lineHeight: 1.5 }}>
+                                Add at least 2 people to start a group thread.
+                              </p>
+                            )}
+
+                            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+                              <button
+                                onClick={handleNewThreadCancel}
+                                style={{
+                                  padding: "7px 14px", background: "#F5F5F4",
+                                  color: C.sub, border: `1px solid ${C.border}`,
+                                  borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                  fontFamily: FONT, cursor: "pointer",
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={handleDraftThread}
+                                disabled={selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading}
+                                style={{
+                                  padding: "7px 14px",
+                                  background: (selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading) ? "#C7D2FE" : C.accent,
+                                  color: "#fff", border: "none", borderRadius: 8,
+                                  fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                                  cursor: (selectedParticipants.length < 2 || !threadTopic.trim() || threadDraftLoading) ? "not-allowed" : "pointer",
+                                  transition: "background 0.15s",
+                                }}
+                              >
+                                {threadDraftLoading ? "Drafting..." : "Draft outreach"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {threadDraft && (
+                          <div style={{ marginBottom: myThreads.length > 0 ? 12 : 0 }}>
+                            <ThreadDraftPanel
+                              threadId={threadDraft.threadId}
+                              creatorToken={threadDraft.creatorToken}
+                              topic={threadDraft.topic}
+                              draftBody={threadDraft.draftBody}
+                              participants={threadDraft.participants}
+                              onDone={handleNewThreadDone}
+                              onCancel={handleNewThreadCancel}
+                            />
+                          </div>
+                        )}
+
+                        {myThreads.length > 0 && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {(showAllThreads ? myThreads : myThreads.slice(0, 3)).map(t => (
+                              <a
+                                key={t.thread_id}
+                                href={`/thread/${t.access_token}`}
+                                style={{
+                                  display: "block", textDecoration: "none",
+                                  padding: "10px 14px",
+                                  background: "#FAFAF9", borderRadius: 10,
+                                  border: `1px solid ${C.border}`,
+                                  transition: "border-color 0.15s, box-shadow 0.15s",
+                                  cursor: "pointer",
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 8px rgba(79,70,229,0.1)"; }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                  </svg>
+                                  <span style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                                    {t.topic}
+                                  </span>
+                                  <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginLeft: "auto", flexShrink: 0 }}>
+                                    {t.participant_count} people
+                                  </span>
+                                </div>
+                                {t.last_message_preview && (
+                                  <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, lineHeight: 1.4 }}>
+                                    <strong style={{ color: C.ink, fontWeight: 500 }}>{t.last_message_author?.split(" ")[0]}:</strong>{" "}
+                                    {t.last_message_preview}
+                                  </div>
+                                )}
+                              </a>
+                            ))}
+                            {!showAllThreads && myThreads.length > 3 && (
+                              <button
+                                onClick={() => setShowAllThreads(true)}
+                                style={{
+                                  background: "none", border: "none", cursor: "pointer",
+                                  fontSize: 13, color: C.accent, fontFamily: FONT,
+                                  padding: "4px 0", textAlign: "center",
+                                }}
+                              >
+                                See {myThreads.length - 3} more →
+                              </button>
                             )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div style={{
-                      fontSize: 13, color: C.sub, fontFamily: FONT,
-                      padding: "10px 0", textAlign: "center",
-                    }}>
-                      No career history yet. Click Edit to add your roles.
-                    </div>
-                  )}
+                        )}
+
+                        {myThreads.length === 0 && !newThreadOpen && !threadDraft && (
+                          <div style={{
+                            textAlign: "center", padding: "12px 0",
+                            fontSize: 13, color: C.sub, fontFamily: FONT,
+                          }}>
+                            No threads yet — tap + to start one
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Gives card */}
+                    {(data.is_self || canAsk || (person.gives && person.gives.length > 0) || person.gives_free_text) && (
+                      <GivesCard gives={person.gives} givesFreeText={person.gives_free_text} personFirstName={personFirstName} canAsk={canAsk} askOpen={askOpen} onAskClick={() => setAskOpen(true)} isSelf={data.is_self} onEditPrefs={() => { setEditingPreferences(true); capture("preferences_opened"); }} />
+                    )}
+
+                    {/* Network Overlap card */}
+                    {overlapData?.network_overlap?.length > 0 && (
+                      <div style={{ position: "sticky", top: 76 }}>
+                        <NetworkOverlapWidget
+                          networkOverlap={overlapData.network_overlap}
+                          personFirstName={person.name?.split(" ")[0]}
+                        />
+                      </div>
+                    )}
+
+                  </div>
                 </div>
               )}
-
-              {/* Web Mentions */}
             </>
           )}
         </div>
