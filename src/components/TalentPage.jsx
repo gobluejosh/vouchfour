@@ -113,7 +113,6 @@ function BrainIcon({ size = 20 }) {
 }
 
 function TalentCard({ talent }) {
-  const colors = DEGREE_COLORS[talent.degree] || DEGREE_COLORS[3];
   const count = Number(talent.recommendation_count);
   const recText = count === 1
     ? "Recommended by 1 person"
@@ -135,16 +134,7 @@ function TalentCard({ talent }) {
     >
       <PhotoAvatar name={talent.display_name} photoUrl={talent.photo_url} size={42} degree={talent.degree} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, fontSize: 15, color: C.ink, fontFamily: FONT }}>{talent.display_name}</span>
-          <span style={{
-            fontSize: 10, fontWeight: 700, color: "#fff",
-            background: colors.badge, borderRadius: 4,
-            padding: "1px 5px", letterSpacing: 0.3,
-          }}>
-            {DEGREE_LABELS[talent.degree]}
-          </span>
-        </div>
+        <span style={{ fontWeight: 600, fontSize: 15, color: C.ink, fontFamily: FONT }}>{talent.display_name}</span>
         {subtitle && (
           <div style={{
             fontSize: 12, color: C.ink, fontFamily: FONT, marginTop: 2,

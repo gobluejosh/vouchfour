@@ -37,12 +37,6 @@ const ASK_DEGREE_OPTIONS = [
 ];
 
 const DEGREE_LABELS = { 0: "You", 1: "1st", 2: "2nd", 3: "3rd" };
-const DEGREE_COLORS = {
-  0: { bg: "#FFF7ED", border: "#FDBA74", badge: "linear-gradient(135deg, #F97316, #EA580C)" },
-  1: { bg: "#EEF2FF", border: "#A5B4FC", badge: "linear-gradient(135deg, #6366F1, #4F46E5)" },
-  2: { bg: "#ECFDF5", border: "#86EFAC", badge: "linear-gradient(135deg, #34D399, #16A34A)" },
-  3: { bg: "#F5F3FF", border: "#C4B5FD", badge: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
-};
 
 // ── Tiny components ────────────────────────────────────────────────────
 
@@ -80,18 +74,6 @@ function PhotoAvatar({ name, photoUrl, size = 64 }) {
   );
 }
 
-function DegreeBadge({ degree }) {
-  const colors = DEGREE_COLORS[degree] || DEGREE_COLORS[3];
-  return (
-    <span style={{
-      fontSize: 11, fontWeight: 700, color: "#fff",
-      background: colors.badge, borderRadius: 5,
-      padding: "2px 8px", letterSpacing: 0.3,
-    }}>
-      {DEGREE_LABELS[degree] || `${degree}°`}
-    </span>
-  );
-}
 
 function ExternalLinkIcon({ size = 14, color }) {
   return (
@@ -1379,12 +1361,9 @@ function NetworkOverlapWidget({ networkOverlap, personFirstName }) {
             }} onClick={() => { window.location.href = `/person/${person.id}`; }}>
               <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={28} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
-                    {person.name}
-                  </span>
-                  <DegreeBadge degree={person.degree} />
-                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                  {person.name}
+                </span>
                 {person.title_at_org && (
                   <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 1 }}>
                     {person.title_at_org}
@@ -1826,12 +1805,9 @@ export default function PersonPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
                   <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={64} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <h1 style={{ fontSize: 20, fontWeight: 800, color: C.ink, margin: 0, fontFamily: FONT }}>
-                        {person.name}
-                      </h1>
-                      {data.degree != null && <DegreeBadge degree={data.degree} />}
-                    </div>
+                    <h1 style={{ fontSize: 20, fontWeight: 800, color: C.ink, margin: 0, fontFamily: FONT }}>
+                      {person.name}
+                    </h1>
                     {subtitle && (
                       <div style={{ fontSize: 14, color: C.sub, fontFamily: FONT, marginTop: 4 }}>
                         {subtitle}
@@ -2015,7 +1991,6 @@ export default function PersonPage() {
                                         </div>
                                       )}
                                     </div>
-                                    <DegreeBadge degree={r.degree} />
                                   </button>
                                 ))}
                               </div>
@@ -3195,8 +3170,7 @@ export default function PersonPage() {
                                           </div>
                                         )}
                                       </div>
-                                      <DegreeBadge degree={r.degree} />
-                                    </button>
+                                      </button>
                                   ))}
                                 </div>
                               )}

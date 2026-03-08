@@ -264,16 +264,7 @@ function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
       >
         <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={36} degree={person.degree} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{person.name}</span>
-            <span style={{
-              fontSize: 9, fontWeight: 700, color: "#fff",
-              background: colors.badge, borderRadius: 4,
-              padding: "1px 5px", letterSpacing: 0.3,
-            }}>
-              {DEGREE_LABELS[person.degree]}
-            </span>
-          </div>
+          <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{person.name}</span>
           {subtitle && (
             <div style={{ fontSize: 12, color: C.ink, fontFamily: FONT, marginTop: 2, opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {subtitle}
