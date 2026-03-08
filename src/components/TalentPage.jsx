@@ -41,6 +41,11 @@ const DEGREE_AVATAR_GRADIENTS = {
   2: "linear-gradient(135deg, #34D399, #16A34A)", // emerald
   3: "linear-gradient(135deg, #A78BFA, #7C3AED)", // violet
 };
+const BRAIN_STARTER_QUESTIONS = [
+  "Who has startup founding experience?",
+  "Who are the strongest engineers?",
+  "Who should I get to know better?",
+];
 function Avatar({ name, size = 38, degree }) {
   const bg = (degree && DEGREE_AVATAR_GRADIENTS[degree]) || gradientForName(name);
   return (
@@ -603,6 +608,31 @@ export default function TalentPage() {
               </form>
             );
 
+            const brainChips = (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                {BRAIN_STARTER_QUESTIONS.map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      capture("brain_starter_clicked", { source: "talent_page", question: q, question_index: i });
+                      window.location.href = `/brain?q=${encodeURIComponent(q)}`;
+                    }}
+                    style={{
+                      background: "#FFFFFF", border: `1.5px solid ${C.chipBorder}`, borderRadius: 20,
+                      padding: isMobile ? "6px 12px" : "6px 14px", fontSize: isMobile ? 12 : 13,
+                      color: C.accent, fontFamily: FONT, cursor: "pointer", whiteSpace: "nowrap",
+                      transition: "border-color 0.15s, box-shadow 0.15s, background 0.15s",
+                    }}
+                    onMouseEnter={e => { e.target.style.background = C.accentLight; e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 2px 6px rgba(79,70,229,0.12)"; }}
+                    onMouseLeave={e => { e.target.style.background = "#FFFFFF"; e.target.style.borderColor = C.chipBorder; e.target.style.boxShadow = "none"; }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            );
+
             const brainPrompt = !loading && talent.length > 0 ? (
               isMobile ? (
                 <div
@@ -620,6 +650,7 @@ export default function TalentPage() {
                   </div>
                   <div onClick={e => e.stopPropagation()}>
                     {brainForm}
+                    {brainChips}
                   </div>
                 </div>
               ) : (
@@ -638,6 +669,7 @@ export default function TalentPage() {
                   </div>
                   <div onClick={e => e.stopPropagation()}>
                     {brainForm}
+                    {brainChips}
                   </div>
                 </div>
               )
