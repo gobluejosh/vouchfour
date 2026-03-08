@@ -17,7 +17,6 @@ const C = {
 const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 const TEMPLATE_LABELS = {
-  vouch_invite: "Vouch Invite",
   login_link: "Login Link",
   please_vouch: "Please Vouch (Legacy)",
   you_were_vouched: "You Were Vouched (Legacy)",
