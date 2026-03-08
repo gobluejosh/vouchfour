@@ -30,9 +30,8 @@ const GIVE_TYPES = [
 ];
 
 const ASK_DEGREE_OPTIONS = [
-  { value: "network", label: "Anyone in my 1st, 2nd or 3rd Degree Network" },
-  { value: "2nd", label: "Only my 1st and 2nd Degree Network" },
-  { value: "1st", label: "Only my 1st Degree Network" },
+  { value: "network", label: "Anyone in my network" },
+  { value: "1st", label: "Only people I vouched for" },
 ];
 
 
