@@ -728,7 +728,7 @@ export default function TalentPage() {
                         capture("talent_filter_changed", { function_filter: val || "all" });
                       }}
                       style={{
-                        width: "100%", padding: "10px 14px", fontSize: 16, fontFamily: FONT, fontWeight: 600,
+                        width: "100%", padding: "10px 14px", fontSize: 15, fontFamily: FONT, fontWeight: 600,
                         border: `1.5px solid ${C.border}`, borderRadius: 10, color: C.ink, background: "#fff", cursor: "pointer",
                         WebkitAppearance: "none", appearance: "none",
                         backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
