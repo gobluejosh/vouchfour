@@ -3993,7 +3993,7 @@ What ${senderFirst} wants to ask:
           // ── Create 2-person thread for this ask ──────────────────────
           const askSubject = draft.draft_subject || draft.question || 'Quick Ask'
           const threadRes = await query(
-            `INSERT INTO threads (creator_id, topic, initial_question) VALUES ($1, $2, $3) RETURNING id`,
+            `INSERT INTO threads (creator_id, topic, initial_question, status) VALUES ($1, $2, $3, 'active') RETURNING id`,
             [session.id, askSubject, draft.question]
           )
           const threadId = threadRes.rows[0].id
