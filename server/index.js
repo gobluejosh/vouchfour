@@ -2212,6 +2212,7 @@ Rules:
 
       // ── Conversation: most recent 2-person thread between viewer & person ──
       let conversation = null
+      let my_conversations = null
       if (session && !isSelf) {
         const convRes = await query(`
           SELECT t.id, t.topic, t.created_at,
@@ -2248,6 +2249,47 @@ Rules:
         }
       }
 
+      // ── Self-view: all my 1:1 conversations ──────────────────────────
+      if (isSelf && session) {
+        const myConvRes = await query(`
+          SELECT t.id, t.topic, t.created_at,
+                 tp_me.access_token,
+                 other.display_name AS other_name, other.photo_url AS other_photo,
+                 other.id AS other_id,
+                 (SELECT COUNT(*) FROM thread_messages WHERE thread_id = t.id) AS message_count,
+                 last_msg.body AS last_message_body,
+                 last_msg.created_at AS last_message_at,
+                 last_author.display_name AS last_message_author
+          FROM threads t
+          JOIN thread_participants tp_me ON tp_me.thread_id = t.id AND tp_me.person_id = $1
+          JOIN thread_participants tp_other ON tp_other.thread_id = t.id AND tp_other.person_id != $1
+          JOIN people other ON other.id = tp_other.person_id
+          LEFT JOIN LATERAL (
+            SELECT tm.body, tm.created_at, tm.author_id
+            FROM thread_messages tm WHERE tm.thread_id = t.id
+            ORDER BY tm.created_at DESC LIMIT 1
+          ) last_msg ON true
+          LEFT JOIN people last_author ON last_author.id = last_msg.author_id
+          WHERE t.status = 'active'
+            AND (SELECT COUNT(*) FROM thread_participants WHERE thread_id = t.id) = 2
+          ORDER BY COALESCE(last_msg.created_at, t.created_at) DESC
+        `, [session.id])
+
+        if (myConvRes.rows.length > 0) {
+          my_conversations = myConvRes.rows.map(c => ({
+            access_token: c.access_token,
+            topic: c.topic,
+            other_name: c.other_name,
+            other_photo: c.other_photo,
+            other_id: Number(c.other_id),
+            message_count: Number(c.message_count),
+            last_message_body: c.last_message_body ? (c.last_message_body.length > 80 ? c.last_message_body.slice(0, 80) + '…' : c.last_message_body) : null,
+            last_message_at: c.last_message_at,
+            last_message_author: c.last_message_author,
+          }))
+        }
+      }
+
       res.writeHead(200)
       res.end(JSON.stringify({
         person: {
@@ -2280,6 +2322,7 @@ Rules:
         is_self: isSelf,
         can_ask: canAsk,
         conversation,
+        my_conversations,
       }))
     } catch (err) {
       console.error('[/api/person error]', err)
