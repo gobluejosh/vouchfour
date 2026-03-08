@@ -3,18 +3,6 @@ import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
 
 // ─── Email Finder via backend ────────────────────────────────────────────────
-async function fetchEmailSuggestions(fullName, linkedinUrl, linkedinDetail, { braveOnly = false } = {}) {
-  const response = await fetch("/api/find-email", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fullName, linkedinUrl, detail: linkedinDetail, braveOnly }),
-  });
-
-  const data = await response.json();
-  console.log(`[Email] Results (${data.source || 'unknown'}):`, data.emails);
-  return { emails: (data.emails || []).slice(0, 3), source: data.source || 'unknown' };
-}
-
 // ─── LinkedIn Search via backend proxy → Claude API + web search ─────────────
 async function fetchLinkedInProfiles(name) {
   const response = await fetch("/api/lookup-linkedin", {
@@ -145,10 +133,9 @@ function SuggestionChips({ items, onSelect, loading, show, type }) {
 }
 
 // ─── Single Contact Form ─────────────────────────────────────────────────────
-function SingleContactForm({ index, onComplete, collectEmail = true }) {
+function SingleContactForm({ index, onComplete }) {
   const [name, setName] = useState("");
   const [linkedinInput, setLinkedinInput] = useState("");
-  const [emailInput, setEmailInput] = useState("");
 
   const [liSuggestions, setLiSuggestions] = useState([]);
   const [liLoading, setLiLoading] = useState(false);
@@ -159,16 +146,9 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
   const [refineCompany, setRefineCompany] = useState("");
   const [refineLoading, setRefineLoading] = useState(false);
 
-  const [emailSuggestions, setEmailSuggestions] = useState([]);
-  const [emailLoading, setEmailLoading] = useState(false);
-  const [emailSearched, setEmailSearched] = useState(false);
-  const [emailConfirmed, setEmailConfirmed] = useState(null);
-  const [emailLoadingMsg, setEmailLoadingMsg] = useState(""); // progressive status
-
-  const [step, setStep] = useState("name"); // name | linkedin | email | done
+  const [step, setStep] = useState("name"); // name | linkedin | done
   const nameInputRef = useRef();
   const liInputRef = useRef();
-  const emailInputRef = useRef();
 
   // Transfer focus from bridge input to name input on mount
   useEffect(() => {
@@ -178,7 +158,6 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
   const debouncedName = useDebounce(name, 800);
   const liSearchId = useRef(0);
   const prefetchCache = useRef({});
-  const emailSearchId = useRef(0);
   const [prefetchStatus, setPrefetchStatus] = useState("idle"); // idle | loading | ready
 
   // Prefetch LinkedIn while user is still on the name step.
@@ -223,53 +202,6 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
     if (!liConfirmed) { setLiFaded(false); return; }
     const t = setTimeout(() => setLiFaded(true), 2000);
     return () => clearTimeout(t);
-  }, [liConfirmed]);
-
-  // Fetch email suggestions as soon as LinkedIn is confirmed
-  // Always runs a refined Brave search with company info from the LinkedIn profile,
-  // even if the prefetch found something (prefetch lacks company context → low quality).
-  useEffect(() => {
-    if (!collectEmail) return;
-    if (!liConfirmed) return;
-    const searchId = ++emailSearchId.current;
-    const trimmed = name.trim();
-
-    setEmailLoading(true);
-    setEmailSearched(false);
-    setEmailSuggestions([]);
-    setEmailLoadingMsg("Searching for email…");
-
-    // Brave search with company/detail context from LinkedIn (fast, ~500ms)
-    fetchEmailSuggestions(trimmed, liConfirmed.url, liConfirmed.detail, { braveOnly: true })
-      .then(result => {
-        if (emailSearchId.current !== searchId) return;
-        if (result.emails.length > 0) {
-          setEmailSuggestions(result.emails);
-          setEmailLoading(false);
-          setEmailSearched(true);
-          setEmailLoadingMsg("");
-          return;
-        }
-
-        // Brave still empty — fall back to Claude (slow)
-        setEmailLoadingMsg("Digging for email suggestion…");
-        return fetchEmailSuggestions(trimmed, liConfirmed.url, liConfirmed.detail);
-      })
-      .then(result => {
-        if (!result) return; // already handled above
-        if (emailSearchId.current !== searchId) return;
-        setEmailSuggestions(result.emails);
-        setEmailLoading(false);
-        setEmailSearched(true);
-        setEmailLoadingMsg("");
-      })
-      .catch(() => {
-        if (emailSearchId.current !== searchId) return;
-        setEmailSuggestions([]);
-        setEmailLoading(false);
-        setEmailSearched(true);
-        setEmailLoadingMsg("");
-      });
   }, [liConfirmed]);
 
   function handleNameNext() {
@@ -324,14 +256,9 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
   }
 
   function handleLinkedInConfirm() {
-    if (collectEmail) {
-      setStep("email");
-      setTimeout(() => emailInputRef.current?.focus(), 100);
-    } else {
-      setStep("done");
-      capture("vouch_slot_filled", { slot_index: index });
-      onComplete({ name: capitalizeName(name), linkedin: linkedinInput.trim(), email: null });
-    }
+    setStep("done");
+    capture("vouch_slot_filled", { slot_index: index });
+    onComplete({ name: capitalizeName(name), linkedin: linkedinInput.trim(), email: null });
   }
 
   function handleRefineSearch() {
@@ -354,21 +281,7 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
     });
   }
 
-  function handleEmailSelect(item) {
-    setEmailConfirmed(item);
-    setEmailInput(item.email);
-    setEmailSuggestions([]);
-  }
-
-  function handleDone() {
-    if (!name.trim() || !emailInput.trim()) return;
-    setStep("done");
-    capture("vouch_slot_filled", { slot_index: index });
-    onComplete({ name: capitalizeName(name), linkedin: linkedinInput, email: emailInput });
-  }
-
   const liShowSuggestions = step === "linkedin" && !liConfirmed && (liLoading || liSuggestions.length > 0 || liSearched);
-  const emailShowSuggestions = step === "email" && !emailConfirmed && !emailLoadingMsg && (emailLoading || emailSuggestions.length > 0 || emailSearched);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -489,7 +402,7 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
                 justifyContent: "center",
               }}
             >
-              {collectEmail ? "Next →" : "Save ✓"}
+              Save ✓
             </button>
           )}
           <SuggestionChips
@@ -563,68 +476,6 @@ function SingleContactForm({ index, onComplete, collectEmail = true }) {
         </div>
       )}
 
-      {/* EMAIL */}
-      {collectEmail && (step === "email" || step === "done") && (
-        <div>
-          <label style={labelStyle}>Email address</label>
-          <input
-            ref={emailInputRef}
-            value={emailInput}
-            onChange={e => { setEmailInput(e.target.value); setEmailConfirmed(null); }}
-            placeholder="Select below or type an address"
-            autoComplete="off"
-            inputMode="email"
-            style={{
-              ...inputStyle,
-              background: emailConfirmed ? C.successLight : "#fff",
-              borderColor: emailConfirmed ? "#86EFAC" : C.border,
-              color: emailConfirmed ? C.success : C.ink,
-            }}
-          />
-          {emailConfirmed && (
-            <div style={{ marginTop: 5, fontSize: 12, color: C.success, fontFamily: FONT, fontWeight: 500 }}>
-              ✓ Email selected
-            </div>
-          )}
-          {emailLoading && emailLoadingMsg && (
-            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, paddingLeft: 2 }}>
-              <span style={{
-                width: 10, height: 10, borderRadius: "50%",
-                border: `1.5px solid ${C.accentSub}`,
-                borderTop: `1.5px solid ${C.accent}`,
-                display: "inline-block",
-                animation: "spin 0.7s linear infinite",
-                flexShrink: 0,
-              }} />
-              <span style={{ fontSize: 12, color: C.sub, fontFamily: FONT }}>{emailLoadingMsg}</span>
-            </div>
-          )}
-          <SuggestionChips
-            show={emailShowSuggestions}
-            loading={emailLoading && !emailLoadingMsg}
-            items={emailSuggestions}
-            onSelect={handleEmailSelect}
-            type="email"
-          />
-          {step === "email" && (
-            <button
-              onClick={handleDone}
-              disabled={!emailInput.trim()}
-              style={{
-                ...nextBtnStyle(!!emailInput.trim()),
-                width: "100%",
-                marginTop: 14,
-                padding: "14px",
-                fontSize: 16,
-                borderRadius: 12,
-                justifyContent: "center",
-              }}
-            >
-              Save ✓
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -998,40 +849,32 @@ export default function App() {
               borderRadius: 14, border: "1.5px solid rgba(0,0,0,0.06)",
               padding: "18px 18px 22px", marginBottom: 20,
             }}>
-              {shareToken ? (
-                activeVoucheeNames.length >= totalVouchees && totalVouchees > 0 ? (
-                  /* All vouchees are already active */
-                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 0, marginTop: 0 }}>
-                    Everyone you recommended is already on VouchFour — no need to share an invite link. Your vouches have been recorded and their networks just got stronger.
-                  </p>
-                ) : activeVoucheeNames.length > 0 ? (
-                  /* Some vouchees are already active */
-                  <>
-                    <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 4, marginTop: 0 }}>
-                      {activeVoucheeNames.length === 1
-                        ? <><strong>{activeVoucheeNames[0]}</strong> is already on VouchFour, so they're all set.</>
-                        : <><strong>{activeVoucheeNames.join(" and ")}</strong> are already on VouchFour, so they're all set.</>}
-                    </p>
-                    <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
-                      So, just share your invite with {totalVouchees - activeVoucheeNames.length === 1 ? "the other person" : "the others"} you recommended via whatever method is easiest for you:
-                    </p>
-                    <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
-                  </>
-                ) : (
-                  /* No vouchees are active */
-                  <>
-                    <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
-                      Now you need to share an invite with {jobFnShort ? `the ${jobFnShort}` : "the professionals"} you recommended so they can access their network. Pick the best option for you:
-                    </p>
-                    <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
-                  </>
-                )
-              ) : (
+              {activeVoucheeNames.length >= totalVouchees && totalVouchees > 0 ? (
+                /* All vouchees are already active */
                 <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 0, marginTop: 0 }}>
-                  {jobFnShort
-                    ? `The ${jobFnShort} you recommended will each receive an email letting them know you think highly of their work.`
-                    : `The professionals you recommended will each receive an email letting them know you think highly of their work.`}
+                  Everyone you recommended is already on VouchFour — no need to share an invite link. Your vouches have been recorded and their networks just got stronger.
                 </p>
+              ) : activeVoucheeNames.length > 0 ? (
+                /* Some vouchees are already active */
+                <>
+                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 4, marginTop: 0 }}>
+                    {activeVoucheeNames.length === 1
+                      ? <><strong>{activeVoucheeNames[0]}</strong> is already on VouchFour, so they're all set.</>
+                      : <><strong>{activeVoucheeNames.join(" and ")}</strong> are already on VouchFour, so they're all set.</>}
+                  </p>
+                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
+                    So, just share your invite with {totalVouchees - activeVoucheeNames.length === 1 ? "the other person" : "the others"} you recommended via whatever method is easiest for you:
+                  </p>
+                  <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
+                </>
+              ) : (
+                /* No vouchees are active */
+                <>
+                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
+                    Now you need to share an invite with {jobFnShort ? `the ${jobFnShort}` : "the professionals"} you recommended so they can access their network. Pick the best option for you:
+                  </p>
+                  <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
+                </>
               )}
             </div>
 
@@ -1289,7 +1132,6 @@ export default function App() {
                   key={`contact-form-${i}`}
                   index={i}
                   onComplete={(data) => handleComplete(i, data)}
-                  collectEmail={invitee?.collectEmail !== false}
                 />
               )}
             </div>

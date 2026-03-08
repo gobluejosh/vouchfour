@@ -1034,10 +1034,6 @@ Rules:
       const invite = result.rows[0]
       const isSelfInvite = invite.inviter_id === invite.invitee_id
 
-      // Check if vouch form should collect email
-      const ceRes = await query("SELECT value FROM app_settings WHERE key = 'vouch_collect_email'")
-      const collectEmail = ceRes.rows[0]?.value !== 'false'
-
       // Build base response
       const baseResponse = {
         name: invite.display_name,
@@ -1050,7 +1046,6 @@ Rules:
           slug: invite.jf_slug,
           practitionerLabel: invite.jf_practitioner_label,
         } : null,
-        collectEmail,
       }
 
       // For completed invites or re-vouch, load existing vouches
@@ -1278,37 +1273,30 @@ Rules:
           is_update: isUpdate,
         })
 
-        // Check email-free mode and generate share token if needed
-        const ceRes = await query("SELECT value FROM app_settings WHERE key = 'vouch_collect_email'")
-        const collectEmail = ceRes.rows[0]?.value !== 'false'
-        let shareToken = null
-        let activeVoucheeNames = []
-        if (!collectEmail) {
-          const stRes = await query('SELECT share_token FROM people WHERE id = $1', [voucherId])
-          shareToken = stRes.rows[0]?.share_token
-          if (!shareToken) {
-            shareToken = crypto.randomBytes(4).toString('hex')
-            await query('UPDATE people SET share_token = $1 WHERE id = $2', [shareToken, voucherId])
-          }
-          console.log(`[Vouch] Email-free mode: share_token for ${invite.display_name}: ${shareToken}`)
-
-          // Vouchees who already existed in the system before this submission are "already on VouchFour"
-          activeVoucheeNames = vouchedPeople.filter(v => !v.isNewToSystem).map(v => v.display_name)
+        // Generate share token for voucher (for invite link sharing)
+        const stRes = await query('SELECT share_token FROM people WHERE id = $1', [voucherId])
+        let shareToken = stRes.rows[0]?.share_token
+        if (!shareToken) {
+          shareToken = crypto.randomBytes(4).toString('hex')
+          await query('UPDATE people SET share_token = $1 WHERE id = $2', [shareToken, voucherId])
         }
 
-        const responsePayload = { ok: true, personId: voucherId }
-        if (shareToken) {
-          responsePayload.shareToken = shareToken
-          responsePayload.activeVoucheeNames = activeVoucheeNames
-          responsePayload.totalVouchees = vouchedPeople.length
-        }
+        // Vouchees who already existed in the system before this submission
+        const activeVoucheeNames = vouchedPeople.filter(v => !v.isNewToSystem).map(v => v.display_name)
+
         res.writeHead(200)
-        res.end(JSON.stringify(responsePayload))
+        res.end(JSON.stringify({
+          ok: true,
+          personId: voucherId,
+          shareToken,
+          activeVoucheeNames,
+          totalVouchees: vouchedPeople.length,
+        }))
 
         // ── Post-commit: create invites + send emails + trigger enrichment ──
 
-        // Send share link email to voucher in email-free mode
-        if (!collectEmail && shareToken && invite.email) {
+        // Send share link email to voucher
+        if (invite.email) {
           const BASE_URL = process.env.BASE_URL || 'http://localhost:3000'
           const inviteLink = `${BASE_URL}/invite/${shareToken}`
           const firstName = invite.display_name.split(' ')[0]
@@ -1334,12 +1322,7 @@ Rules:
           })()
         }
 
-        const jobFunction = { id: invite.jf_id, name: invite.jf_name, slug: invite.jf_slug, practitionerLabel: invite.jf_practitioner_label }
-        const inviterFullName = invite.display_name
-
-        // Create vouch_invites for all new vouchees. In email mode, also send
-        // invite emails. In email-free mode, invites are still created (needed
-        // for token system) but emails are skipped.
+        // Create vouch_invites for all new vouchees (needed for token system)
         ;(async () => {
           for (const talent of newPeople) {
             try {
@@ -1348,24 +1331,9 @@ Rules:
                 `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
                 [newToken, voucherId, talent.id, jobFunctionId]
               )
-
-              if (collectEmail && talent.email) {
-                if (!(await canEmailRecipient(talent.id))) {
-                  console.log(`[Email] Daily cap reached for ${talent.display_name}, skipping vouch_invite`)
-                  continue
-                }
-
-                const resendId = await sendVouchInviteEmail(talent, inviterFullName, jobFunction, newToken)
-                await query(
-                  `INSERT INTO sent_emails (recipient_id, email_type, reference_id, resend_id)
-                   VALUES ($1, 'vouch_invite', $2, $3)`,
-                  [talent.id, invite.id, resendId]
-                )
-              }
             } catch (err) {
-              console.error(`[Email] Failed for ${talent.display_name}:`, err.message)
+              console.error(`[Vouch] Failed to create invite for ${talent.display_name}:`, err.message)
             }
-            await sleep(600)
           }
         })()
 
