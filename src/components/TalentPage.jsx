@@ -718,7 +718,7 @@ export default function TalentPage() {
                   </div>
                 )}
                 {!loading && reachableFunctions.length >= 2 && (
-                  <div style={{ marginBottom: 20 }}>
+                  <div style={{ marginBottom: 12 }}>
                     <select
                       value={activeFunction || ""}
                       onChange={e => {
