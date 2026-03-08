@@ -15,11 +15,6 @@ const C = {
 
 const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
-const DEGREE_COLORS = {
-  1: { bg: "#EEF2FF", border: "#A5B4FC", badge: "linear-gradient(135deg, #6366F1, #4F46E5)" },
-  2: { bg: "#ECFDF5", border: "#86EFAC", badge: "linear-gradient(135deg, #34D399, #16A34A)" },
-  3: { bg: "#F5F3FF", border: "#C4B5FD", badge: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
-};
 
 // ── Small avatar for vouch path ──────────────────────────────────────────
 function MiniAvatar({ name, photoUrl, size = 22 }) {
@@ -71,7 +66,6 @@ function VouchPath({ path }) {
 
 // ── Single draft card ────────────────────────────────────────────────────
 function DraftCard({ draft, sendingState, onEdit, onSend }) {
-  const colors = DEGREE_COLORS[draft.degree] || DEGREE_COLORS[3];
   const stateRaw = sendingState || "draft";
   // sendingState can be a string ("draft"|"sending"|"sent") or { status, reason }
   const state = typeof stateRaw === "object" ? stateRaw.status : stateRaw;
@@ -92,16 +86,7 @@ function DraftCard({ draft, sendingState, onEdit, onSend }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
         <MiniAvatar name={draft.recipient_name} photoUrl={draft.recipient_photo_url} size={32} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{draft.recipient_name}</span>
-            <span style={{
-              fontSize: 9, fontWeight: 700, color: "#fff",
-              background: colors.badge, borderRadius: 4,
-              padding: "1px 5px", letterSpacing: 0.3,
-            }}>
-              {draft.degree === 1 ? "1st" : draft.degree === 2 ? "2nd" : "3rd"}
-            </span>
-          </div>
+          <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{draft.recipient_name}</span>
           {draft.recipient_title && (
             <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 1 }}>
               {draft.recipient_title}
