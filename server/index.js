@@ -4649,6 +4649,51 @@ What ${senderFirst} wants to discuss: "${question}"` }],
     return
   }
 
+  // ─── Brain starter questions ─────────────────────────────────────
+  if (req.method === 'GET' && req.url === '/api/brain-starters') {
+    try {
+      const result = await query("SELECT value FROM site_settings WHERE key = 'brain_starters'")
+      const starters = result.rows[0]?.value || []
+      res.writeHead(200)
+      res.end(JSON.stringify({ starters }))
+    } catch (err) {
+      console.error('[/api/brain-starters error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Update brain starter questions (admin) ─────────────────────
+  if (req.method === 'PUT' && req.url === '/api/brain-starters') {
+    try {
+      const session = await validateSession(req)
+      if (!session || session.id !== 1) {
+        res.writeHead(403)
+        res.end(JSON.stringify({ error: 'Admin only' }))
+        return
+      }
+      const body = await parseBody(req)
+      const starters = body.starters
+      if (!Array.isArray(starters)) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'starters must be an array' }))
+        return
+      }
+      await query(
+        "INSERT INTO site_settings (key, value, updated_at) VALUES ('brain_starters', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+        [JSON.stringify(starters)]
+      )
+      res.writeHead(200)
+      res.end(JSON.stringify({ ok: true, starters }))
+    } catch (err) {
+      console.error('[PUT /api/brain-starters error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── What's New Feed ──────────────────────────────────────────────
   if (req.method === 'GET' && req.url === '/api/feed') {
     try {

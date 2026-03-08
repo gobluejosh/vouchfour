@@ -41,11 +41,6 @@ const DEGREE_AVATAR_GRADIENTS = {
   2: "linear-gradient(135deg, #34D399, #16A34A)", // emerald
   3: "linear-gradient(135deg, #A78BFA, #7C3AED)", // violet
 };
-const BRAIN_STARTER_QUESTIONS = [
-  "Who has startup founding experience?",
-  "Who are the strongest engineers?",
-  "Who should I get to know better?",
-];
 function Avatar({ name, size = 38, degree }) {
   const bg = (degree && DEGREE_AVATAR_GRADIENTS[degree]) || gradientForName(name);
   return (
@@ -387,6 +382,7 @@ export default function TalentPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [feedItems, setFeedItems] = useState([]);
+  const [starterQuestions, setStarterQuestions] = useState([]);
   const [vouchFunction, setVouchFunction] = useState(null);
 
   // Auth flow on mount
@@ -484,6 +480,14 @@ export default function TalentPage() {
       .then(data => setFeedItems(data.items || []))
       .catch(() => {});
   }, [authState]);
+
+  // Fetch brain starter questions
+  useEffect(() => {
+    fetch("/api/brain-starters")
+      .then(res => res.ok ? res.json() : { starters: [] })
+      .then(data => setStarterQuestions(data.starters || []))
+      .catch(() => {});
+  }, []);
 
   const isMobile = useIsMobile();
   const firstName = user?.name?.split(" ")[0] || "";
@@ -608,9 +612,11 @@ export default function TalentPage() {
               </form>
             );
 
-            const brainChips = (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                {BRAIN_STARTER_QUESTIONS.map((q, i) => (
+            const brainChips = starterQuestions.length > 0 ? (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.sub, marginBottom: 6, fontFamily: FONT }}>Try Asking:</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {starterQuestions.map((q, i) => (
                   <button
                     key={i}
                     onClick={(e) => {
@@ -630,8 +636,9 @@ export default function TalentPage() {
                     {q}
                   </button>
                 ))}
+                </div>
               </div>
-            );
+            ) : null;
 
             const brainPrompt = !loading && talent.length > 0 ? (
               isMobile ? (

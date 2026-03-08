@@ -281,6 +281,11 @@ export default function AdminPage() {
   // Accordion
   const [openTemplate, setOpenTemplate] = useState(null);
 
+  // Brain starters
+  const [brainStarters, setBrainStarters] = useState([]);
+  const [savingStarters, setSavingStarters] = useState(false);
+  const [savedStarters, setSavedStarters] = useState(false);
+
   async function handleAuth(e) {
     e?.preventDefault();
     if (!secret.trim()) return;
@@ -301,17 +306,20 @@ export default function AdminPage() {
   async function loadAllData(sec) {
     setLoading(true);
     try {
-      const [settingsRes, coeffsRes, templatesRes] = await Promise.all([
+      const [settingsRes, coeffsRes, templatesRes, startersRes] = await Promise.all([
         adminFetch("/api/admin/settings", sec),
         adminFetch("/api/admin/coefficients", sec),
         adminFetch("/api/admin/email-templates", sec),
+        fetch("/api/brain-starters"),
       ]);
       const settingsData = await settingsRes.json();
       const coeffsData = await coeffsRes.json();
       const templatesData = await templatesRes.json();
+      const startersData = await startersRes.json();
       setSettings(settingsData.settings || {});
       setCoefficients(coeffsData.coefficients || []);
       setTemplates((templatesData.templates || []).filter(t => TEMPLATE_LABELS[t.template_key]));
+      setBrainStarters(startersData.starters || []);
     } catch (err) {
       console.error("Failed to load admin data:", err);
     } finally {
@@ -425,6 +433,27 @@ export default function AdminPage() {
       console.error("Failed to save templates:", err);
     } finally {
       setSavingTemplates(false);
+    }
+  }
+
+  async function saveBrainStarters() {
+    setSavingStarters(true);
+    setSavedStarters(false);
+    try {
+      const res = await fetch("/api/brain-starters", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ starters: brainStarters.filter(s => s.trim()) }),
+      });
+      const data = await res.json();
+      setBrainStarters(data.starters || []);
+      setSavedStarters(true);
+      setTimeout(() => setSavedStarters(false), 2000);
+    } catch (err) {
+      console.error("Failed to save brain starters:", err);
+    } finally {
+      setSavingStarters(false);
     }
   }
 
@@ -792,6 +821,46 @@ export default function AdminPage() {
                   />
                 ))}
                 <SaveButton onClick={saveCoefficients} saving={savingCoeffs} saved={savedCoeffs} />
+              </Section>
+
+              {/* Brain Starter Questions */}
+              <Section title="Brain Starter Questions">
+                <p style={{ fontSize: 12, color: C.sub, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+                  Suggestion chips shown below the Brain prompt on the talent page. Empty rows are removed on save.
+                </p>
+                {brainStarters.map((q, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                    <input
+                      value={q}
+                      onChange={e => {
+                        const updated = [...brainStarters];
+                        updated[i] = e.target.value;
+                        setBrainStarters(updated);
+                      }}
+                      style={{
+                        flex: 1, padding: "8px 12px", fontSize: 13, fontFamily: FONT,
+                        border: `1.5px solid ${C.border}`, borderRadius: 8, color: C.ink,
+                      }}
+                      placeholder="e.g. Who has startup founding experience?"
+                    />
+                    <button
+                      onClick={() => setBrainStarters(brainStarters.filter((_, j) => j !== i))}
+                      style={{
+                        background: "none", border: "none", cursor: "pointer",
+                        fontSize: 18, color: C.sub, padding: "4px 8px", lineHeight: 1,
+                      }}
+                    >×</button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => setBrainStarters([...brainStarters, ""])}
+                  style={{
+                    background: "none", border: `1.5px dashed ${C.border}`, borderRadius: 8,
+                    padding: "8px 14px", fontSize: 12, color: C.accent, fontWeight: 600,
+                    fontFamily: FONT, cursor: "pointer", marginBottom: 12, width: "100%",
+                  }}
+                >+ Add question</button>
+                <SaveButton onClick={saveBrainStarters} saving={savingStarters} saved={savedStarters} />
               </Section>
 
               {/* Email Templates */}
