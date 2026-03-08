@@ -8,7 +8,6 @@ import { query, getClient } from './lib/db.js'
 import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations, getVouchPaths } from './lib/graph.js'
 import { sendVouchInviteEmail, sendLoginLinkEmail, sendEmail, loadTemplate, applyVariables, emailLayout, isUnsubscribed, getRecipient } from './lib/email.js'
-import { processNudges, processVoucherNudges } from './lib/nudge.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
 import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
 import { normalizeOrgName } from './lib/orgNormalize.js'
@@ -2442,26 +2441,6 @@ Rules:
       res.end(JSON.stringify({ templates: result.rows }))
     } catch (err) {
       console.error('[/api/admin/email-templates PUT error]', err)
-      res.writeHead(500)
-      res.end(JSON.stringify({ error: 'Internal server error' }))
-    }
-    return
-  }
-
-  // ─── Admin: send nudges ─────────────────────────────────────────
-  if (req.method === 'POST' && req.url === '/api/admin/send-nudges') {
-    if (!requireAdmin(req, res)) return
-    try {
-      const [inviteeResults, voucherResults] = await Promise.all([
-        processNudges(),
-        processVoucherNudges(),
-      ])
-      const results = { invitee: inviteeResults, voucher: voucherResults }
-      console.log('[Admin] Nudge run results:', results)
-      res.writeHead(200)
-      res.end(JSON.stringify(results))
-    } catch (err) {
-      console.error('[/api/admin/send-nudges error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }
@@ -5453,20 +5432,6 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 server.listen(PORT, () => {
   console.log(`API server running on http://localhost:${PORT}`)
 })
-
-// ─── Auto-run nudges every 6 hours ───────────────────────────────
-setInterval(async () => {
-  console.log('[Nudge] Starting scheduled nudge run...')
-  try {
-    const [inviteeResults, voucherResults] = await Promise.all([
-      processNudges(),
-      processVoucherNudges(),
-    ])
-    console.log('[Nudge] Scheduled run complete:', { invitee: inviteeResults, voucher: voucherResults })
-  } catch (err) {
-    console.error('[Nudge] Scheduled run failed:', err.message)
-  }
-}, 6 * 60 * 60 * 1000)
 
 // Flush PostHog events on shutdown
 process.on('SIGTERM', async () => {

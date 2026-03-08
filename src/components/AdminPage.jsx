@@ -18,9 +18,6 @@ const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 const TEMPLATE_LABELS = {
   vouch_invite: "Vouch Invite",
-  nudge_1: "Nudge 1 (First Reminder)",
-  nudge_2: "Nudge 2 (Final Reminder)",
-  voucher_nudge: "Voucher Nudge (Ask to Reach Out)",
   login_link: "Login Link",
   talent_ready: "Talent Ready (Deprecated)",
   please_vouch: "Please Vouch (Legacy)",
@@ -274,10 +271,6 @@ export default function AdminPage() {
   const [savedTemplates, setSavedTemplates] = useState(false);
   const [savingToggle, setSavingToggle] = useState(false);
 
-  // Nudge
-  const [sendingNudges, setSendingNudges] = useState(false);
-  const [nudgeResults, setNudgeResults] = useState(null);
-
   // Accordion
   const [openTemplate, setOpenTemplate] = useState(null);
 
@@ -349,10 +342,6 @@ export default function AdminPage() {
           settings: {
             cross_function_discount: settings.cross_function_discount,
             sibling_coefficient: settings.sibling_coefficient,
-            nudge_1_delay_days: settings.nudge_1_delay_days,
-            nudge_2_delay_days: settings.nudge_2_delay_days,
-            nudge_network_threshold: settings.nudge_network_threshold,
-            voucher_nudge_delay_days: settings.voucher_nudge_delay_days,
             quick_ask_max_recipients: settings.quick_ask_max_recipients,
             quick_ask_max_sends_per_week: settings.quick_ask_max_sends_per_week,
             quick_ask_max_receives_per_week: settings.quick_ask_max_receives_per_week,
@@ -448,23 +437,6 @@ export default function AdminPage() {
       console.error("Failed to save brain starters:", err);
     } finally {
       setSavingStarters(false);
-    }
-  }
-
-  async function sendNudges() {
-    setSendingNudges(true);
-    setNudgeResults(null);
-    try {
-      const res = await adminFetch("/api/admin/send-nudges", secret.trim(), {
-        method: "POST",
-      });
-      const data = await res.json();
-      setNudgeResults(data);
-    } catch (err) {
-      console.error("Failed to send nudges:", err);
-      setNudgeResults({ errors: [{ error: err.message }] });
-    } finally {
-      setSendingNudges(false);
     }
   }
 
@@ -630,81 +602,6 @@ export default function AdminPage() {
                   onChange={v => setSettings(s => ({ ...s, cross_function_discount: v }))}
                 />
                 <SaveButton onClick={saveSettings} saving={savingSettings} saved={savedSettings} />
-              </Section>
-
-              {/* Nudge Emails */}
-              <Section title="Nudge Emails">
-                <p style={{ fontSize: 12, color: C.sub, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
-                  Automated follow-up emails for vouch invitees who haven't responded.
-                  Up to 2 nudges per invite, gated by timing and minimum network size.
-                  Runs automatically every 6 hours.
-                </p>
-                <InputRow
-                  label="Nudge 1 delay (days)"
-                  description="Days after invite before sending the first reminder"
-                  type="number"
-                  value={settings.nudge_1_delay_days || ""}
-                  onChange={v => setSettings(s => ({ ...s, nudge_1_delay_days: v }))}
-                />
-                <InputRow
-                  label="Nudge 2 delay (days)"
-                  description="Days after invite before sending the final reminder (nudge 1 must already be sent)"
-                  type="number"
-                  value={settings.nudge_2_delay_days || ""}
-                  onChange={v => setSettings(s => ({ ...s, nudge_2_delay_days: v }))}
-                />
-                <InputRow
-                  label="Network size threshold"
-                  description="Minimum network size (inviter's talent recs) required before nudging"
-                  type="number"
-                  value={settings.nudge_network_threshold || ""}
-                  onChange={v => setSettings(s => ({ ...s, nudge_network_threshold: v }))}
-                />
-                <InputRow
-                  label="Voucher nudge delay (days)"
-                  description="Days after vouch submission before emailing the voucher to personally nudge their unresponsive picks"
-                  type="number"
-                  value={settings.voucher_nudge_delay_days || ""}
-                  onChange={v => setSettings(s => ({ ...s, voucher_nudge_delay_days: v }))}
-                />
-                <SaveButton onClick={saveSettings} saving={savingSettings} saved={savedSettings} />
-                <details style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-                  <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: FONT, color: C.warn, userSelect: "none" }}>
-                    Manual Send
-                  </summary>
-                  <div style={{ marginTop: 12 }}>
-                    <button
-                      onClick={sendNudges}
-                      disabled={sendingNudges}
-                      style={{
-                        padding: "10px 22px",
-                        background: sendingNudges ? "#FCD34D" : C.warn,
-                        color: "#fff", border: "none", borderRadius: 8,
-                        fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                        cursor: sendingNudges ? "default" : "pointer",
-                      }}
-                    >
-                      {sendingNudges ? "Sending..." : "Send Nudges Now"}
-                    </button>
-                    {nudgeResults && (
-                      <div style={{
-                        marginTop: 10, padding: "10px 14px",
-                        background: nudgeResults.errors?.length > 0 ? "#FEF2F2" : C.successLight,
-                        border: `1px solid ${nudgeResults.errors?.length > 0 ? "#FECACA" : "#BBF7D0"}`,
-                        borderRadius: 8, fontSize: 12, fontFamily: FONT, lineHeight: 1.6,
-                      }}>
-                        <div><strong>Nudge 1 sent:</strong> {nudgeResults.nudge_1_sent ?? 0}</div>
-                        <div><strong>Nudge 2 sent:</strong> {nudgeResults.nudge_2_sent ?? 0}</div>
-                        <div><strong>Skipped:</strong> {nudgeResults.skipped ?? 0}</div>
-                        {nudgeResults.errors?.length > 0 && (
-                          <div style={{ color: C.danger, marginTop: 4 }}>
-                            <strong>Errors:</strong> {nudgeResults.errors.map(e => e.error).join(", ")}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </details>
               </Section>
 
               {/* Quick Ask Limits */}
