@@ -827,6 +827,14 @@ export default function App() {
   const vouchFirstName = invitee?.name?.split(" ")[0] || "";
   const submittedContacts = contacts.filter(Boolean);
 
+  // Helper: format a list of first names for display
+  function formatNames(names) {
+    if (names.length === 0) return "";
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    return names.slice(0, -1).join(", ") + ", and " + names[names.length - 1];
+  }
+
   if (submitted) {
     const jobFnShort = invitee?.jobFunction?.practitionerLabel || null;
 
@@ -849,79 +857,42 @@ export default function App() {
               borderRadius: 14, border: "1.5px solid rgba(0,0,0,0.06)",
               padding: "18px 18px 22px", marginBottom: 20,
             }}>
-              {activeVoucheeNames.length >= totalVouchees && totalVouchees > 0 ? (
-                /* All vouchees are already active */
-                <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 0, marginTop: 0 }}>
-                  Everyone you recommended is already on VouchFour — no need to share an invite link. Your vouches have been recorded and their networks just got stronger.
-                </p>
-              ) : activeVoucheeNames.length > 0 ? (
-                /* Some vouchees are already active */
-                <>
-                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 4, marginTop: 0 }}>
-                    {activeVoucheeNames.length === 1
-                      ? <><strong>{activeVoucheeNames[0]}</strong> is already on VouchFour, so they're all set.</>
-                      : <><strong>{activeVoucheeNames.join(" and ")}</strong> are already on VouchFour, so they're all set.</>}
-                  </p>
-                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
-                    So, just share your invite with {totalVouchees - activeVoucheeNames.length === 1 ? "the other person" : "the others"} you recommended via whatever method is easiest for you:
-                  </p>
-                  <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
-                </>
-              ) : (
-                /* No vouchees are active */
-                <>
-                  <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
-                    Now you need to share an invite with {jobFnShort ? `the ${jobFnShort}` : "the professionals"} you recommended so they can access their network. Pick the best option for you:
-                  </p>
-                  <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
-                </>
-              )}
-            </div>
-
-            {/* You recommended */}
-            <div style={{
-              background: "linear-gradient(135deg, #ECFDF5 0%, #DBEAFE 100%)", borderRadius: 14, border: "1.5px solid rgba(0,0,0,0.06)",
-              padding: "16px 18px", marginBottom: 20,
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                You recommended
-              </div>
-              {submittedContacts.map((c, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 0",
-                  borderTop: i > 0 ? `1px solid ${C.border}` : "none",
-                }}>
-                  <div style={{
-                    width: 34, height: 34, borderRadius: 9,
-                    background: gradientForName(c.name), color: "#fff",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, fontWeight: 700, fontFamily: FONT, flexShrink: 0,
-                    textShadow: "0 1px 2px rgba(0,0,0,0.15)",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                  }}>
-                    {initialsForName(c.name)}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{c.name}</div>
-                  </div>
-                </div>
-              ))}
               {(() => {
-                const li = invitee?.linkedin;
-                const slugMatch = li && li.match(/\/in\/([^/]+)/);
-                const talentSlug = slugMatch ? slugMatch[1] : null;
-                return talentSlug ? (
-                  <a href={`/talent/${talentSlug}`} style={{
-                    display: "block", textAlign: "center", padding: "12px 28px",
-                    marginTop: 14, background: "rgba(255,255,255,0.5)", color: C.accent,
-                    border: `1.5px solid ${C.accent}`, borderRadius: 10,
-                    fontSize: 14, fontWeight: 600, textDecoration: "none",
-                    fontFamily: FONT,
-                  }}>
-                    View Your Talent Network
-                  </a>
-                ) : null;
+                const allNames = submittedContacts.map(c => c.name.split(" ")[0]);
+                const activeFirstNames = activeVoucheeNames.map(n => n.split(" ")[0]);
+                const newNames = allNames.filter(n => !activeFirstNames.includes(n));
+
+                if (activeVoucheeNames.length >= totalVouchees && totalVouchees > 0) {
+                  /* All vouchees are already active */
+                  return (
+                    <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 0, marginTop: 0 }}>
+                      <strong>{formatNames(activeFirstNames)}</strong> {activeFirstNames.length === 1 ? "is" : "are"} already on VouchFour — no need to share an invite link. Your vouches have been recorded and their networks just got stronger.
+                    </p>
+                  );
+                } else if (activeVoucheeNames.length > 0) {
+                  /* Some vouchees are already active */
+                  return (
+                    <>
+                      <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 4, marginTop: 0 }}>
+                        <strong>{formatNames(activeFirstNames)}</strong> {activeFirstNames.length === 1 ? "is" : "are"} already on VouchFour, so they're all set.
+                      </p>
+                      <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
+                        Just share your invite with <strong>{formatNames(newNames)}</strong> via whatever method is easiest for you:
+                      </p>
+                      <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
+                    </>
+                  );
+                } else {
+                  /* No vouchees are active */
+                  return (
+                    <>
+                      <p style={{ fontSize: 15, color: C.ink, lineHeight: 1.6, marginBottom: 16, marginTop: 0 }}>
+                        Now share an invite with <strong>{formatNames(allNames)}</strong> so they can access their network. Pick the best option for you:
+                      </p>
+                      <ShareLinkBox shareToken={shareToken} jobFnShort={jobFnShort} voucherFirstName={vouchFirstName} />
+                    </>
+                  );
+                }
               })()}
             </div>
 
@@ -1020,6 +991,24 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {/* View talent network link */}
+            {(() => {
+              const li = invitee?.linkedin;
+              const slugMatch = li && li.match(/\/in\/([^/]+)/);
+              const talentSlug = slugMatch ? slugMatch[1] : null;
+              return talentSlug ? (
+                <a href={`/talent/${talentSlug}`} style={{
+                  display: "block", textAlign: "center", padding: "12px 28px",
+                  background: "rgba(255,255,255,0.5)", color: C.accent,
+                  border: `1.5px solid ${C.accent}`, borderRadius: 10,
+                  fontSize: 14, fontWeight: 600, textDecoration: "none",
+                  fontFamily: FONT,
+                }}>
+                  View Your Network
+                </a>
+              ) : null;
+            })()}
 
           </div>
         </div>
