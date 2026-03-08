@@ -2210,6 +2210,44 @@ Rules:
         }
       }
 
+      // ── Conversation: most recent 2-person thread between viewer & person ──
+      let conversation = null
+      if (session && !isSelf) {
+        const convRes = await query(`
+          SELECT t.id, t.topic, t.created_at,
+                 tp_me.access_token,
+                 (SELECT COUNT(*) FROM thread_messages WHERE thread_id = t.id) AS message_count,
+                 last_msg.body AS last_message_body,
+                 last_msg.created_at AS last_message_at,
+                 last_author.display_name AS last_message_author
+          FROM threads t
+          JOIN thread_participants tp_me ON tp_me.thread_id = t.id AND tp_me.person_id = $1
+          JOIN thread_participants tp_them ON tp_them.thread_id = t.id AND tp_them.person_id = $2
+          LEFT JOIN LATERAL (
+            SELECT tm.body, tm.created_at, tm.author_id
+            FROM thread_messages tm WHERE tm.thread_id = t.id
+            ORDER BY tm.created_at DESC LIMIT 1
+          ) last_msg ON true
+          LEFT JOIN people last_author ON last_author.id = last_msg.author_id
+          WHERE t.status = 'active'
+            AND (SELECT COUNT(*) FROM thread_participants WHERE thread_id = t.id) = 2
+          ORDER BY COALESCE(last_msg.created_at, t.created_at) DESC
+          LIMIT 1
+        `, [session.id, personId])
+
+        if (convRes.rows.length > 0) {
+          const c = convRes.rows[0]
+          conversation = {
+            access_token: c.access_token,
+            topic: c.topic,
+            message_count: Number(c.message_count),
+            last_message_body: c.last_message_body ? (c.last_message_body.length > 80 ? c.last_message_body.slice(0, 80) + '…' : c.last_message_body) : null,
+            last_message_at: c.last_message_at,
+            last_message_author: c.last_message_author,
+          }
+        }
+      }
+
       res.writeHead(200)
       res.end(JSON.stringify({
         person: {
@@ -2241,6 +2279,7 @@ Rules:
         web_mentions: webMentions,
         is_self: isSelf,
         can_ask: canAsk,
+        conversation,
       }))
     } catch (err) {
       console.error('[/api/person error]', err)
@@ -3908,6 +3947,43 @@ What ${senderFirst} wants to ask:
 </div>`
           }
 
+          // ── Create 2-person thread for this ask ──────────────────────
+          const askSubject = draft.draft_subject || draft.question || 'Quick Ask'
+          const threadRes = await query(
+            `INSERT INTO threads (creator_id, topic, initial_question) VALUES ($1, $2, $3) RETURNING id`,
+            [session.id, askSubject, draft.question]
+          )
+          const threadId = threadRes.rows[0].id
+
+          // Creator participant
+          const creatorAccessToken = crypto.randomBytes(12).toString('hex')
+          await query(
+            `INSERT INTO thread_participants (thread_id, person_id, access_token, role, has_participated)
+             VALUES ($1, $2, $3, 'creator', true)`,
+            [threadId, session.id, creatorAccessToken]
+          )
+
+          // Recipient participant
+          const recipientAccessToken = crypto.randomBytes(12).toString('hex')
+          await query(
+            `INSERT INTO thread_participants (thread_id, person_id, access_token, vouch_path, role)
+             VALUES ($1, $2, $3, $4, 'participant')`,
+            [threadId, draft.recipient_id, recipientAccessToken, JSON.stringify(vouchPath)]
+          )
+
+          // Initial message (the ask body)
+          await query(
+            `INSERT INTO thread_messages (thread_id, author_id, body, is_initial)
+             VALUES ($1, $2, $3, true)`,
+            [threadId, session.id, draft.draft_body]
+          )
+
+          // Link ask recipient row to thread
+          await query(
+            `UPDATE quick_ask_recipients SET thread_id = $1 WHERE id = $2`,
+            [threadId, draft.id]
+          )
+
           // Convert draft body newlines to HTML
           const messageBody = draft.draft_body.replace(/\n/g, '<br/>')
 
@@ -3922,16 +3998,7 @@ What ${senderFirst} wants to ask:
             recipientName: draft.recipient_name,
             connectionSection,
             messageBody,
-            replyUrl: await (async () => {
-              // Generate a login token so recipient can authenticate via the CTA link
-              const replyLoginToken = crypto.randomUUID()
-              await query(
-                `INSERT INTO login_tokens (token, person_id, expires_at)
-                 VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-                [replyLoginToken, draft.recipient_id]
-              )
-              return `${BASE_URL}/person/${session.id}?token=${replyLoginToken}&reply_to=${draft.id}`
-            })(),
+            replyUrl: `${BASE_URL}/thread/${recipientAccessToken}`,
           }
           const rawSubject = applyVariables(draft.draft_subject || template.subject, vars)
           const subject = `From ${sender.display_name}: ${rawSubject}`
@@ -4803,6 +4870,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         ) last_msg ON true
         LEFT JOIN people last_author ON last_author.id = last_msg.author_id
         WHERE tp.person_id = $1 AND t.status = 'active'
+          AND (SELECT COUNT(*) FROM thread_participants WHERE thread_id = t.id) > 2
         ORDER BY COALESCE(last_msg.created_at, t.created_at) DESC
       `, [session.id])
 
@@ -4921,6 +4989,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         JOIN people p ON p.id = tm.author_id
         WHERE tm.author_id != $1
           AND t.status = 'active'
+          AND tm.is_initial = false
           AND tm.created_at > NOW() - INTERVAL '10 days'
         ORDER BY tm.created_at DESC
         LIMIT 7

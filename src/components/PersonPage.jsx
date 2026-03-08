@@ -1379,7 +1379,7 @@ function formatRolePeriod(role) {
   return `${start}–${end}`;
 }
 
-function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onAskClick, isSelf, onEditPrefs }) {
+function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onAskClick, isSelf, onEditPrefs, conversation }) {
   return (
     <div style={{
       background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
@@ -1457,6 +1457,42 @@ function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onA
           </div>
         </div>
       ) : null}
+
+      {/* Conversation — most recent 1:1 thread with this person */}
+      {conversation && !isSelf && (
+        <a
+          href={`/thread/${conversation.access_token}`}
+          style={{
+            display: "block", marginTop: 12, padding: "12px 14px",
+            background: "#F8F7F6", borderRadius: 10,
+            border: `1px solid ${C.border}`,
+            textDecoration: "none", color: "inherit",
+            transition: "border-color 0.15s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, fontFamily: FONT }}>
+              View conversation
+            </span>
+            <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginLeft: "auto" }}>
+              {conversation.message_count} message{conversation.message_count !== 1 ? "s" : ""}
+            </span>
+          </div>
+          {conversation.last_message_body && (
+            <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, lineHeight: 1.5 }}>
+              <span style={{ fontWeight: 600, color: C.ink }}>
+                {conversation.last_message_author?.split(" ")[0]}:
+              </span>{" "}
+              {conversation.last_message_body}
+            </div>
+          )}
+        </a>
+      )}
     </div>
   );
 }
@@ -2337,8 +2373,8 @@ export default function PersonPage() {
                   )}
 
                   {/* Gives card */}
-                  {(data.is_self || canAsk || (person.gives && person.gives.length > 0) || person.gives_free_text) && (
-                    <GivesCard gives={person.gives} givesFreeText={person.gives_free_text} personFirstName={personFirstName} canAsk={canAsk} askOpen={askOpen} onAskClick={() => setAskOpen(true)} isSelf={data.is_self} onEditPrefs={() => { setEditingPreferences(true); capture("preferences_opened"); }} />
+                  {(data.is_self || canAsk || (person.gives && person.gives.length > 0) || person.gives_free_text || data.conversation) && (
+                    <GivesCard gives={person.gives} givesFreeText={person.gives_free_text} personFirstName={personFirstName} canAsk={canAsk} askOpen={askOpen} onAskClick={() => setAskOpen(true)} isSelf={data.is_self} onEditPrefs={() => { setEditingPreferences(true); capture("preferences_opened"); }} conversation={data.conversation} />
                   )}
 
                   {/* Left column content */}
@@ -3527,8 +3563,8 @@ export default function PersonPage() {
                     )}
 
                     {/* Gives card */}
-                    {(data.is_self || canAsk || (person.gives && person.gives.length > 0) || person.gives_free_text) && (
-                      <GivesCard gives={person.gives} givesFreeText={person.gives_free_text} personFirstName={personFirstName} canAsk={canAsk} askOpen={askOpen} onAskClick={() => setAskOpen(true)} isSelf={data.is_self} onEditPrefs={() => { setEditingPreferences(true); capture("preferences_opened"); }} />
+                    {(data.is_self || canAsk || (person.gives && person.gives.length > 0) || person.gives_free_text || data.conversation) && (
+                      <GivesCard gives={person.gives} givesFreeText={person.gives_free_text} personFirstName={personFirstName} canAsk={canAsk} askOpen={askOpen} onAskClick={() => setAskOpen(true)} isSelf={data.is_self} onEditPrefs={() => { setEditingPreferences(true); capture("preferences_opened"); }} conversation={data.conversation} />
                     )}
 
                     {/* Network Overlap card */}
