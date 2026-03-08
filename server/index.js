@@ -12,6 +12,7 @@ import { processNudges, processVoucherNudges } from './lib/nudge.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
 import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
 import { normalizeOrgName } from './lib/orgNormalize.js'
+import { runMigrations } from './lib/migrate.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -5122,9 +5123,16 @@ What ${senderFirst} wants to discuss: "${question}"` }],
   res.end(JSON.stringify({ error: 'Not found' }))
 })
 
-server.listen(PORT, () => {
-  console.log(`API server running on http://localhost:${PORT}`)
-})
+runMigrations()
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log(`API server running on http://localhost:${PORT}`)
+    })
+  })
+  .catch(err => {
+    console.error('[Migrate] Fatal:', err.message)
+    process.exit(1)
+  })
 
 // ─── Auto-run nudges every 6 hours ───────────────────────────────
 setInterval(async () => {
