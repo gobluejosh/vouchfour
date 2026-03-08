@@ -36,7 +36,7 @@ const ASK_DEGREE_OPTIONS = [
   { value: "none", label: "No one" },
 ];
 
-const DEGREE_LABELS = { 0: "You", 1: "1st", 2: "2nd", 3: "3rd" };
+
 
 // ── Tiny components ────────────────────────────────────────────────────
 
@@ -141,11 +141,8 @@ function PathAvatar({ name, photoUrl, size = 24 }) {
   );
 }
 
-function RecommendationPath({ path, degree, degreeMismatch, personFirstName, userOverlap }) {
+function RecommendationPath({ path, personFirstName, userOverlap }) {
   if (!path || path.length < 2) return null;
-
-  const degreeLabel = degree != null ? (DEGREE_LABELS[degree] || `${degree}°`) : null;
-  const showMismatchText = degreeMismatch && degreeLabel;
 
   return (
     <div style={{
@@ -211,14 +208,6 @@ function RecommendationPath({ path, degree, degreeMismatch, personFirstName, use
           );
         })}
       </div>
-      {showMismatchText && (
-        <div style={{
-          fontSize: 10, color: "#9CA3AF", fontFamily: FONT,
-          marginTop: 6, fontStyle: "italic",
-        }}>
-          {degreeLabel} degree by forward recommendation
-        </div>
-      )}
       {userOverlap?.length > 0 && (
         <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
           <div style={{
@@ -1431,6 +1420,7 @@ export default function PersonPage() {
   const [threadDraftLoading, setThreadDraftLoading] = useState(false);
   const [threadDraft, setThreadDraft] = useState(null); // { threadId, creatorToken, topic, draftBody, participants }
   const [overlapData, setOverlapData] = useState(null);
+  const hasCareerOverlap = overlapData?.user_overlap?.length > 0;
 
   // Auth flow
   useEffect(() => {
@@ -1508,6 +1498,15 @@ export default function PersonPage() {
       .then(d => { if (d) setOverlapData(d); })
       .catch(() => {});
   }, [data?.is_self, personId]);
+
+  // Auto-set "knows them" when career overlap exists
+  useEffect(() => {
+    if (!overlapData?.user_overlap?.length) return;
+    if (knowsThem !== null) return; // don't override if user already answered
+    const orgs = overlapData.user_overlap.map(o => o.organization).join(", ");
+    setKnowsThem(true);
+    setKnowsThemHow(`Worked together at ${orgs}`);
+  }, [overlapData]);
 
   // Auto-open reply mode if ?reply_to= param present
   // Fetches the original message context, then creates a blank reply draft
@@ -1849,7 +1848,7 @@ export default function PersonPage() {
                   {/* You & Name */}
                   {!data.is_self && (
                     <RecommendationPath
-                      path={data.vouch_path} degree={data.degree} degreeMismatch={data.degree_mismatch}
+                      path={data.vouch_path}
                       personFirstName={personFirstName}
                       userOverlap={overlapData?.user_overlap}
                     />
@@ -2178,7 +2177,7 @@ export default function PersonPage() {
                         onFocus={e => { e.target.style.borderColor = C.accent; }}
                         onBlur={e => { e.target.style.borderColor = C.border; }}
                       />
-                      {!replyContext && data?.degree >= 2 && (() => {
+                      {!replyContext && data?.degree >= 2 && !hasCareerOverlap && (() => {
                         const intermediaryFirst = data.intermediary_name?.split(" ")[0];
                         return (
                           <div style={{ marginTop: 10 }}>
@@ -2631,7 +2630,7 @@ export default function PersonPage() {
                           onFocus={e => { e.target.style.borderColor = C.accent; }}
                           onBlur={e => { e.target.style.borderColor = C.border; }}
                         />
-                        {!replyContext && data?.degree >= 2 && (() => {
+                        {!replyContext && data?.degree >= 2 && !hasCareerOverlap && (() => {
                           const intermediaryFirst = data.intermediary_name?.split(" ")[0];
                           return (
                             <div style={{ marginTop: 10 }}>
