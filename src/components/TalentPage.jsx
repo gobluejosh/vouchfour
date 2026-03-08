@@ -735,7 +735,7 @@ export default function TalentPage() {
                         backgroundRepeat: "no-repeat", backgroundPosition: "right 14px center",
                       }}
                     >
-                      <option value="">Filter Your Network</option>
+                      <option value="">All Job Functions</option>
                       {reachableFunctions.map(jf => (
                         <option key={jf.slug} value={jf.slug}>{jf.practitionerLabel || jf.name}</option>
                       ))}
