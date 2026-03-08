@@ -919,14 +919,12 @@ export default function App() {
                 >
                   <option value="" disabled>Choose a function…</option>
                   {[
-                    { id: 15, name: "Clinicians", slug: "clinicians" },
                     { id: 16, name: "Coaches", slug: "coaches" },
                     { id: 17, name: "Communications / PR", slug: "communications" },
                     { id: 18, name: "Consultants", slug: "consultants" },
                     { id: 10, name: "Customer Success", slug: "customer-success" },
                     { id: 6, name: "Data / Analytics", slug: "data" },
                     { id: 5, name: "Design (Product/UX)", slug: "design" },
-                    { id: 19, name: "Educators", slug: "educators" },
                     { id: 1, name: "Engineering", slug: "engineering" },
                     { id: 11, name: "Executive", slug: "executive" },
                     { id: 7, name: "Finance / Accounting", slug: "finance" },
