@@ -1619,6 +1619,42 @@ Rules:
     return
   }
 
+  // ─── Private notes (per-user, per-person) ──────────────────────────
+  const notePutMatch = req.method === 'PUT' && req.url.match(/^\/api\/person\/(\d+)\/note$/)
+  if (notePutMatch) {
+    const session = await validateSession(req)
+    if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Authentication required' })); return }
+    const subjectId = parseInt(notePutMatch[1])
+    try {
+      const body = await readBody(req)
+      const noteText = (body.note_text || '').trim()
+      console.log(`[Note PUT] author=${session.id} subject=${subjectId} text="${noteText.slice(0, 50)}"`)
+
+      if (noteText === '') {
+        await query('DELETE FROM person_notes WHERE author_id = $1 AND subject_id = $2', [session.id, subjectId])
+        res.writeHead(200)
+        res.end(JSON.stringify({ note_text: '', updated_at: null }))
+        return
+      }
+
+      const result = await query(
+        `INSERT INTO person_notes (author_id, subject_id, note_text, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (author_id, subject_id) DO UPDATE
+         SET note_text = $3, updated_at = NOW()
+         RETURNING note_text, updated_at`,
+        [session.id, subjectId, noteText]
+      )
+      res.writeHead(200)
+      res.end(JSON.stringify(result.rows[0]))
+    } catch (err) {
+      console.error('[/api/person/note PUT error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Update own profile (auth required) ────────────────────────────
   if (req.method === 'PUT' && req.url.startsWith('/api/person/')) {
     try {
@@ -1762,6 +1798,11 @@ Rules:
         if (body.gives_free_text !== undefined) {
           updates.push(`gives_free_text = $${idx++}`)
           params.push(body.gives_free_text?.trim() || null)
+        }
+
+        if (body.ask_allow_career_overlap !== undefined) {
+          updates.push(`ask_allow_career_overlap = $${idx++}`)
+          params.push(!!body.ask_allow_career_overlap)
         }
 
         if (updates.length === 0) {
@@ -1966,6 +2007,32 @@ Rules:
     return
   }
 
+  // ─── Private note GET ──────────────────────────────────────────────
+  const noteGetMatch = req.method === 'GET' && req.url.match(/^\/api\/person\/(\d+)\/note$/)
+  if (noteGetMatch) {
+    const session = await validateSession(req)
+    if (!session) { res.writeHead(401); res.end('{}'); return }
+    const subjectId = parseInt(noteGetMatch[1])
+    try {
+      console.log(`[Note GET] author=${session.id} subject=${subjectId}`)
+      const result = await query(
+        'SELECT note_text, updated_at FROM person_notes WHERE author_id = $1 AND subject_id = $2',
+        [session.id, subjectId]
+      )
+      console.log(`[Note GET] found=${result.rows.length}`, result.rows[0]?.note_text?.slice(0, 50) || '(empty)')
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        note_text: result.rows[0]?.note_text || '',
+        updated_at: result.rows[0]?.updated_at || null,
+      }))
+    } catch (err) {
+      console.error('[/api/person/note GET error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Person detail (auth required) ─────────────────────────────────
   if (req.method === 'GET' && req.url.startsWith('/api/person/')) {
     try {
@@ -1987,7 +2054,7 @@ Rules:
       const personRes = await query(`
         SELECT id, display_name, linkedin_url, email, current_title, current_company,
                location, seniority, industry, headline, photo_url, enriched_at,
-               ask_receive_degree, gives, gives_free_text
+               ask_receive_degree, ask_allow_career_overlap, gives, gives_free_text
         FROM people WHERE id = $1
       `, [personId])
 
@@ -2121,11 +2188,26 @@ Rules:
       // Compute effective ask degree (resolves NULL default based on vouch status)
       const effectiveAskDegree = person.ask_receive_degree || (personHasVouched ? 'network' : '1st')
 
-      // Compute can_ask: considers degree, email, preferences
+      // Compute can_ask: considers degree, email, preferences, career overlap
       let canAsk = false
-      if (!isSelf && computedDegree >= 1 && computedDegree <= 3 && person.email) {
+      if (!isSelf && person.email) {
         const maxDeg = askDegreeLimit(person.ask_receive_degree, personHasVouched)
-        canAsk = computedDegree <= maxDeg
+        if (computedDegree >= 1 && computedDegree <= 3 && computedDegree <= maxDeg) {
+          canAsk = true
+        }
+        // Career overlap bypass: if recipient allows it and they share employer history
+        if (!canAsk && person.ask_allow_career_overlap !== false) {
+          const overlapRes = await query(`
+            SELECT 1 FROM employment_history a
+            JOIN employment_history b ON b.person_id = $2
+            WHERE a.person_id = $1
+              AND lower(a.organization) = lower(b.organization)
+              AND (a.start_date IS NULL OR b.end_date IS NULL OR b.is_current OR a.start_date <= COALESCE(b.end_date, NOW()))
+              AND (b.start_date IS NULL OR a.end_date IS NULL OR a.is_current OR b.start_date <= COALESCE(a.end_date, NOW()))
+            LIMIT 1
+          `, [session.id, personId])
+          if (overlapRes.rows.length > 0) canAsk = true
+        }
       }
 
       res.writeHead(200)
@@ -2145,7 +2227,10 @@ Rules:
           gives: person.gives || [],
           gives_free_text: person.gives_free_text || null,
           // Only expose ask preference to self (effective value, not raw NULL)
-          ...(isSelf ? { ask_receive_degree: effectiveAskDegree } : {}),
+          ...(isSelf ? {
+            ask_receive_degree: effectiveAskDegree,
+            ask_allow_career_overlap: person.ask_allow_career_overlap !== false,
+          } : {}),
         },
         degree: computedDegree,
         degree_mismatch,
@@ -3022,7 +3107,7 @@ Rules:
       // Pull enrichment summaries + structured fields for all network people
       const personIds = talent.map(t => t.id)
 
-      const [enrichmentRes, structuredRes, userProfileRes, userSummaryRes, userHistoryRes] = await Promise.all([
+      const [enrichmentRes, structuredRes, userProfileRes, userSummaryRes, userHistoryRes, networkHistoryRes, userNotesRes] = await Promise.all([
         query(`
           SELECT DISTINCT ON (person_id) person_id, ai_summary FROM person_enrichment
           WHERE person_id = ANY($1) AND source IN ('claude-compact', 'claude') AND ai_summary IS NOT NULL
@@ -3030,7 +3115,7 @@ Rules:
         `, [personIds]),
         query(`
           SELECT id, display_name, current_title, current_company, industry, linkedin_url, photo_url,
-                 email, ask_receive_degree, gives, gives_free_text,
+                 email, ask_receive_degree, ask_allow_career_overlap, gives, gives_free_text,
                  EXISTS(SELECT 1 FROM vouches WHERE voucher_id = people.id) AS has_vouched
           FROM people WHERE id = ANY($1)
         `, [personIds]),
@@ -3044,9 +3129,19 @@ Rules:
           WHERE person_id = $1 AND source = 'claude'
         `, [userId]),
         query(`
-          SELECT organization, title, is_current FROM employment_history
+          SELECT organization, title, is_current, start_date, end_date FROM employment_history
           WHERE person_id = $1 ORDER BY start_date DESC NULLS LAST
         `, [userId]),
+        // Employment history for all network people (for career overlap)
+        query(`
+          SELECT person_id, organization, title, start_date, end_date, is_current
+          FROM employment_history WHERE person_id = ANY($1)
+        `, [personIds]),
+        // User's private notes about network people
+        query(`
+          SELECT subject_id, note_text FROM person_notes
+          WHERE author_id = $1 AND subject_id = ANY($2)
+        `, [userId, personIds]),
       ])
 
       const summaryMap = new Map()
@@ -3055,10 +3150,47 @@ Rules:
       const structuredMap = new Map()
       for (const row of structuredRes.rows) structuredMap.set(row.id, row)
 
+      const notesMap = new Map()
+      for (const row of (userNotesRes.rows || [])) notesMap.set(row.subject_id, row.note_text)
+
+      // ─── Compute career overlaps between user and each network person ──
+      const userHistory = userHistoryRes.rows || []
+      const userHistoryNormed = userHistory.map(r => ({
+        ...r,
+        norm: normalizeOrgName(r.organization),
+        startDate: r.start_date ? new Date(r.start_date) : new Date('1970-01-01'),
+        endDate: (r.is_current || !r.end_date) ? new Date() : new Date(r.end_date),
+      }))
+
+      // Group network people's history by person_id
+      const networkHistoryMap = new Map()
+      for (const row of (networkHistoryRes.rows || [])) {
+        if (!networkHistoryMap.has(row.person_id)) networkHistoryMap.set(row.person_id, [])
+        networkHistoryMap.get(row.person_id).push({
+          ...row,
+          norm: normalizeOrgName(row.organization),
+          startDate: row.start_date ? new Date(row.start_date) : new Date('1970-01-01'),
+          endDate: (row.is_current || !row.end_date) ? new Date() : new Date(row.end_date),
+        })
+      }
+
+      // For each network person, find orgs where they overlapped with user
+      const overlapMap = new Map() // person_id → [org names]
+      for (const [personId, history] of networkHistoryMap) {
+        const sharedOrgs = new Set()
+        for (const uh of userHistoryNormed) {
+          for (const ph of history) {
+            if (uh.norm && ph.norm && uh.norm === ph.norm && uh.startDate <= ph.endDate && ph.startDate <= uh.endDate) {
+              sharedOrgs.add(ph.organization)
+            }
+          }
+        }
+        if (sharedOrgs.size > 0) overlapMap.set(personId, [...sharedOrgs])
+      }
+
       // Build user's own profile context
       const userProfile = userProfileRes.rows[0]
       const userSummary = userSummaryRes.rows[0]?.ai_summary || ''
-      const userHistory = userHistoryRes.rows || []
       let userContext = ''
       if (userProfile) {
         const parts = [`Name: ${userProfile.display_name}`]
@@ -3104,6 +3236,8 @@ Rules:
           else if (s?.current_company) parts.push(` — ${s.current_company}`)
           parts.push(` (${degreeLabel} degree connection)`)
           if (summary) parts.push(`\n\n${summary}`)
+          const note = notesMap.get(t.id)
+          if (note) parts.push(`\n\n*Your note:* ${note}`)
           return parts.join('')
         })
         const answer = nameMatches.length === 1
@@ -3112,12 +3246,14 @@ Rules:
         const matchedPeople = nameMatches.map(t => {
           const s = structuredMap.get(t.id)
           const maxDeg = askDegreeLimit(s?.ask_receive_degree, s?.has_vouched)
-          const canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
+          let canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
+          if (!canAsk && !!s?.email && s?.ask_allow_career_overlap !== false && overlapMap.has(t.id)) canAsk = true
           return {
             id: t.id, name: t.display_name, linkedin_url: t.linkedin_url,
             degree: t.degree, vouch_score: t.vouch_score,
             current_title: s?.current_title || null, current_company: s?.current_company || null,
             photo_url: s?.photo_url || null, can_ask: canAsk,
+            career_overlap: overlapMap.has(t.id) ? overlapMap.get(t.id) : null,
           }
         })
         console.log(`[NetworkBrain] Name shortcut: "${question}" → ${nameMatches.length} match(es) in ${Date.now() - start}ms`)
@@ -3126,7 +3262,7 @@ Rules:
         return
       }
 
-      // Build network context for Claude (includes gives)
+      // Build network context for Claude (includes gives + career overlap)
       const networkContext = talent.map(t => {
         const s = structuredMap.get(t.id)
         const summary = summaryMap.get(t.id) || ''
@@ -3135,12 +3271,16 @@ Rules:
         else if (s?.current_company) parts.push(`| ${s.current_company}`)
         if (s?.industry) parts.push(`| ${s.industry}`)
         parts.push(`| Degree ${t.degree}, Score ${t.vouch_score}`)
+        const overlap = overlapMap.get(t.id)
+        if (overlap) parts.push(`| ⚡ Worked with user at: ${overlap.join(', ')}`)
         const gives = s?.gives || []
         if (gives.length > 0) {
           const giveLabels = gives.map(g => GIVE_TYPE_LABELS[g] || g).join(', ')
           parts.push(`| Gives: ${giveLabels}`)
         }
         if (s?.gives_free_text) parts.push(`| Also: ${s.gives_free_text}`)
+        const note = notesMap.get(t.id)
+        if (note) parts.push(`| 📝 User's note: ${note}`)
         if (summary) parts.push(`\n  Profile: ${summary}`)
         return parts.join(' ')
       }).join('\n')
@@ -3163,9 +3303,13 @@ ${userContext}
 
 Below is data about every person in their network, including their role, company, industry, vouch score (higher = more trusted), degree of connection (1 = direct, 2 = one hop, 3 = two hops), and a brief professional summary where available.
 
+People marked with ⚡ "Worked with user at: [company]" were at the same company during an overlapping time period. At a smaller company or startup, this likely means they worked together directly. At a large company (e.g. Amazon, Google), they may or may not have crossed paths — use language like "you overlapped at Amazon" rather than "you worked together." When relevant, mention this shared history naturally. Career overlap is especially useful for questions about who the user might already know, who to reach out to, or who might be willing to help.
+
 Answer the user's question by recommending specific people from their network. Always reference people by name and explain why they're relevant. You know the user's background, so you can tailor recommendations based on shared experience, complementary skills, or relevant connections. If no one in the network matches, say so honestly. Keep responses to 2-4 short paragraphs. Use bullet points when listing multiple people. Be direct and actionable.
 
 Some people have indicated specific ways they're willing to help (listed as "Gives"). Use this as a helpful signal when relevant — for example, mention that someone offers reference checks or introductions if it's pertinent to the user's question. However, treat Gives as a soft signal, not a hard constraint. Feel free to suggest someone even if they haven't explicitly listed a matching Give.
+
+People marked with 📝 "User's note:" have a private note written by the user. These contain the user's personal observations, context, or reminders about that person (e.g. "met at SaaStr", "great at system design", "looking for a new role"). Treat notes as reliable first-person knowledge and use them to give more personalized, relevant recommendations.
 
 Network (${talent.length} people):
 ${networkContext}`,
@@ -3193,7 +3337,8 @@ ${networkContext}`,
       ).map(t => {
         const s = structuredMap.get(t.id)
         const maxDeg = askDegreeLimit(s?.ask_receive_degree, s?.has_vouched)
-        const canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
+        let canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
+        if (!canAsk && !!s?.email && s?.ask_allow_career_overlap !== false && overlapMap.has(t.id)) canAsk = true
         return {
           id: t.id,
           name: t.display_name,
@@ -3204,6 +3349,7 @@ ${networkContext}`,
           current_company: s?.current_company || null,
           photo_url: s?.photo_url || null,
           can_ask: canAsk,
+          career_overlap: overlapMap.has(t.id) ? overlapMap.get(t.id) : null,
         }
       })
 
@@ -3411,7 +3557,7 @@ ${networkContext}`,
         }
         const rRes = await query(
           `SELECT p.id, p.display_name, p.email, p.current_title, p.current_company, p.photo_url,
-                  p.ask_receive_degree,
+                  p.ask_receive_degree, p.ask_allow_career_overlap,
                   pe.ai_summary,
                   EXISTS(SELECT 1 FROM vouches WHERE voucher_id = p.id) AS has_vouched
            FROM people p
@@ -3457,7 +3603,21 @@ ${networkContext}`,
           END AS degree
         `, [session.id, rid])
         const senderDegree = degRes.rows[0]?.degree
-        if (senderDegree === null || senderDegree === undefined || senderDegree > maxDeg) {
+        let allowed = senderDegree !== null && senderDegree !== undefined && senderDegree <= maxDeg
+        // Career overlap bypass
+        if (!allowed && recipientRow.ask_allow_career_overlap !== false) {
+          const overlapRes = await query(`
+            SELECT 1 FROM employment_history a
+            JOIN employment_history b ON b.person_id = $2
+            WHERE a.person_id = $1
+              AND lower(a.organization) = lower(b.organization)
+              AND (a.start_date IS NULL OR b.end_date IS NULL OR b.is_current OR a.start_date <= COALESCE(b.end_date, NOW()))
+              AND (b.start_date IS NULL OR a.end_date IS NULL OR a.is_current OR b.start_date <= COALESCE(a.end_date, NOW()))
+            LIMIT 1
+          `, [session.id, rid])
+          if (overlapRes.rows.length > 0) allowed = true
+        }
+        if (!allowed) {
           recipientsBlocked.push({ id: rid, name: recipientRow.display_name })
           continue
         }
@@ -3872,7 +4032,7 @@ What ${senderFirst} wants to ask:
 
         const rRes = await query(
           `SELECT p.id, p.display_name, p.email, p.current_title, p.current_company, p.photo_url,
-                  p.ask_receive_degree,
+                  p.ask_receive_degree, p.ask_allow_career_overlap,
                   EXISTS(SELECT 1 FROM vouches WHERE voucher_id = p.id) AS has_vouched
            FROM people p WHERE p.id = $1`, [rid])
         if (!rRes.rows[0]) continue
@@ -3913,7 +4073,20 @@ What ${senderFirst} wants to ask:
           END AS degree
         `, [session.id, rid])
         const senderDegree = degRes.rows[0]?.degree
-        if (senderDegree === null || senderDegree === undefined || senderDegree > maxDeg) {
+        let allowed = senderDegree !== null && senderDegree !== undefined && senderDegree <= maxDeg
+        if (!allowed && recipientRow.ask_allow_career_overlap !== false) {
+          const overlapRes = await query(`
+            SELECT 1 FROM employment_history a
+            JOIN employment_history b ON b.person_id = $2
+            WHERE a.person_id = $1
+              AND lower(a.organization) = lower(b.organization)
+              AND (a.start_date IS NULL OR b.end_date IS NULL OR b.is_current OR a.start_date <= COALESCE(b.end_date, NOW()))
+              AND (b.start_date IS NULL OR a.end_date IS NULL OR a.is_current OR b.start_date <= COALESCE(a.end_date, NOW()))
+            LIMIT 1
+          `, [session.id, rid])
+          if (overlapRes.rows.length > 0) allowed = true
+        }
+        if (!allowed) {
           recipientsBlocked.push({ id: rid, name: recipientRow.display_name })
           continue
         }

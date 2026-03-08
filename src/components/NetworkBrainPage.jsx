@@ -24,12 +24,7 @@ const DEGREE_AVATAR_GRADIENTS = {
   3: "linear-gradient(135deg, #A78BFA, #7C3AED)",
 };
 
-const STARTER_QUESTIONS = [
-  "Who has startup founding experience?",
-  "Who works in healthcare or health tech?",
-  "Who are the strongest engineers?",
-  "Who should I get to know better?",
-];
+// Starter questions fetched from admin-configurable site_settings
 
 // ── Tiny components ────────────────────────────────────────────────────
 
@@ -488,6 +483,7 @@ export default function NetworkBrainPage() {
   const [threadTopic, setThreadTopic] = useState("");
   const [threadDraft, setThreadDraft] = useState(null); // { thread_id, creator_token, topic, draft_body, participants }
   const [threadDraftLoading, setThreadDraftLoading] = useState(false);
+  const [starterQuestions, setStarterQuestions] = useState([]);
 
   // People from the most recent brain response (for right column on desktop)
   const latestBrainMsg = [...messages].reverse().find(m => m.role === "brain" && m.people?.length > 0);
@@ -525,6 +521,14 @@ export default function NetworkBrainPage() {
         })
         .catch(() => setAuthState("unauthenticated"));
     }
+  }, []);
+
+  // Fetch brain starter questions
+  useEffect(() => {
+    fetch("/api/brain-starters")
+      .then(res => res.ok ? res.json() : { starters: [] })
+      .then(data => setStarterQuestions(data.starters || []))
+      .catch(() => {});
   }, []);
 
   // Auto-submit question from ?q= parameter (e.g. from homepage brain prompt)
@@ -671,21 +675,38 @@ export default function NetworkBrainPage() {
       p => selectedPeople.has(p.id) && p.degree >= 2
     );
     if (selected2ndPlus.length > 0) {
-      // Fetch intermediary names for 2nd+ degree people
-      let intermediaries = {};
-      try {
-        const pathRes = await fetch("/api/vouch-paths", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recipient_ids: selected2ndPlus.map(p => p.id) }),
-        });
-        if (pathRes.ok) intermediaries = await pathRes.json();
-      } catch (e) { /* non-critical */ }
+      // Separate career-overlap people (auto-context) from non-overlap (need prompting)
+      const overlapPeople = selected2ndPlus.filter(p => p.career_overlap && p.career_overlap.length > 0);
+      const nonOverlapPeople = selected2ndPlus.filter(p => !p.career_overlap || p.career_overlap.length === 0);
 
-      // Initialize context for each 2nd+ degree person
+      // Fetch intermediary names only for non-overlap 2nd+ degree people
+      let intermediaries = {};
+      if (nonOverlapPeople.length > 0) {
+        try {
+          const pathRes = await fetch("/api/vouch-paths", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ recipient_ids: nonOverlapPeople.map(p => p.id) }),
+          });
+          if (pathRes.ok) intermediaries = await pathRes.json();
+        } catch (e) { /* non-critical */ }
+      }
+
+      // Initialize context
       const ctx = {};
-      selected2ndPlus.forEach(p => {
+      // Auto-fill context for career overlap people — skip the "Do you know X?" prompt
+      overlapPeople.forEach(p => {
+        ctx[p.id] = {
+          knows_them: true,
+          relationship: `Worked together at ${p.career_overlap.join(", ")}`,
+          intermediary_context: "",
+          intermediary_name: null,
+          auto_overlap: true,
+        };
+      });
+      // Normal context for non-overlap people
+      nonOverlapPeople.forEach(p => {
         ctx[p.id] = {
           knows_them: false,
           relationship: "",
@@ -693,15 +714,41 @@ export default function NetworkBrainPage() {
           intermediary_name: intermediaries[p.id]?.intermediary_name || null,
         };
       });
-      setRecipientContext(ctx);
-      setShowContextStep(true);
+
+      if (nonOverlapPeople.length > 0) {
+        // Some people still need context prompting
+        setRecipientContext(ctx);
+        setShowContextStep(true);
+      } else {
+        // All 2nd+ degree people have career overlap — skip context step, draft immediately
+        setRecipientContext(ctx);
+        handleDraftMessages(ctx);
+      }
     } else {
-      // All 1st degree — skip context step, draft immediately
-      handleDraftMessages();
+      // All 1st degree — skip context step, but still pass career overlap context if available
+      const allSelected = (brainMsg?.people || []).filter(p => selectedPeople.has(p.id));
+      const overlapCtx = {};
+      allSelected.forEach(p => {
+        if (p.career_overlap && p.career_overlap.length > 0) {
+          overlapCtx[p.id] = {
+            knows_them: true,
+            relationship: `Worked together at ${p.career_overlap.join(", ")}`,
+            intermediary_context: "",
+            intermediary_name: null,
+            auto_overlap: true,
+          };
+        }
+      });
+      if (Object.keys(overlapCtx).length > 0) {
+        setRecipientContext(overlapCtx);
+        handleDraftMessages(overlapCtx);
+      } else {
+        handleDraftMessages();
+      }
     }
   }
 
-  async function handleDraftMessages() {
+  async function handleDraftMessages(ctxOverride) {
     if (askMode === null || selectedPeople.size === 0) return;
 
     // The user question is in the message before the brain response
@@ -719,7 +766,7 @@ export default function NetworkBrainPage() {
         body: JSON.stringify({
           question,
           recipient_ids: [...selectedPeople],
-          recipient_context: recipientContext,
+          recipient_context: ctxOverride || recipientContext,
         }),
       });
 
@@ -900,13 +947,13 @@ export default function NetworkBrainPage() {
               <div style={{ flex: 1, paddingTop: 16, paddingBottom: 16 }}>
 
                 {/* Starter chips (only when no messages) */}
-                {messages.length === 0 && !loading && (
+                {messages.length === 0 && !loading && starterQuestions.length > 0 && (
                   <div style={{ paddingTop: 20 }}>
                     <div style={{ fontSize: 12, color: C.sub, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>
-                      Try asking
+                      Try prompts like:
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {STARTER_QUESTIONS.map((q, i) => (
+                      {starterQuestions.map((q, i) => (
                         <button
                           key={i}
                           onClick={() => askQuestion(q)}
@@ -997,6 +1044,7 @@ export default function NetworkBrainPage() {
                                         const person = (msg.people || []).find(p => p.id === Number(pid));
                                         if (!person) return null;
                                         const ctx = recipientContext[pid];
+                                        if (ctx.auto_overlap) return null; // Skip — auto-filled from career overlap
                                         const personFirst = person.name.split(" ")[0];
                                         const intermediaryFirst = ctx.intermediary_name?.split(" ")[0];
                                         return (
@@ -1354,13 +1402,13 @@ export default function NetworkBrainPage() {
                 <div style={{ flex: 2, minWidth: 0, display: "flex", flexDirection: "column" }}>
 
                   {/* Starter chips (only when no messages) */}
-                  {messages.length === 0 && !loading && (
+                  {messages.length === 0 && !loading && starterQuestions.length > 0 && (
                     <div style={{ paddingTop: 20 }}>
                       <div style={{ fontSize: 12, color: C.sub, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>
-                        Try asking
+                        Try prompts like:
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {STARTER_QUESTIONS.map((q, qi) => (
+                        {starterQuestions.map((q, qi) => (
                           <button
                             key={qi}
                             onClick={() => askQuestion(q)}
@@ -1576,6 +1624,7 @@ export default function NetworkBrainPage() {
                                 const person = (latestBrainMsg.people || []).find(p => p.id === Number(pid));
                                 if (!person) return null;
                                 const ctx = recipientContext[pid];
+                                if (ctx.auto_overlap) return null; // Skip — auto-filled from career overlap
                                 const personFirst = person.name.split(" ")[0];
                                 const intermediaryFirst = ctx.intermediary_name?.split(" ")[0];
                                 return (

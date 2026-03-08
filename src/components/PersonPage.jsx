@@ -33,7 +33,6 @@ const ASK_DEGREE_OPTIONS = [
   { value: "network", label: "Anyone in my 1st, 2nd or 3rd Degree Network" },
   { value: "2nd", label: "Only my 1st and 2nd Degree Network" },
   { value: "1st", label: "Only my 1st Degree Network" },
-  { value: "none", label: "No one" },
 ];
 
 
@@ -141,7 +140,11 @@ function PathAvatar({ name, photoUrl, size = 24 }) {
   );
 }
 
-function RecommendationPath({ path, personFirstName, userOverlap }) {
+function RecommendationPath({
+  path, personFirstName, userOverlap,
+  noteText, noteEditing, noteSaving,
+  onNoteChange, onNoteEdit, onNoteSave, onNoteCancel,
+}) {
   if (!path || path.length < 2) return null;
 
   return (
@@ -225,6 +228,88 @@ function RecommendationPath({ path, personFirstName, userOverlap }) {
           ))}
         </div>
       )}
+      {/* Private Note */}
+      <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
+        <div style={{
+          fontSize: 10, fontWeight: 700, color: C.sub,
+          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
+          <span>Private Note <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(only viewable by you)</span></span>
+          {!noteEditing && noteText && (
+            <button
+              onClick={onNoteEdit}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                fontSize: 10, color: C.accent, fontWeight: 600, padding: 0,
+                fontFamily: FONT, textTransform: "none", letterSpacing: 0,
+              }}
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        {noteEditing ? (
+          <div>
+            <textarea
+              value={noteText}
+              onChange={e => onNoteChange(e.target.value)}
+              placeholder={`Add a private note about ${personFirstName}...`}
+              rows={3}
+              autoFocus
+              style={{
+                width: "100%", padding: "8px 10px",
+                fontSize: 13, fontFamily: FONT, color: C.ink,
+                background: "#fff", border: `1.5px solid ${C.border}`,
+                borderRadius: 6, resize: "vertical", lineHeight: 1.5,
+                boxSizing: "border-box",
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, marginTop: 6, justifyContent: "flex-end" }}>
+              <button
+                onClick={onNoteCancel}
+                style={{
+                  padding: "4px 10px", fontSize: 11, fontWeight: 600,
+                  background: "none", border: `1px solid ${C.border}`,
+                  borderRadius: 5, cursor: "pointer", color: C.sub, fontFamily: FONT,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onNoteSave}
+                disabled={noteSaving}
+                style={{
+                  padding: "4px 10px", fontSize: 11, fontWeight: 600,
+                  background: C.accent, border: "none",
+                  borderRadius: 5, cursor: "pointer", color: "#fff", fontFamily: FONT,
+                  opacity: noteSaving ? 0.6 : 1,
+                }}
+              >
+                {noteSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        ) : noteText ? (
+          <div style={{
+            fontSize: 12, color: C.ink, fontFamily: FONT, lineHeight: 1.6,
+            whiteSpace: "pre-wrap",
+          }}>
+            {noteText}
+          </div>
+        ) : (
+          <button
+            onClick={onNoteEdit}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              fontSize: 12, color: C.sub, fontFamily: FONT, padding: 0,
+              fontStyle: "italic",
+            }}
+          >
+            + Add a private note about {personFirstName}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -517,6 +602,7 @@ function SummaryEditForm({ summary, personId, onSave, onCancel }) {
 function PreferencesForm({ person, onSave, onCancel }) {
   // Server returns the effective ask degree (never null — defaults resolved server-side)
   const [askDegree, setAskDegree] = useState(person.ask_receive_degree || "network");
+  const [askAllowOverlap, setAskAllowOverlap] = useState(person.ask_allow_career_overlap !== false);
   const [gives, setGives] = useState(new Set(person.gives || []));
   const [freeText, setFreeText] = useState(person.gives_free_text || "");
   // Per-section save indicators: "saving" | "saved" | "error" | null
@@ -527,6 +613,7 @@ function PreferencesForm({ person, onSave, onCancel }) {
     const payload = {
       type: "preferences",
       ask_receive_degree: overrides.askDegree ?? askDegree,
+      ask_allow_career_overlap: overrides.askAllowOverlap ?? askAllowOverlap,
       gives: overrides.gives ? [...overrides.gives] : [...gives],
       gives_free_text: (overrides.freeText ?? freeText).trim() || null,
     };
@@ -674,6 +761,39 @@ function PreferencesForm({ person, onSave, onCancel }) {
               </span>
             </div>
           ))}
+        </div>
+        {/* Career overlap toggle */}
+        <div
+          onClick={() => {
+            const next = !askAllowOverlap;
+            setAskAllowOverlap(next);
+            autoSave({ askAllowOverlap: next }, "asks");
+          }}
+          style={{
+            display: "flex", alignItems: "flex-start", gap: 8,
+            padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+            marginTop: 6,
+            background: askAllowOverlap ? C.accentLight : "transparent",
+            border: `1.5px solid ${askAllowOverlap ? C.accent : "transparent"}`,
+            transition: "all 0.15s",
+          }}
+        >
+          <div style={{
+            width: 16, height: 16, borderRadius: 4, flexShrink: 0, marginTop: 1,
+            border: `1.5px solid ${askAllowOverlap ? C.accent : C.border}`,
+            background: askAllowOverlap ? C.accent : "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "all 0.15s",
+          }}>
+            {askAllowOverlap && (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
+          </div>
+          <span style={{ fontSize: 13, color: C.ink, fontFamily: FONT, lineHeight: 1.4 }}>
+            Also allow former colleagues (people I've worked with at the same company)
+          </span>
         </div>
       </div>
 
@@ -1421,6 +1541,10 @@ export default function PersonPage() {
   const [threadDraft, setThreadDraft] = useState(null); // { threadId, creatorToken, topic, draftBody, participants }
   const [overlapData, setOverlapData] = useState(null);
   const hasCareerOverlap = overlapData?.user_overlap?.length > 0;
+  const [noteText, setNoteText] = useState("");
+  const [noteSaved, setNoteSaved] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteEditing, setNoteEditing] = useState(false);
 
   // Auth flow
   useEffect(() => {
@@ -1498,6 +1622,42 @@ export default function PersonPage() {
       .then(d => { if (d) setOverlapData(d); })
       .catch(() => {});
   }, [data?.is_self, personId]);
+
+  // Fetch private note for this person
+  useEffect(() => {
+    if (!data || data.is_self) return;
+    fetch(`/api/person/${personId}/note`, { credentials: "include" })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => {
+        if (d) {
+          setNoteText(d.note_text || "");
+          setNoteSaved(d.note_text || "");
+        }
+      })
+      .catch(() => {});
+  }, [data?.is_self, personId]);
+
+  async function saveNote() {
+    const trimmed = noteText.trim();
+    console.log("[saveNote]", { trimmed, noteSaved, same: trimmed === noteSaved, personId });
+    if (trimmed === noteSaved) { setNoteEditing(false); return; }
+    setNoteSaving(true);
+    try {
+      const res = await fetch(`/api/person/${personId}/note`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ note_text: trimmed }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setNoteSaved(d.note_text || "");
+        setNoteText(d.note_text || "");
+      }
+    } catch {}
+    setNoteSaving(false);
+    setNoteEditing(false);
+  }
 
   // Auto-set "knows them" when career overlap exists
   useEffect(() => {
@@ -1851,6 +2011,13 @@ export default function PersonPage() {
                       path={data.vouch_path}
                       personFirstName={personFirstName}
                       userOverlap={overlapData?.user_overlap}
+                      noteText={noteText}
+                      noteEditing={noteEditing}
+                      noteSaving={noteSaving}
+                      onNoteChange={setNoteText}
+                      onNoteEdit={() => setNoteEditing(true)}
+                      onNoteSave={saveNote}
+                      onNoteCancel={() => { setNoteText(noteSaved); setNoteEditing(false); }}
                     />
                   )}
 
@@ -2593,9 +2760,16 @@ export default function PersonPage() {
                     {/* You & Name */}
                     {!data.is_self && (
                       <RecommendationPath
-                        path={data.vouch_path} degree={data.degree} degreeMismatch={data.degree_mismatch}
+                        path={data.vouch_path}
                         personFirstName={personFirstName}
                         userOverlap={overlapData?.user_overlap}
+                        noteText={noteText}
+                        noteEditing={noteEditing}
+                        noteSaving={noteSaving}
+                        onNoteChange={setNoteText}
+                        onNoteEdit={() => setNoteEditing(true)}
+                        onNoteSave={saveNote}
+                        onNoteCancel={() => { setNoteText(noteSaved); setNoteEditing(false); }}
                       />
                     )}
 
