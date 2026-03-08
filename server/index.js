@@ -4666,13 +4666,8 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
   // ─── Update brain starter questions (admin) ─────────────────────
   if (req.method === 'PUT' && req.url === '/api/brain-starters') {
+    if (!requireAdmin(req, res)) return
     try {
-      const session = await validateSession(req)
-      if (!session || session.id !== 1) {
-        res.writeHead(403)
-        res.end(JSON.stringify({ error: 'Admin only' }))
-        return
-      }
       const body = await parseBody(req)
       const starters = body.starters
       if (!Array.isArray(starters)) {

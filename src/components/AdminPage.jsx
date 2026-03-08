@@ -440,10 +440,8 @@ export default function AdminPage() {
     setSavingStarters(true);
     setSavedStarters(false);
     try {
-      const res = await fetch("/api/brain-starters", {
+      const res = await adminFetch("/api/brain-starters", secret.trim(), {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ starters: brainStarters.filter(s => s.trim()) }),
       });
       const data = await res.json();
