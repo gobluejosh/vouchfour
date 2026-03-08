@@ -954,11 +954,17 @@ function CareerHistoryEditForm({ person, employmentHistory, onSave, onCancel }) 
     setRoles(prev => prev.filter((_, i) => i !== index));
   }
 
+  const newRoleRef = useRef(null);
+
   function addRole() {
     setRoles(prev => [...prev, {
       title: "", organization: "", start_date: "", end_date: "",
       is_current: false, location: "", description: "",
     }]);
+    // Scroll to new role after React renders it
+    setTimeout(() => {
+      newRoleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
   }
 
   async function handleSave() {
@@ -1197,7 +1203,7 @@ function CareerHistoryEditForm({ person, employmentHistory, onSave, onCancel }) 
         )}
 
         {roles.map((role, i) => (
-          <div key={i} style={{
+          <div key={i} ref={i === roles.length - 1 ? newRoleRef : undefined} style={{
             padding: "14px 0",
             borderTop: i > 0 ? `1px solid #F3F4F6` : "none",
           }}>
