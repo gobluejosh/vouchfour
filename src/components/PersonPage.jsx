@@ -1528,10 +1528,13 @@ function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onA
                 onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
               >
+                {c.has_new && (
+                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: C.accent, flexShrink: 0 }} />
+                )}
                 <PhotoAvatar name={c.other_name} photoUrl={c.other_photo} size={28} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                    <span style={{ fontSize: 13, fontWeight: c.has_new ? 700 : 600, color: C.ink, fontFamily: FONT }}>
                       {c.other_name}
                     </span>
                     <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginLeft: "auto", flexShrink: 0 }}>
@@ -3583,10 +3586,13 @@ export default function PersonPage() {
                                 onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
                               >
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                  {t.has_new && (
+                                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: C.accent, flexShrink: 0 }} />
+                                  )}
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                                   </svg>
-                                  <span style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                                  <span style={{ fontSize: 14, fontWeight: t.has_new ? 700 : 600, color: C.ink, fontFamily: FONT }}>
                                     {t.topic}
                                   </span>
                                   <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginLeft: "auto", flexShrink: 0 }}>

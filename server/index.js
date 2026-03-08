@@ -2253,12 +2253,13 @@ Rules:
       if (isSelf && session) {
         const myConvRes = await query(`
           SELECT t.id, t.topic, t.created_at,
-                 tp_me.access_token,
+                 tp_me.access_token, tp_me.last_read_at,
                  other.display_name AS other_name, other.photo_url AS other_photo,
                  other.id AS other_id,
                  (SELECT COUNT(*) FROM thread_messages WHERE thread_id = t.id) AS message_count,
                  last_msg.body AS last_message_body,
                  last_msg.created_at AS last_message_at,
+                 last_msg.author_id AS last_message_author_id,
                  last_author.display_name AS last_message_author
           FROM threads t
           JOIN thread_participants tp_me ON tp_me.thread_id = t.id AND tp_me.person_id = $1
@@ -2276,7 +2277,10 @@ Rules:
         `, [session.id])
 
         if (myConvRes.rows.length > 0) {
-          my_conversations = myConvRes.rows.map(c => ({
+          my_conversations = myConvRes.rows.map(c => {
+            const hasNew = c.last_message_at && Number(c.last_message_author_id) !== session.id &&
+              (!c.last_read_at || new Date(c.last_message_at) > new Date(c.last_read_at))
+            return {
             access_token: c.access_token,
             topic: c.topic,
             other_name: c.other_name,
@@ -2286,7 +2290,8 @@ Rules:
             last_message_body: c.last_message_body ? (c.last_message_body.length > 80 ? c.last_message_body.slice(0, 80) + '…' : c.last_message_body) : null,
             last_message_at: c.last_message_at,
             last_message_author: c.last_message_author,
-          }))
+            has_new: !!hasNew,
+          }})
         }
       }
 
@@ -4713,6 +4718,9 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         res.writeHead(403); res.end(JSON.stringify({ error: 'This thread is not yet active' })); return
       }
 
+      // Mark thread as read (fire-and-forget)
+      query('UPDATE thread_participants SET last_read_at = NOW() WHERE id = $1', [viewer.id]).catch(() => {})
+
       // Load all participants
       const allParticipantsRes = await query(
         `SELECT tp.person_id, tp.role, tp.has_participated,
@@ -4806,9 +4814,11 @@ What ${senderFirst} wants to discuss: "${question}"` }],
       )
       const newMsg = msgRes.rows[0]
 
-      // Set has_participated if first reply
+      // Set has_participated if first reply, and update last_read_at
       if (!viewer.has_participated) {
-        await query('UPDATE thread_participants SET has_participated = true WHERE id = $1', [viewer.id])
+        await query('UPDATE thread_participants SET has_participated = true, last_read_at = NOW() WHERE id = $1', [viewer.id])
+      } else {
+        query('UPDATE thread_participants SET last_read_at = NOW() WHERE id = $1', [viewer.id]).catch(() => {})
       }
 
       // Get author info for response
@@ -4908,11 +4918,12 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
       const threadsRes = await query(`
         SELECT t.id, t.topic, t.created_at,
-               tp.access_token, tp.role,
+               tp.access_token, tp.role, tp.last_read_at,
                creator.display_name AS creator_name,
                (SELECT COUNT(*) FROM thread_participants WHERE thread_id = t.id) AS participant_count,
                last_msg.body AS last_message_body,
                last_msg.created_at AS last_message_at,
+               last_msg.author_id AS last_message_author_id,
                last_author.display_name AS last_message_author
         FROM thread_participants tp
         JOIN threads t ON t.id = tp.thread_id
@@ -4931,7 +4942,10 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
       res.writeHead(200)
       res.end(JSON.stringify({
-        threads: threadsRes.rows.map(r => ({
+        threads: threadsRes.rows.map(r => {
+          const hasNew = r.last_message_at && r.last_message_author_id !== session.id &&
+            (!r.last_read_at || new Date(r.last_message_at) > new Date(r.last_read_at))
+          return {
           thread_id: r.id,
           topic: r.topic,
           participant_count: Number(r.participant_count),
@@ -4942,7 +4956,8 @@ What ${senderFirst} wants to discuss: "${question}"` }],
           creator_name: r.creator_name,
           is_creator: r.role === 'creator',
           created_at: r.created_at,
-        }))
+          has_new: !!hasNew,
+        }})
       }))
     } catch (err) {
       console.error('[/api/my-threads error]', err)
