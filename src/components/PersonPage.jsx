@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
 import QuickAskDraftPanel from "./QuickAskDraftPanel.jsx";
@@ -1530,6 +1530,13 @@ export default function PersonPage() {
   const [editingSummary, setEditingSummary] = useState(false);
   const [editingPreferences, setEditingPreferences] = useState(false);
   const [editingCareerHistory, setEditingCareerHistory] = useState(false);
+  const prefsRef = useRef(null);
+
+  useEffect(() => {
+    if (editingPreferences && prefsRef.current) {
+      prefsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [editingPreferences]);
 
   // Quick Ask state
   const [askOpen, setAskOpen] = useState(false);
@@ -2572,17 +2579,19 @@ export default function PersonPage() {
 
                   {/* Preferences form */}
                   {editingPreferences && (
-                    <PreferencesForm
-                      person={person}
-                      hasVouched={hasVouched}
-                      onSave={() => {}}
-                      onCancel={() => {
-                        fetch(`/api/person/${personId}`, { credentials: "include" })
-                          .then(res => res.ok ? res.json() : null)
-                          .then(d => { if (d) setData(d); });
-                        setEditingPreferences(false);
-                      }}
-                    />
+                    <div ref={prefsRef}>
+                      <PreferencesForm
+                        person={person}
+                        hasVouched={hasVouched}
+                        onSave={() => {}}
+                        onCancel={() => {
+                          fetch(`/api/person/${personId}`, { credentials: "include" })
+                            .then(res => res.ok ? res.json() : null)
+                            .then(d => { if (d) setData(d); });
+                          setEditingPreferences(false);
+                        }}
+                      />
+                    </div>
                   )}
 
                   {/* AI Summary */}
@@ -3032,17 +3041,19 @@ export default function PersonPage() {
 
                     {/* Preferences form */}
                     {editingPreferences && (
-                      <PreferencesForm
-                        person={person}
-                        hasVouched={hasVouched}
-                        onSave={() => {}}
-                        onCancel={() => {
-                          fetch(`/api/person/${personId}`, { credentials: "include" })
-                            .then(res => res.ok ? res.json() : null)
-                            .then(d => { if (d) setData(d); });
-                          setEditingPreferences(false);
-                        }}
-                      />
+                      <div ref={prefsRef}>
+                        <PreferencesForm
+                          person={person}
+                          hasVouched={hasVouched}
+                          onSave={() => {}}
+                          onCancel={() => {
+                            fetch(`/api/person/${personId}`, { credentials: "include" })
+                              .then(res => res.ok ? res.json() : null)
+                              .then(d => { if (d) setData(d); });
+                            setEditingPreferences(false);
+                          }}
+                        />
+                      </div>
                     )}
 
                     {/* AI Summary */}
