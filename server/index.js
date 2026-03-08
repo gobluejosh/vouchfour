@@ -3453,7 +3453,7 @@ ${networkContext}`,
       const rowId = Number(req.url.split('/').pop())
 
       const result = await query(
-        `SELECT qar.draft_subject, qar.draft_body, qar.recipient_id,
+        `SELECT qar.draft_subject, qar.draft_body, qar.recipient_id, qar.thread_id,
                 qa.question, qa.sender_id,
                 p.display_name AS sender_name
          FROM quick_ask_recipients qar
@@ -3468,6 +3468,17 @@ ${networkContext}`,
       }
 
       const row = result.rows[0]
+
+      // If this ask has a thread, return the recipient's access token for redirect
+      let thread_token = null
+      if (row.thread_id) {
+        const tpRes = await query(
+          `SELECT access_token FROM thread_participants WHERE thread_id = $1 AND person_id = $2`,
+          [row.thread_id, session.id]
+        )
+        if (tpRes.rows[0]) thread_token = tpRes.rows[0].access_token
+      }
+
       res.writeHead(200)
       res.end(JSON.stringify({
         sender_name: row.sender_name,
@@ -3475,6 +3486,7 @@ ${networkContext}`,
         subject: row.draft_subject,
         message_body: row.draft_body,
         question: row.question,
+        thread_token,
       }))
     } catch (err) {
       console.error('[/api/quick-ask/reply-context error]', err)

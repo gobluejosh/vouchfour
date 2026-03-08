@@ -1809,6 +1809,14 @@ export default function PersonPage() {
         const ctxRes = await fetch(`/api/quick-ask/reply-context/${replyTo}`, { credentials: "include" });
         if (!ctxRes.ok) return;
         const ctx = await ctxRes.json();
+
+        // If this ask has a thread, redirect to the thread page
+        if (ctx.thread_token) {
+          window.location.href = `/thread/${ctx.thread_token}`;
+          return;
+        }
+
+        // Legacy: no thread — fall back to old reply-as-new-ask flow
         setReplyContext(ctx);
 
         // 2. Create blank reply draft (skip AI)
