@@ -614,7 +614,7 @@ export default function TalentPage() {
 
             const brainChips = starterQuestions.length > 0 ? (
               <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.sub, marginBottom: 6, fontFamily: FONT }}>Try Asking:</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.sub, marginBottom: 6, fontFamily: FONT }}>Try prompts like:</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 {starterQuestions.map((q, i) => (
                   <button
