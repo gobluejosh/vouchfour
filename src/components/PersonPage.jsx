@@ -1420,7 +1420,7 @@ function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onA
           Ask {personFirstName}
         </button>
       )}
-      {((gives && gives.length > 0) || givesFreeText) && (<>
+      {((gives && gives.length > 0) || givesFreeText) ? (
         <ul style={{
           margin: 0, paddingLeft: 18,
           fontSize: 13, color: C.ink, fontFamily: FONT,
@@ -1432,7 +1432,25 @@ function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onA
           })}
           {givesFreeText && <li>{givesFreeText}</li>}
         </ul>
-      </>)}
+      ) : isSelf ? (
+        <div
+          onClick={onEditPrefs}
+          style={{
+            background: "#F9FAFB", borderRadius: 10, padding: "14px 16px",
+            border: `1.5px dashed ${C.border}`, cursor: "pointer",
+            transition: "border-color 0.15s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 4 }}>
+            What can you offer your network?
+          </div>
+          <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, lineHeight: 1.5 }}>
+            Let people know what you're open to — intros, advice, mentorship, and more. Tap to set your Gives.
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
