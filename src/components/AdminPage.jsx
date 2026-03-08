@@ -286,6 +286,17 @@ export default function AdminPage() {
   const [savingStarters, setSavingStarters] = useState(false);
   const [savedStarters, setSavedStarters] = useState(false);
 
+  // Auto-authenticate from sessionStorage
+  useEffect(() => {
+    const saved = sessionStorage.getItem("vouchfour_admin_secret");
+    if (saved) {
+      setSecret(saved);
+      adminFetch("/api/admin/settings", saved)
+        .then(res => { if (res.ok) { setAuthed(true); loadAllData(saved); } })
+        .catch(() => {});
+    }
+  }, []);
+
   async function handleAuth(e) {
     e?.preventDefault();
     if (!secret.trim()) return;
@@ -295,6 +306,7 @@ export default function AdminPage() {
       const res = await adminFetch("/api/admin/settings", secret.trim());
       if (!res.ok) throw new Error("Invalid password");
       setAuthed(true);
+      sessionStorage.setItem("vouchfour_admin_secret", secret.trim());
       loadAllData(secret.trim());
     } catch {
       setAuthError("Invalid admin password");

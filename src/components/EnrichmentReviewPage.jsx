@@ -446,6 +446,17 @@ export default function EnrichmentReviewPage() {
   const [filter, setFilter] = useState("pending");
   const [loading, setLoading] = useState(false);
 
+  // Auto-authenticate from sessionStorage
+  useEffect(() => {
+    const saved = sessionStorage.getItem("vouchfour_admin_secret");
+    if (saved) {
+      setSecret(saved);
+      adminFetch("/api/admin/settings", saved)
+        .then(res => { if (res.ok) { setAuthed(true); loadQueue(saved, "pending"); } })
+        .catch(() => {});
+    }
+  }, []);
+
   async function handleAuth(e) {
     e?.preventDefault();
     if (!secret.trim()) return;
@@ -455,6 +466,7 @@ export default function EnrichmentReviewPage() {
       const res = await adminFetch("/api/admin/settings", secret.trim());
       if (!res.ok) throw new Error("Invalid password");
       setAuthed(true);
+      sessionStorage.setItem("vouchfour_admin_secret", secret.trim());
       loadQueue(secret.trim(), "pending");
     } catch {
       setAuthError("Invalid admin password");
