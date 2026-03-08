@@ -18,12 +18,6 @@ const C = {
 
 const FONT = "'Inter', 'Helvetica Neue', Arial, sans-serif";
 
-const DEGREE_LABELS = { 1: "1st", 2: "2nd", 3: "3rd" };
-const DEGREE_COLORS = {
-  1: { bg: "#EEF2FF", border: "#A5B4FC", badge: "linear-gradient(135deg, #6366F1, #4F46E5)" },
-  2: { bg: "#ECFDF5", border: "#86EFAC", badge: "linear-gradient(135deg, #34D399, #16A34A)" },
-  3: { bg: "#F5F3FF", border: "#C4B5FD", badge: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
-};
 const DEGREE_AVATAR_GRADIENTS = {
   1: "linear-gradient(135deg, #6366F1, #4F46E5)",
   2: "linear-gradient(135deg, #34D399, #16A34A)",
@@ -210,7 +204,6 @@ function PhotoAvatar({ name, photoUrl, size = 36, degree }) {
 // ── Person card ────────────────────────────────────────────────────────
 
 function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
-  const colors = DEGREE_COLORS[person.degree] || DEGREE_COLORS[3];
   const subtitle = [person.current_title, person.current_company].filter(Boolean).join(" at ");
   const canCheck = person.can_ask !== false;
 
@@ -219,9 +212,9 @@ function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
       style={{
         display: "flex", alignItems: "center", gap: 12,
         padding: "10px 14px",
-        background: isSelected ? C.accentLight : colors.bg,
+        background: isSelected ? C.accentLight : "#FFFFFF",
         borderRadius: 12,
-        border: `1.5px solid ${isSelected ? C.accent : colors.border}`,
+        border: `1.5px solid ${isSelected ? C.accent : C.border}`,
         transition: "all 0.15s",
       }}
     >
