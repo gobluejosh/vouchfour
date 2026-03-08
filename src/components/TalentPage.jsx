@@ -1002,7 +1002,7 @@ export default function TalentPage() {
                   {vouchStatus}
                   {genericCTA}
                 </div>
-                <div style={{ flex: 1, minWidth: 0, position: "sticky", top: 76, alignSelf: "flex-start", marginTop: -8 }}>
+                <div style={{ flex: 1, minWidth: 0, position: "sticky", top: 64, alignSelf: "flex-start" }}>
                   {functionDropdown}
                   {shimmerPlaceholders}
                   {emptyState}
