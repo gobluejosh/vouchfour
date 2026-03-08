@@ -4668,7 +4668,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
   if (req.method === 'PUT' && req.url === '/api/brain-starters') {
     if (!requireAdmin(req, res)) return
     try {
-      const body = await parseBody(req)
+      const body = await readBody(req)
       const starters = body.starters
       if (!Array.isArray(starters)) {
         res.writeHead(400)
