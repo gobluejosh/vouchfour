@@ -575,7 +575,12 @@ export default function NetworkBrainPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({
+          question: q,
+          history: messages
+            .filter(m => m.role === "user" || m.role === "brain")
+            .map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text })),
+        }),
       });
 
       if (!res.ok) {

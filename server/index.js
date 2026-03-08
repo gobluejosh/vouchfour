@@ -2995,6 +2995,7 @@ Rules:
 
       const body = await readBody(req)
       const question = body.question?.trim()
+      const history = Array.isArray(body.history) ? body.history : []
       if (!question) {
         res.writeHead(400)
         res.end(JSON.stringify({ error: 'question is required' }))
@@ -3168,7 +3169,13 @@ Some people have indicated specific ways they're willing to help (listed as "Giv
 
 Network (${talent.length} people):
 ${networkContext}`,
-          messages: [{ role: 'user', content: question }],
+          messages: [
+            ...history
+              .filter(m => m.role === 'user' || m.role === 'assistant')
+              .map(m => ({ role: m.role, content: m.content }))
+              .slice(-10),
+            { role: 'user', content: question },
+          ],
         }),
       })
 
