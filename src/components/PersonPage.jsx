@@ -1426,6 +1426,15 @@ function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onA
           Ask {personFirstName}
         </button>
       )}
+      {/* Gives subheader */}
+      {((gives && gives.length > 0) || givesFreeText) && (
+        <div style={{
+          fontSize: 11, fontWeight: 700, color: C.sub, fontFamily: FONT,
+          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+        }}>
+          Gives
+        </div>
+      )}
       {((gives && gives.length > 0) || givesFreeText) ? (
         <ul style={{
           margin: 0, paddingLeft: 18,
@@ -1458,7 +1467,7 @@ function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onA
         </div>
       ) : null}
 
-      {/* Conversation — most recent 1:1 thread with this person */}
+      {/* Ask — most recent 1:1 thread with this person */}
       {conversation && !isSelf && (
         <a
           href={`/thread/${conversation.access_token}`}
@@ -1477,7 +1486,7 @@ function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onA
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
             <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, fontFamily: FONT }}>
-              View conversation
+              Your Ask of {personFirstName}
             </span>
             <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginLeft: "auto" }}>
               {conversation.message_count} message{conversation.message_count !== 1 ? "s" : ""}
@@ -1494,14 +1503,14 @@ function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onA
         </a>
       )}
 
-      {/* Self-view: all my 1:1 conversations */}
+      {/* Self-view: all my 1:1 asks */}
       {isSelf && myConversations && myConversations.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <div style={{
             fontSize: 11, fontWeight: 700, color: C.sub, fontFamily: FONT,
             textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
           }}>
-            Conversations
+            Asks
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {myConversations.map(c => (
