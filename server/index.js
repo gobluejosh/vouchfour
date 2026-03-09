@@ -2926,6 +2926,31 @@ Rules:
       if (apolloRes.rows[0]?.domain) domain = apolloRes.rows[0].domain
     } catch {}
 
+    // Brave search fallback: find official website domain
+    if (!domain && BRAVE_API_KEY) {
+      try {
+        const braveUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(`"${companyName.trim()}" official website`)}&count=5`
+        const braveRes = await fetch(braveUrl, {
+          headers: { 'Accept': 'application/json', 'Accept-Encoding': 'gzip', 'X-Subscription-Token': BRAVE_API_KEY },
+        })
+        if (braveRes.ok) {
+          const braveData = await braveRes.json()
+          const results = braveData.web?.results || []
+          // Look for a non-social, non-directory result with a real domain
+          const skipHosts = new Set(['linkedin.com', 'facebook.com', 'twitter.com', 'instagram.com', 'youtube.com', 'crunchbase.com', 'bloomberg.com', 'wikipedia.org', 'glassdoor.com', 'indeed.com', 'yelp.com', 'bbb.org', 'zoominfo.com', 'pitchbook.com', 'apollo.io', 'dnb.com'])
+          for (const r of results) {
+            try {
+              const host = new URL(r.url).hostname.replace(/^www\./, '')
+              if (!skipHosts.has(host) && !host.endsWith('.gov') && host.includes('.')) {
+                domain = host
+                break
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+
     if (!domain) {
       // Heuristic fallback
       const cleaned = companyName.trim().toLowerCase()
