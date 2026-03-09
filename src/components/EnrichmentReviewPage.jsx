@@ -451,7 +451,11 @@ function LogoCard({ logo, secret, cacheBust, onAction }) {
       const data = await res.json();
       if (data.ok) {
         setResult(data);
-        setImgFailed(false);
+        if (action === 'reject') {
+          setImgFailed(true);
+        } else {
+          setImgFailed(false);
+        }
         onAction(logo.domain, action, data);
       }
     } catch {
@@ -530,12 +534,28 @@ function LogoCard({ logo, secret, cacheBust, onAction }) {
             }}
           >⚑</button>
         )}
+        {logo.review_status === "flagged" && !imgFailed && (
+          <button
+            onClick={() => handleAction("reject")}
+            disabled={acting}
+            title="Reject (clear to briefcase)"
+            style={{
+              padding: "4px 10px", background: "#78716C", color: "#fff",
+              border: "none", borderRadius: 6, fontSize: 11, fontWeight: 600,
+              fontFamily: FONT, cursor: acting ? "default" : "pointer",
+              opacity: acting ? 0.6 : 1,
+            }}
+          >✕</button>
+        )}
       </div>
       {/* Feedback */}
       {result && !result.error && result.action === "flagged" && (
         <div style={{ fontSize: 9, color: result.has_favicon ? C.warn : C.danger, fontFamily: FONT, textAlign: "center" }}>
           {result.has_favicon ? "→ favicon" : "→ briefcase"}
         </div>
+      )}
+      {result && !result.error && result.action === "reject" && (
+        <div style={{ fontSize: 9, color: C.danger, fontFamily: FONT }}>→ briefcase</div>
       )}
       {result && !result.error && result.action === "approved" && (
         <div style={{ fontSize: 9, color: C.success, fontFamily: FONT }}>✓</div>

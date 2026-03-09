@@ -2797,7 +2797,7 @@ Rules:
       const url = new URL(req.url, `http://${req.headers.host}`)
       const status = url.searchParams.get('status') || 'all'
 
-      let whereClause = 'WHERE image_data IS NOT NULL'
+      let whereClause = 'WHERE (image_data IS NOT NULL OR review_status = \'flagged\')'
       const params = []
       if (status !== 'all') {
         params.push(status)
@@ -2819,7 +2819,7 @@ Rules:
           COUNT(*) FILTER (WHERE review_status = 'approved') AS approved,
           COUNT(*) FILTER (WHERE review_status = 'flagged') AS flagged,
           COUNT(*) AS total
-        FROM company_logos WHERE image_data IS NOT NULL
+        FROM company_logos WHERE (image_data IS NOT NULL OR review_status = 'flagged')
       `)
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -2838,9 +2838,9 @@ Rules:
     try {
       const body = await readBody(req)
       const { domain, action } = body
-      if (!domain || !['approved', 'flagged'].includes(action)) {
+      if (!domain || !['approved', 'flagged', 'reject'].includes(action)) {
         res.writeHead(400)
-        res.end(JSON.stringify({ error: 'domain and valid action (approved/flagged) required' }))
+        res.end(JSON.stringify({ error: 'domain and valid action (approved/flagged/reject) required' }))
         return
       }
 
@@ -2851,24 +2851,38 @@ Rules:
         return
       }
 
-      // Flag: re-fetch using ONLY Google favicon, replace image_data
-      let imageBuffer = null
-      let contentType = 'image/png'
-      try {
-        const favRes = await fetch(`https://www.google.com/s2/favicons?domain=${domain}&sz=128`)
-        if (favRes.ok && favRes.headers.get('content-type')?.startsWith('image/')) {
-          imageBuffer = Buffer.from(await favRes.arrayBuffer())
-          contentType = favRes.headers.get('content-type') || 'image/png'
-        }
-      } catch {}
+      if (action === 'flagged') {
+        // Flag: re-fetch using ONLY Google favicon, replace image_data
+        let imageBuffer = null
+        let contentType = 'image/png'
+        try {
+          const favRes = await fetch(`https://www.google.com/s2/favicons?domain=${domain}&sz=128`)
+          if (favRes.ok && favRes.headers.get('content-type')?.startsWith('image/')) {
+            imageBuffer = Buffer.from(await favRes.arrayBuffer())
+            contentType = favRes.headers.get('content-type') || 'image/png'
+          }
+        } catch {}
 
-      await query(
-        'UPDATE company_logos SET image_data = $2, content_type = $3, review_status = $4 WHERE domain = $1',
-        [domain, imageBuffer, imageBuffer ? contentType : null, 'flagged']
-      )
+        await query(
+          'UPDATE company_logos SET image_data = $2, content_type = $3, review_status = $4 WHERE domain = $1',
+          [domain, imageBuffer, imageBuffer ? contentType : null, 'flagged']
+        )
 
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, domain, action: 'flagged', has_favicon: !!imageBuffer }))
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, domain, action: 'flagged', has_favicon: !!imageBuffer }))
+        return
+      }
+
+      if (action === 'reject') {
+        // Reject: clear to briefcase (null image_data)
+        await query(
+          'UPDATE company_logos SET image_data = NULL, content_type = NULL, review_status = $2 WHERE domain = $1',
+          [domain, 'flagged']
+        )
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, domain, action: 'reject' }))
+        return
+      }
     } catch (err) {
       console.error('[/api/admin/logo-review error]', err)
       res.writeHead(500)
@@ -2937,6 +2951,24 @@ Rules:
         res.end(cached.rows[0].image_data)
         return
       }
+
+      // Check for parked domains (HugeDomains, GoDaddy, etc.)
+      const PARKED_HOSTS = new Set(['hugedomains.com', 'godaddy.com', 'sedoparking.com', 'parkingcrew.net', 'afternic.com', 'dan.com', 'sedo.com', 'bodis.com', 'above.com'])
+      try {
+        const ctrl = new AbortController()
+        const t = setTimeout(() => ctrl.abort(), 3000)
+        const headRes = await fetch(`https://${domain}`, { method: 'HEAD', redirect: 'follow', signal: ctrl.signal })
+        clearTimeout(t)
+        const finalHost = new URL(headRes.url).hostname.replace(/^www\./, '')
+        if (PARKED_HOSTS.has(finalHost)) {
+          // Parked domain — cache null and return 404
+          await query(
+            'INSERT INTO company_logos (domain, image_data, content_type, source_name) VALUES ($1, NULL, NULL, $2) ON CONFLICT (domain) DO UPDATE SET source_name = COALESCE(company_logos.source_name, $2)',
+            [domain, companyName.trim()]
+          )
+          res.writeHead(404); res.end(); return
+        }
+      } catch {} // Timeout or network error — proceed normally
 
       // Try logo.dev first
       let imageBuffer = null
