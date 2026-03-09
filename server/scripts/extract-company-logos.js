@@ -97,14 +97,20 @@ async function main() {
       domain,
       apolloOrgId,
       // Logo sources to try (in order of preference)
-      clearbit_url: domain ? `https://logo.clearbit.com/${domain}` : null,
+      logodev_url: domain && process.env.LOGO_DEV_TOKEN
+        ? `https://img.logo.dev/${domain}?token=${process.env.LOGO_DEV_TOKEN}&size=128&format=png`
+        : null,
       google_favicon_url: domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=128` : null,
     })
   }
 
   console.log(`[Logos] Total unique companies: ${companies.length}`)
   console.log(`[Logos] With Apollo logo: ${companies.filter(c => c.apollo_logo_url).length}`)
-  console.log(`[Logos] With domain (for Clearbit): ${companies.filter(c => c.domain).length}`)
+  console.log(`[Logos] With domain (for logo.dev): ${companies.filter(c => c.domain).length}`)
+  if (!process.env.LOGO_DEV_TOKEN) {
+    console.log('[Logos] WARNING: No LOGO_DEV_TOKEN set. Sign up at https://logo.dev to get a free token.')
+    console.log('[Logos]   Then run: LOGO_DEV_TOKEN=your_token node server/scripts/extract-company-logos.js')
+  }
   console.log(`[Logos] No logo source: ${companies.filter(c => !c.apollo_logo_url && !c.domain).length}`)
 
   // Step 5: Generate HTML page
@@ -143,8 +149,8 @@ function generateHTML(companies) {
       ? `<img src="${esc(c.apollo_logo_url)}" alt="" width="32" height="32" onerror="this.style.display='none'" style="border-radius:4px">`
       : '<span class="none">—</span>'
 
-    const clearbitImg = c.clearbit_url
-      ? `<img src="${esc(c.clearbit_url)}" alt="" width="32" height="32" onerror="this.style.display='none'" style="border-radius:4px">`
+    const logodevImg = c.logodev_url
+      ? `<img src="${esc(c.logodev_url)}" alt="" width="32" height="32" onerror="this.style.display='none'" style="border-radius:4px">`
       : '<span class="none">—</span>'
 
     const faviconImg = c.google_favicon_url
@@ -162,7 +168,7 @@ function generateHTML(companies) {
         <td class="count">${c.person_count}</td>
         <td class="domain">${domainBadge}</td>
         <td class="logo">${apolloImg}</td>
-        <td class="logo">${clearbitImg}</td>
+        <td class="logo">${logodevImg}</td>
         <td class="logo">${faviconImg}</td>
       </tr>`
   }).join('\n')
@@ -213,7 +219,7 @@ function generateHTML(companies) {
     <th>People</th>
     <th>Domain</th>
     <th>Apollo</th>
-    <th>Clearbit</th>
+    <th>Logo.dev</th>
     <th>Favicon</th>
   </tr>
 </thead>
