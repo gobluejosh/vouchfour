@@ -136,6 +136,174 @@ function CompanyLogo({ org }) {
   );
 }
 
+function groupConsecutiveRoles(jobs) {
+  if (!jobs?.length) return [];
+  const groups = [];
+  let cur = null;
+  for (const job of jobs) {
+    const key = (job.organization || "").trim().toLowerCase();
+    if (cur && cur.key === key && key !== "unknown" && key !== "") {
+      cur.roles.push(job);
+    } else {
+      cur = { key, organization: job.organization, roles: [job] };
+      groups.push(cur);
+    }
+  }
+  return groups;
+}
+
+function calcTenure(roles) {
+  const starts = roles.map(r => r.start_date ? new Date(r.start_date) : null).filter(Boolean);
+  const ends = roles.map(r => {
+    if (r.is_current) return new Date();
+    if (r.end_date) return new Date(r.end_date);
+    return null;
+  }).filter(Boolean);
+  if (!starts.length || !ends.length) return null;
+  const earliest = new Date(Math.min(...starts));
+  const latest = new Date(Math.max(...ends));
+  const months = (latest.getFullYear() - earliest.getFullYear()) * 12 + (latest.getMonth() - earliest.getMonth());
+  if (months < 1) return null;
+  if (months < 12) return months === 1 ? "1 mo" : `${months} mos`;
+  const yrs = Math.floor(months / 12);
+  const rem = months % 12;
+  const yrStr = yrs === 1 ? "1 yr" : `${yrs} yrs`;
+  return rem === 0 ? yrStr : `${yrStr} ${rem} mo${rem > 1 ? "s" : ""}`;
+}
+
+function CareerTimeline({ history }) {
+  if (!history?.length) {
+    return (
+      <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT, padding: "10px 0", textAlign: "center" }}>
+        No career history yet. Click Edit to add your roles.
+      </div>
+    );
+  }
+
+  const groups = groupConsecutiveRoles(history);
+
+  return (
+    <>
+      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        {groups.map((group, gi) => {
+          const multi = group.roles.length > 1;
+          const hasCurrent = group.roles.some(r => r.is_current);
+          const tenure = multi ? calcTenure(group.roles) : null;
+
+          if (!multi) {
+            const job = group.roles[0];
+            const startYear = job.start_date ? new Date(job.start_date).getFullYear() : null;
+            const endYear = job.is_current ? "Present" : (job.end_date ? new Date(job.end_date).getFullYear() : null);
+            const dateStr = startYear ? `${startYear} – ${endYear || "?"}` : "";
+            return (
+              <div key={gi} style={{
+                display: "flex", gap: 12, padding: "10px 0",
+                borderTop: gi > 0 ? "1px solid #F3F4F6" : "none",
+              }}>
+                <div style={{ paddingTop: 2 }}>
+                  <CompanyLogo org={group.organization} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                    {job.title || "Role"}
+                  </div>
+                  <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT }}>
+                    {job.organization}
+                  </div>
+                  {(dateStr || job.location) && (
+                    <div style={{ fontSize: 11, color: "#9CA3AF", fontFamily: FONT, marginTop: 2 }}>
+                      {[dateStr, job.location].filter(Boolean).join(" · ")}
+                    </div>
+                  )}
+                  {job.description && (
+                    <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 4, lineHeight: 1.5, whiteSpace: "pre-line" }}>
+                      {job.description}
+                    </div>
+                  )}
+                </div>
+                {job.is_current && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, color: C.success,
+                    background: C.successLight, padding: "2px 6px",
+                    borderRadius: 4, alignSelf: "flex-start", marginTop: 2,
+                  }}>Current</span>
+                )}
+              </div>
+            );
+          }
+
+          // Multi-role group
+          return (
+            <div key={gi} style={{
+              padding: "10px 0",
+              borderTop: gi > 0 ? "1px solid #F3F4F6" : "none",
+            }}>
+              {/* Company header */}
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ paddingTop: 2 }}>
+                  <CompanyLogo org={group.organization} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                    {group.organization}
+                  </span>
+                  {tenure && (
+                    <span style={{ fontSize: 11, color: "#9CA3AF", fontFamily: FONT }}>
+                      · {tenure}
+                    </span>
+                  )}
+                </div>
+                {hasCurrent && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, color: C.success,
+                    background: C.successLight, padding: "2px 6px",
+                    borderRadius: 4, alignSelf: "flex-start", marginTop: 2, flexShrink: 0,
+                  }}>Current</span>
+                )}
+              </div>
+              {/* Roles with vertical connector */}
+              <div style={{
+                borderLeft: "2px solid #E5E7EB",
+                marginLeft: 13,
+                marginTop: 8,
+                paddingLeft: 25,
+              }}>
+                {group.roles.map((job, ri) => {
+                  const startYear = job.start_date ? new Date(job.start_date).getFullYear() : null;
+                  const endYear = job.is_current ? "Present" : (job.end_date ? new Date(job.end_date).getFullYear() : null);
+                  const dateStr = startYear ? `${startYear} – ${endYear || "?"}` : "";
+                  return (
+                    <div key={ri} style={{ paddingTop: ri > 0 ? 10 : 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: C.ink, fontFamily: FONT }}>
+                        {job.title || "Role"}
+                      </div>
+                      {(dateStr || job.location) && (
+                        <div style={{ fontSize: 11, color: "#9CA3AF", fontFamily: FONT, marginTop: 1 }}>
+                          {[dateStr, job.location].filter(Boolean).join(" · ")}
+                        </div>
+                      )}
+                      {job.description && (
+                        <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 3, lineHeight: 1.5, whiteSpace: "pre-line" }}>
+                          {job.description}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ textAlign: "right", marginTop: 4 }}>
+        <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{
+          fontSize: 9, color: "#D1D5DB", textDecoration: "none", fontFamily: FONT,
+        }}>Logos by Logo.dev</a>
+      </div>
+    </>
+  );
+}
+
 // ── Recommendation path visualization ─────────────────────────────────
 
 function PathAvatar({ name, photoUrl, size = 24 }) {
@@ -2848,70 +3016,7 @@ export default function PersonPage() {
                           </a>
                         ) : null}
                       </div>
-                      {data.employment_history?.length > 0 ? (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                          {data.employment_history.map((job, i) => {
-                            const startYear = job.start_date ? new Date(job.start_date).getFullYear() : null;
-                            const endYear = job.is_current ? "Present" : (job.end_date ? new Date(job.end_date).getFullYear() : null);
-                            const dateStr = startYear ? `${startYear} – ${endYear || "?"}` : "";
-
-                            return (
-                              <div key={i} style={{
-                                display: "flex", gap: 12, padding: "10px 0",
-                                borderTop: i > 0 ? `1px solid #F3F4F6` : "none",
-                              }}>
-                                <div style={{ paddingTop: 2 }}>
-                                  <CompanyLogo org={job.organization} />
-                                </div>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
-                                    {job.title || "Role"}
-                                  </div>
-                                  <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT }}>
-                                    {job.organization}
-                                  </div>
-                                  {(dateStr || job.location) && (
-                                    <div style={{ fontSize: 11, color: "#9CA3AF", fontFamily: FONT, marginTop: 2 }}>
-                                      {[dateStr, job.location].filter(Boolean).join(" · ")}
-                                    </div>
-                                  )}
-                                  {job.description && (
-                                    <div style={{
-                                      fontSize: 12, color: C.sub, fontFamily: FONT,
-                                      marginTop: 4, lineHeight: 1.5, whiteSpace: "pre-line",
-                                    }}>
-                                      {job.description}
-                                    </div>
-                                  )}
-                                </div>
-                                {job.is_current && (
-                                  <span style={{
-                                    fontSize: 10, fontWeight: 600, color: C.success,
-                                    background: C.successLight, padding: "2px 6px",
-                                    borderRadius: 4, alignSelf: "flex-start", marginTop: 2,
-                                  }}>
-                                    Current
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div style={{
-                          fontSize: 13, color: C.sub, fontFamily: FONT,
-                          padding: "10px 0", textAlign: "center",
-                        }}>
-                          No career history yet. Click Edit to add your roles.
-                        </div>
-                      )}
-                      {data.employment_history?.length > 0 && (
-                        <div style={{ textAlign: "right", marginTop: 4 }}>
-                          <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{
-                            fontSize: 9, color: "#D1D5DB", textDecoration: "none", fontFamily: FONT,
-                          }}>Logos by Logo.dev</a>
-                        </div>
-                      )}
+                      <CareerTimeline history={data.employment_history} />
                     </div>
                   )}
 
@@ -3317,70 +3422,7 @@ export default function PersonPage() {
                             </a>
                           ) : null}
                         </div>
-                        {data.employment_history?.length > 0 ? (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                            {data.employment_history.map((job, i) => {
-                              const startYear = job.start_date ? new Date(job.start_date).getFullYear() : null;
-                              const endYear = job.is_current ? "Present" : (job.end_date ? new Date(job.end_date).getFullYear() : null);
-                              const dateStr = startYear ? `${startYear} – ${endYear || "?"}` : "";
-
-                              return (
-                                <div key={i} style={{
-                                  display: "flex", gap: 12, padding: "10px 0",
-                                  borderTop: i > 0 ? `1px solid #F3F4F6` : "none",
-                                }}>
-                                  <div style={{ paddingTop: 2 }}>
-                                    <CompanyLogo org={job.organization} />
-                                  </div>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
-                                      {job.title || "Role"}
-                                    </div>
-                                    <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT }}>
-                                      {job.organization}
-                                    </div>
-                                    {(dateStr || job.location) && (
-                                      <div style={{ fontSize: 11, color: "#9CA3AF", fontFamily: FONT, marginTop: 2 }}>
-                                        {[dateStr, job.location].filter(Boolean).join(" · ")}
-                                      </div>
-                                    )}
-                                    {job.description && (
-                                      <div style={{
-                                        fontSize: 12, color: C.sub, fontFamily: FONT,
-                                        marginTop: 4, lineHeight: 1.5, whiteSpace: "pre-line",
-                                      }}>
-                                        {job.description}
-                                      </div>
-                                    )}
-                                  </div>
-                                  {job.is_current && (
-                                    <span style={{
-                                      fontSize: 10, fontWeight: 600, color: C.success,
-                                      background: C.successLight, padding: "2px 6px",
-                                      borderRadius: 4, alignSelf: "flex-start", marginTop: 2,
-                                    }}>
-                                      Current
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div style={{
-                            fontSize: 13, color: C.sub, fontFamily: FONT,
-                            padding: "10px 0", textAlign: "center",
-                          }}>
-                            No career history yet. Click Edit to add your roles.
-                          </div>
-                        )}
-                        {data.employment_history?.length > 0 && (
-                          <div style={{ textAlign: "right", marginTop: 4 }}>
-                            <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{
-                              fontSize: 9, color: "#D1D5DB", textDecoration: "none", fontFamily: FONT,
-                            }}>Logos by Logo.dev</a>
-                          </div>
-                        )}
+                        <CareerTimeline history={data.employment_history} />
                       </div>
                     )}
 
