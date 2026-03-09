@@ -1783,7 +1783,7 @@ function NetworkOverlapWidget({ networkOverlap, personFirstName }) {
           {group.people.map(person => (
             <div key={person.id} style={{
               display: "flex", alignItems: "center", gap: 8,
-              marginBottom: 6, cursor: "pointer",
+              marginBottom: 6, marginLeft: 36, cursor: "pointer",
             }} onClick={() => { window.location.href = `/person/${person.id}`; }}>
               <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={28} />
               <div style={{ flex: 1, minWidth: 0 }}>
