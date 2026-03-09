@@ -109,24 +109,12 @@ function BriefcaseIcon() {
   );
 }
 
-const SKIP_DOMAINS = new Set(["self-employed", "freelance", "independent", "career break", "sabbatical", "retired", "unknown"]);
-
-function guessDomain(name) {
-  if (!name) return null;
-  const lower = name.trim().toLowerCase();
-  if (SKIP_DOMAINS.has(lower)) return null;
-  const cleaned = lower
-    .replace(/,?\s*(inc\.?|llc|ltd\.?|corp\.?|co\.?|group|holdings|incorporated|corporation|company|international|technologies|technology|consulting|solutions|services|partners|ventures|capital|management|labs?|studio|media|digital|software|systems|networks|enterprises?)$/i, "")
-    .trim()
-    .replace(/[^a-z0-9]+/g, "");
-  if (!cleaned || cleaned.length < 2) return null;
-  return `${cleaned}.com`;
-}
+const SKIP_ORGS = new Set(["self-employed", "freelance", "independent", "career break", "sabbatical", "retired", "unknown"]);
 
 function CompanyLogo({ org }) {
   const [failed, setFailed] = useState(false);
-  const domain = guessDomain(org);
-  if (!domain || failed) {
+  const skip = !org || SKIP_ORGS.has(org.trim().toLowerCase());
+  if (skip || failed) {
     return (
       <div style={{ width: 28, height: 28, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <BriefcaseIcon />
@@ -135,7 +123,7 @@ function CompanyLogo({ org }) {
   }
   return (
     <img
-      src={`/api/logo/${domain}`}
+      src={`/api/logo?name=${encodeURIComponent(org.trim())}`}
       alt=""
       width={28}
       height={28}

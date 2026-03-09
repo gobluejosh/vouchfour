@@ -2791,9 +2791,35 @@ Rules:
   }
 
   // ─── Company logo proxy (lazy cache) ─────────────────────────────
-  const logoMatch = req.method === 'GET' && req.url.match(/^\/api\/logo\/([a-z0-9.-]+)$/)
-  if (logoMatch) {
-    const domain = logoMatch[1]
+  if (req.method === 'GET' && req.url.startsWith('/api/logo?')) {
+    const logoParams = new URL(req.url, 'http://localhost').searchParams
+    const companyName = logoParams.get('name')
+    if (!companyName) { res.writeHead(400); res.end(); return }
+
+    // Resolve domain: Apollo primary_domain first, then heuristic
+    let domain = null
+    try {
+      const apolloRes = await query(`
+        SELECT raw_payload->'person'->'organization'->>'primary_domain' AS domain
+        FROM person_enrichment
+        WHERE source = 'apollo'
+          AND lower(raw_payload->'person'->'organization'->>'name') = lower($1)
+        LIMIT 1
+      `, [companyName.trim()])
+      if (apolloRes.rows[0]?.domain) domain = apolloRes.rows[0].domain
+    } catch {}
+
+    if (!domain) {
+      // Heuristic fallback
+      const cleaned = companyName.trim().toLowerCase()
+        .replace(/,?\s*(inc\.?|llc|ltd\.?|corp\.?|co\.?|group|holdings|incorporated|corporation|company|international|technologies|technology|consulting|solutions|services|partners|ventures|capital|management|labs?|studio|media|digital|software|systems|networks|enterprises?)$/i, '')
+        .trim()
+        .replace(/[^a-z0-9]+/g, '')
+      domain = (cleaned && cleaned.length >= 2) ? `${cleaned}.com` : null
+    }
+
+    if (!domain) { res.writeHead(404); res.end(); return }
+
     try {
       // Check DB cache
       const cached = await query('SELECT image_data, content_type FROM company_logos WHERE domain = $1', [domain])
