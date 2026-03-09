@@ -132,6 +132,7 @@ const BRAVE_API_KEY = process.env.BRAVE_API_KEY
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 const APOLLO_API_KEY = process.env.APOLLO_API_KEY || ''
 const ADMIN_SECRET = process.env.ADMIN_SECRET || ''
+const LOGO_DEV_TOKEN = process.env.LOGO_DEV_TOKEN || ''
 
 // ─── Gives & Ask Preferences constants ──────────────────────────────
 const VALID_ASK_DEGREES = ['network', '2nd', '1st', 'none']
@@ -2785,6 +2786,73 @@ Rules:
       console.error('[admin/fix-career error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Company logo proxy (lazy cache) ─────────────────────────────
+  const logoMatch = req.method === 'GET' && req.url.match(/^\/api\/logo\/([a-z0-9.-]+)$/)
+  if (logoMatch) {
+    const domain = logoMatch[1]
+    try {
+      // Check DB cache
+      const cached = await query('SELECT image_data, content_type FROM company_logos WHERE domain = $1', [domain])
+      if (cached.rows.length > 0) {
+        if (!cached.rows[0].image_data) {
+          // Cached as "no logo available"
+          res.writeHead(404)
+          res.end()
+          return
+        }
+        res.writeHead(200, {
+          'Content-Type': cached.rows[0].content_type || 'image/png',
+          'Cache-Control': 'public, max-age=604800',
+        })
+        res.end(cached.rows[0].image_data)
+        return
+      }
+
+      // Try logo.dev first
+      let imageBuffer = null
+      let contentType = 'image/png'
+      if (LOGO_DEV_TOKEN) {
+        try {
+          const logoRes = await fetch(`https://img.logo.dev/${domain}?token=${LOGO_DEV_TOKEN}&size=128&format=png`)
+          if (logoRes.ok && logoRes.headers.get('content-type')?.startsWith('image/')) {
+            imageBuffer = Buffer.from(await logoRes.arrayBuffer())
+            contentType = logoRes.headers.get('content-type') || 'image/png'
+          }
+        } catch {}
+      }
+
+      // Fallback: Google favicon
+      if (!imageBuffer) {
+        try {
+          const favRes = await fetch(`https://www.google.com/s2/favicons?domain=${domain}&sz=128`)
+          if (favRes.ok && favRes.headers.get('content-type')?.startsWith('image/')) {
+            imageBuffer = Buffer.from(await favRes.arrayBuffer())
+            contentType = favRes.headers.get('content-type') || 'image/png'
+          }
+        } catch {}
+      }
+
+      // Cache result (even if null — prevents re-fetching)
+      await query(
+        'INSERT INTO company_logos (domain, image_data, content_type) VALUES ($1, $2, $3) ON CONFLICT (domain) DO NOTHING',
+        [domain, imageBuffer, imageBuffer ? contentType : null]
+      )
+
+      if (imageBuffer) {
+        res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=604800' })
+        res.end(imageBuffer)
+      } else {
+        res.writeHead(404)
+        res.end()
+      }
+    } catch (err) {
+      console.error('[/api/logo] Error:', err.message)
+      res.writeHead(500)
+      res.end()
     }
     return
   }

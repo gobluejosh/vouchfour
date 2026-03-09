@@ -109,6 +109,45 @@ function BriefcaseIcon() {
   );
 }
 
+const SKIP_DOMAINS = new Set(["self-employed", "freelance", "independent", "career break", "sabbatical", "retired", "unknown"]);
+
+function guessDomain(name) {
+  if (!name) return null;
+  const lower = name.trim().toLowerCase();
+  if (SKIP_DOMAINS.has(lower)) return null;
+  const cleaned = lower
+    .replace(/,?\s*(inc\.?|llc|ltd\.?|corp\.?|co\.?|group|holdings|incorporated|corporation|company|international|technologies|technology|consulting|solutions|services|partners|ventures|capital|management|labs?|studio|media|digital|software|systems|networks|enterprises?)$/i, "")
+    .trim()
+    .replace(/[^a-z0-9]+/g, "");
+  if (!cleaned || cleaned.length < 2) return null;
+  return `${cleaned}.com`;
+}
+
+function CompanyLogo({ org }) {
+  const [failed, setFailed] = useState(false);
+  const domain = guessDomain(org);
+  if (!domain || failed) {
+    return (
+      <div style={{ width: 28, height: 28, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <BriefcaseIcon />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={`/api/logo/${domain}`}
+      alt=""
+      width={28}
+      height={28}
+      onError={() => setFailed(true)}
+      style={{
+        borderRadius: 6, flexShrink: 0, objectFit: "contain",
+        background: "#F9FAFB", border: "1px solid #F3F4F6",
+      }}
+    />
+  );
+}
+
 // ── Recommendation path visualization ─────────────────────────────────
 
 function PathAvatar({ name, photoUrl, size = 24 }) {
@@ -1579,8 +1618,11 @@ function NetworkOverlapWidget({ networkOverlap, personFirstName }) {
         <div key={i} style={{
           ...(i > 0 ? { borderTop: `1px solid ${C.border}`, marginTop: 12, paddingTop: 12 } : {}),
         }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 8 }}>
-            {group.organization}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <CompanyLogo org={group.organization} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+              {group.organization}
+            </div>
           </div>
           {group.people.map(person => (
             <div key={person.id} style={{
@@ -2831,7 +2873,7 @@ export default function PersonPage() {
                                 borderTop: i > 0 ? `1px solid #F3F4F6` : "none",
                               }}>
                                 <div style={{ paddingTop: 2 }}>
-                                  <BriefcaseIcon />
+                                  <CompanyLogo org={job.organization} />
                                 </div>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
@@ -2873,6 +2915,13 @@ export default function PersonPage() {
                           padding: "10px 0", textAlign: "center",
                         }}>
                           No career history yet. Click Edit to add your roles.
+                        </div>
+                      )}
+                      {data.employment_history?.length > 0 && (
+                        <div style={{ textAlign: "right", marginTop: 4 }}>
+                          <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{
+                            fontSize: 9, color: "#D1D5DB", textDecoration: "none", fontFamily: FONT,
+                          }}>Logos by Logo.dev</a>
                         </div>
                       )}
                     </div>
@@ -3293,7 +3342,7 @@ export default function PersonPage() {
                                   borderTop: i > 0 ? `1px solid #F3F4F6` : "none",
                                 }}>
                                   <div style={{ paddingTop: 2 }}>
-                                    <BriefcaseIcon />
+                                    <CompanyLogo org={job.organization} />
                                   </div>
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
@@ -3335,6 +3384,13 @@ export default function PersonPage() {
                             padding: "10px 0", textAlign: "center",
                           }}>
                             No career history yet. Click Edit to add your roles.
+                          </div>
+                        )}
+                        {data.employment_history?.length > 0 && (
+                          <div style={{ textAlign: "right", marginTop: 4 }}>
+                            <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{
+                              fontSize: 9, color: "#D1D5DB", textDecoration: "none", fontFamily: FONT,
+                            }}>Logos by Logo.dev</a>
                           </div>
                         )}
                       </div>
