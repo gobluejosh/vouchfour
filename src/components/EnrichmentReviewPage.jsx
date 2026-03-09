@@ -433,6 +433,117 @@ function PersonCard({ person, secret, onUpdate }) {
   );
 }
 
+// ─── Logo Review Card ────────────────────────────────────────────────────────
+
+function LogoCard({ logo, secret, cacheBust, onAction }) {
+  const [acting, setActing] = useState(false);
+  const [result, setResult] = useState(null);
+  const [imgFailed, setImgFailed] = useState(false);
+
+  async function handleAction(action) {
+    setActing(true);
+    setResult(null);
+    try {
+      const res = await adminFetch("/api/admin/logo-review", secret, {
+        method: "PUT",
+        body: JSON.stringify({ domain: logo.domain, action }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setResult(data);
+        setImgFailed(false);
+        onAction(logo.domain, action, data);
+      }
+    } catch {
+      setResult({ error: "Request failed" });
+    } finally {
+      setActing(false);
+    }
+  }
+
+  return (
+    <div style={{
+      background: "#FFFFFF", borderRadius: 10, padding: 12,
+      border: `1.5px solid ${logo.review_status === "flagged" ? "#FECACA" : logo.review_status === "pending" ? "#FDE68A" : C.border}`,
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+    }}>
+      {/* Logo preview */}
+      <div style={{
+        width: 56, height: 56, borderRadius: 8, background: "#F9FAFB",
+        border: "1px solid #F3F4F6", display: "flex", alignItems: "center",
+        justifyContent: "center", overflow: "hidden",
+      }}>
+        {imgFailed ? (
+          <span style={{ fontSize: 24, color: "#D1D5DB" }}>💼</span>
+        ) : (
+          <img
+            src={`/api/logo?domain=${encodeURIComponent(logo.domain)}&v=${cacheBust}`}
+            alt={logo.domain}
+            width={48} height={48}
+            onError={() => setImgFailed(true)}
+            style={{ objectFit: "contain" }}
+          />
+        )}
+      </div>
+      {/* Company name + domain */}
+      <div style={{ textAlign: "center", minWidth: 0, width: "100%" }}>
+        <div style={{
+          fontSize: 11, fontWeight: 600, color: C.ink, fontFamily: FONT,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {logo.source_name || logo.domain}
+        </div>
+        {logo.source_name && (
+          <div style={{
+            fontSize: 10, color: C.sub, fontFamily: FONT,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {logo.domain}
+          </div>
+        )}
+      </div>
+      {/* Action buttons */}
+      <div style={{ display: "flex", gap: 4 }}>
+        {logo.review_status !== "approved" && (
+          <button
+            onClick={() => handleAction("approved")}
+            disabled={acting}
+            title="Approve"
+            style={{
+              padding: "4px 10px", background: C.success, color: "#fff",
+              border: "none", borderRadius: 6, fontSize: 11, fontWeight: 600,
+              fontFamily: FONT, cursor: acting ? "default" : "pointer",
+              opacity: acting ? 0.6 : 1,
+            }}
+          >✓</button>
+        )}
+        {logo.review_status !== "flagged" && (
+          <button
+            onClick={() => handleAction("flagged")}
+            disabled={acting}
+            title="Flag (replace with favicon)"
+            style={{
+              padding: "4px 10px", background: C.danger, color: "#fff",
+              border: "none", borderRadius: 6, fontSize: 11, fontWeight: 600,
+              fontFamily: FONT, cursor: acting ? "default" : "pointer",
+              opacity: acting ? 0.6 : 1,
+            }}
+          >⚑</button>
+        )}
+      </div>
+      {/* Feedback */}
+      {result && !result.error && result.action === "flagged" && (
+        <div style={{ fontSize: 9, color: result.has_favicon ? C.warn : C.danger, fontFamily: FONT, textAlign: "center" }}>
+          {result.has_favicon ? "→ favicon" : "→ briefcase"}
+        </div>
+      )}
+      {result && !result.error && result.action === "approved" && (
+        <div style={{ fontSize: 9, color: C.success, fontFamily: FONT }}>✓</div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function EnrichmentReviewPage() {
@@ -446,13 +557,20 @@ export default function EnrichmentReviewPage() {
   const [filter, setFilter] = useState("pending");
   const [loading, setLoading] = useState(false);
 
+  // Logo review state
+  const [logos, setLogos] = useState([]);
+  const [logoCounts, setLogoCounts] = useState({ pending: 0, approved: 0, flagged: 0, total: 0 });
+  const [logoFilter, setLogoFilter] = useState("pending");
+  const [logoLoading, setLogoLoading] = useState(false);
+  const [logoCacheBust, setLogoCacheBust] = useState(Date.now());
+
   // Auto-authenticate from sessionStorage
   useEffect(() => {
     const saved = sessionStorage.getItem("vouchfour_admin_secret");
     if (saved) {
       setSecret(saved);
       adminFetch("/api/admin/settings", saved)
-        .then(res => { if (res.ok) { setAuthed(true); loadQueue(saved, "pending"); } })
+        .then(res => { if (res.ok) { setAuthed(true); loadQueue(saved, "pending"); loadLogoQueue(saved, "pending"); } })
         .catch(() => {});
     }
   }, []);
@@ -468,6 +586,7 @@ export default function EnrichmentReviewPage() {
       setAuthed(true);
       sessionStorage.setItem("vouchfour_admin_secret", secret.trim());
       loadQueue(secret.trim(), "pending");
+      loadLogoQueue(secret.trim(), "pending");
     } catch {
       setAuthError("Invalid admin password");
     } finally {
@@ -516,6 +635,40 @@ export default function EnrichmentReviewPage() {
       }
       return updated;
     });
+  }
+
+  // ─── Logo queue ────────────────────────────────────────────────────
+
+  async function loadLogoQueue(sec, status) {
+    setLogoLoading(true);
+    try {
+      const res = await adminFetch(`/api/admin/logo-queue?status=${status}`, sec || secret.trim());
+      const data = await res.json();
+      setLogos(data.logos || []);
+      setLogoCounts(data.counts || { pending: 0, approved: 0, flagged: 0, total: 0 });
+    } catch (err) {
+      console.error("Failed to load logo queue:", err);
+    } finally {
+      setLogoLoading(false);
+    }
+  }
+
+  function handleLogoFilterChange(newFilter) {
+    setLogoFilter(newFilter);
+    loadLogoQueue(secret.trim(), newFilter);
+  }
+
+  function handleLogoAction(domain, action, data) {
+    setLogoCacheBust(Date.now());
+    const oldStatus = logos.find(l => l.domain === domain)?.review_status;
+    setLogos(prev => prev.map(l => l.domain === domain ? { ...l, review_status: action } : l));
+    if (oldStatus) {
+      setLogoCounts(prev => ({
+        ...prev,
+        [oldStatus]: Math.max(0, (prev[oldStatus] || 0) - 1),
+        [action]: (prev[action] || 0) + 1,
+      }));
+    }
   }
 
   // ─── Password gate ──────────────────────────────────────────────────
@@ -806,6 +959,96 @@ export default function EnrichmentReviewPage() {
             ))
           )}
 
+          {/* ─── Logo Review Section ─── */}
+          <div style={{
+            marginTop: 40, borderTop: `1.5px solid ${C.border}`, paddingTop: 20, marginBottom: 16,
+          }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: C.ink, fontFamily: FONT }}>
+              Logo Review
+            </div>
+            <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT, marginTop: 4 }}>
+              Review company logos. Flag bad logos to replace with Google favicon.
+            </div>
+          </div>
+
+          {/* Logo filter tabs */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+            {[
+              { key: "pending", label: "Needs Review", count: logoCounts.pending, color: C.warn },
+              { key: "flagged", label: "Flagged", count: logoCounts.flagged, color: C.danger },
+              { key: "approved", label: "Approved", count: logoCounts.approved, color: C.success },
+              { key: "all", label: "All", count: logoCounts.total, color: C.sub },
+            ].map((f) => (
+              <button
+                key={f.key}
+                onClick={() => handleLogoFilterChange(f.key)}
+                style={{
+                  padding: "6px 14px", fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                  borderRadius: 20,
+                  border: logoFilter === f.key ? `2px solid ${f.color}` : `1.5px solid ${C.border}`,
+                  background: logoFilter === f.key ? "#FFFFFF" : "#FAFAF9",
+                  color: logoFilter === f.key ? f.color : C.sub,
+                  cursor: "pointer", transition: "all 0.15s",
+                }}
+              >
+                {f.label}
+                {f.count > 0 && (
+                  <span style={{
+                    marginLeft: 6, padding: "1px 6px", fontSize: 11, fontWeight: 700,
+                    background: logoFilter === f.key ? f.color : "#E5E7EB",
+                    color: logoFilter === f.key ? "#fff" : C.sub, borderRadius: 8,
+                  }}>{f.count}</span>
+                )}
+              </button>
+            ))}
+            <button
+              onClick={() => loadLogoQueue(secret.trim(), logoFilter)}
+              disabled={logoLoading}
+              title="Refresh"
+              style={{
+                marginLeft: "auto", width: 32, height: 32, padding: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: "#FAFAF9", border: `1.5px solid ${C.border}`, borderRadius: "50%",
+                color: C.sub, fontSize: 15,
+                cursor: logoLoading ? "default" : "pointer",
+                opacity: logoLoading ? 0.5 : 1, transition: "all 0.15s", flexShrink: 0,
+              }}
+            >↻</button>
+          </div>
+
+          {/* Logo grid */}
+          {logoLoading ? (
+            <div style={{ textAlign: "center", paddingTop: 40 }}>
+              <div style={{ fontSize: 14, color: C.sub, fontFamily: FONT }}>Loading logos...</div>
+            </div>
+          ) : logos.length === 0 ? (
+            <div style={{
+              textAlign: "center", background: "#FFFFFF", borderRadius: 12,
+              border: `1.5px solid ${C.border}`, padding: "40px 20px",
+            }}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>🏢</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                {logoFilter === "pending" ? "All logos reviewed!" : "Nothing here"}
+              </div>
+            </div>
+          ) : (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
+              gap: 8,
+            }}>
+              {logos.map((logo) => (
+                <LogoCard
+                  key={logo.domain}
+                  logo={logo}
+                  secret={secret.trim()}
+                  cacheBust={logoCacheBust}
+                  onAction={handleLogoAction}
+                />
+              ))}
+            </div>
+          )}
+
           {/* Footer */}
           <p
             style={{
@@ -817,6 +1060,8 @@ export default function EnrichmentReviewPage() {
             }}
           >
             {people.length > 0 && `Showing ${people.length} profiles`}
+            {people.length > 0 && logos.length > 0 && " · "}
+            {logos.length > 0 && `${logos.length} logos`}
           </p>
         </div>
       </div>

@@ -2790,9 +2790,112 @@ Rules:
     return
   }
 
+  // ─── Admin: logo review queue ────────────────────────────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/admin/logo-queue')) {
+    if (!requireAdmin(req, res)) return
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`)
+      const status = url.searchParams.get('status') || 'all'
+
+      let whereClause = 'WHERE image_data IS NOT NULL'
+      const params = []
+      if (status !== 'all') {
+        params.push(status)
+        whereClause += ` AND review_status = $${params.length}`
+      }
+
+      const result = await query(`
+        SELECT domain, source_name, review_status, fetched_at, content_type
+        FROM company_logos
+        ${whereClause}
+        ORDER BY
+          CASE review_status WHEN 'pending' THEN 0 WHEN 'flagged' THEN 1 ELSE 2 END,
+          fetched_at DESC
+      `, params)
+
+      const countsRes = await query(`
+        SELECT
+          COUNT(*) FILTER (WHERE review_status = 'pending') AS pending,
+          COUNT(*) FILTER (WHERE review_status = 'approved') AS approved,
+          COUNT(*) FILTER (WHERE review_status = 'flagged') AS flagged,
+          COUNT(*) AS total
+        FROM company_logos WHERE image_data IS NOT NULL
+      `)
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ logos: result.rows, counts: countsRes.rows[0] }))
+    } catch (err) {
+      console.error('[/api/admin/logo-queue error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Admin: update logo review status ────────────────────────────
+  if (req.method === 'PUT' && req.url === '/api/admin/logo-review') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const body = await readBody(req)
+      const { domain, action } = body
+      if (!domain || !['approved', 'flagged'].includes(action)) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'domain and valid action (approved/flagged) required' }))
+        return
+      }
+
+      if (action === 'approved') {
+        await query('UPDATE company_logos SET review_status = $2 WHERE domain = $1', [domain, 'approved'])
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, domain, action: 'approved' }))
+        return
+      }
+
+      // Flag: re-fetch using ONLY Google favicon, replace image_data
+      let imageBuffer = null
+      let contentType = 'image/png'
+      try {
+        const favRes = await fetch(`https://www.google.com/s2/favicons?domain=${domain}&sz=128`)
+        if (favRes.ok && favRes.headers.get('content-type')?.startsWith('image/')) {
+          imageBuffer = Buffer.from(await favRes.arrayBuffer())
+          contentType = favRes.headers.get('content-type') || 'image/png'
+        }
+      } catch {}
+
+      await query(
+        'UPDATE company_logos SET image_data = $2, content_type = $3, review_status = $4 WHERE domain = $1',
+        [domain, imageBuffer, imageBuffer ? contentType : null, 'flagged']
+      )
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, domain, action: 'flagged', has_favicon: !!imageBuffer }))
+    } catch (err) {
+      console.error('[/api/admin/logo-review error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Company logo proxy (lazy cache) ─────────────────────────────
   if (req.method === 'GET' && req.url.startsWith('/api/logo?')) {
     const logoParams = new URL(req.url, 'http://localhost').searchParams
+
+    // Direct domain lookup (used by admin logo review page)
+    const directDomain = logoParams.get('domain')
+    if (directDomain) {
+      try {
+        const cached = await query('SELECT image_data, content_type FROM company_logos WHERE domain = $1', [directDomain])
+        if (cached.rows.length > 0 && cached.rows[0].image_data) {
+          res.writeHead(200, { 'Content-Type': cached.rows[0].content_type || 'image/png', 'Cache-Control': 'public, max-age=604800' })
+          res.end(cached.rows[0].image_data)
+        } else {
+          res.writeHead(404); res.end()
+        }
+      } catch { res.writeHead(500); res.end() }
+      return
+    }
+
     const companyName = logoParams.get('name')
     if (!companyName) { res.writeHead(400); res.end(); return }
 
@@ -2825,10 +2928,7 @@ Rules:
       const cached = await query('SELECT image_data, content_type FROM company_logos WHERE domain = $1', [domain])
       if (cached.rows.length > 0) {
         if (!cached.rows[0].image_data) {
-          // Cached as "no logo available"
-          res.writeHead(404)
-          res.end()
-          return
+          res.writeHead(404); res.end(); return
         }
         res.writeHead(200, {
           'Content-Type': cached.rows[0].content_type || 'image/png',
@@ -2864,8 +2964,8 @@ Rules:
 
       // Cache result (even if null — prevents re-fetching)
       await query(
-        'INSERT INTO company_logos (domain, image_data, content_type) VALUES ($1, $2, $3) ON CONFLICT (domain) DO NOTHING',
-        [domain, imageBuffer, imageBuffer ? contentType : null]
+        'INSERT INTO company_logos (domain, image_data, content_type, source_name) VALUES ($1, $2, $3, $4) ON CONFLICT (domain) DO UPDATE SET source_name = COALESCE(company_logos.source_name, $4)',
+        [domain, imageBuffer, imageBuffer ? contentType : null, companyName.trim()]
       )
 
       if (imageBuffer) {
