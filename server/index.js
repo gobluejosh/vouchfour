@@ -1956,7 +1956,13 @@ Rules:
         }
         const entry = networkByOrg.get(norm)
         if (!entry.people.has(row.id)) {
-          entry.people.set(row.id, { id: row.id, name: row.display_name, degree: row.degree, photo_url: row.photo_url, title_at_org: row.title_at_org })
+          entry.people.set(row.id, { id: row.id, name: row.display_name, degree: row.degree, photo_url: row.photo_url, title_at_org: row.title_at_org, start_date: row.start_date, end_date: row.end_date, is_current: row.is_current })
+        } else {
+          // Multiple roles — keep earliest start and latest end
+          const existing = entry.people.get(row.id)
+          if (row.start_date && (!existing.start_date || row.start_date < existing.start_date)) existing.start_date = row.start_date
+          if (row.is_current) { existing.is_current = true; existing.end_date = null }
+          else if (row.end_date && (!existing.end_date || row.end_date > existing.end_date)) existing.end_date = row.end_date
         }
       }
       const network_overlap = []

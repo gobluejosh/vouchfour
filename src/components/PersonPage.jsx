@@ -1790,9 +1790,12 @@ function NetworkOverlapWidget({ networkOverlap, personFirstName }) {
                 <span style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
                   {person.name}
                 </span>
-                {person.title_at_org && (
+                {(person.title_at_org || person.start_date) && (
                   <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 1 }}>
-                    {person.title_at_org}
+                    {[
+                      person.title_at_org,
+                      person.start_date ? `${new Date(person.start_date).getFullYear()} – ${person.is_current ? "Present" : (person.end_date ? new Date(person.end_date).getFullYear() : "?")}` : null,
+                    ].filter(Boolean).join(" · ")}
                   </div>
                 )}
               </div>
