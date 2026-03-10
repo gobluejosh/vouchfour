@@ -11,6 +11,11 @@ pool.on('error', (err) => {
   console.error('[DB] Unexpected pool error:', err.message)
 })
 
+// Ensure search_path is set for Neon pooler connections
+pool.on('connect', (client) => {
+  client.query('SET search_path TO public')
+})
+
 export async function query(text, params) {
   const start = Date.now()
   const result = await pool.query(text, params)
