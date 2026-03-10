@@ -11,6 +11,7 @@ import { sendVouchInviteEmail, sendLoginLinkEmail, sendEmail, loadTemplate, appl
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
 import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
 import { normalizeOrgName } from './lib/orgNormalize.js'
+import { extractExpertise, extractExpertiseBatch } from './lib/expertise.js'
 
 
 const PORT = process.env.PORT || 3001
@@ -2790,6 +2791,84 @@ Rules:
       }))
     } catch (err) {
       console.error('[admin/fix-career error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Admin: expertise extraction ─────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/admin/extract-expertise') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const body = await readBody(req)
+      const { person_id, all, force } = body
+
+      if (person_id) {
+        // Single person
+        const chunks = await extractExpertise(person_id, { verbose: true })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, person_id, chunks: chunks || [] }))
+        return
+      }
+
+      if (all) {
+        // Batch — run in background, return immediately
+        extractExpertiseBatch([], { delayMs: 2000, force: !!force })
+          .then(r => console.log('[Expertise] Background batch done:', r))
+          .catch(e => console.error('[Expertise] Background batch error:', e))
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, message: 'Batch extraction started in background' }))
+        return
+      }
+
+      res.writeHead(400)
+      res.end(JSON.stringify({ error: 'Provide person_id or all:true' }))
+    } catch (err) {
+      console.error('[/api/admin/extract-expertise error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Admin: view expertise chunks ──────────────────────────────
+  if (req.method === 'GET' && req.url.startsWith('/api/admin/expertise')) {
+    if (!requireAdmin(req, res)) return
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`)
+      const personId = url.searchParams.get('person_id')
+
+      if (personId) {
+        const result = await query(`
+          SELECT pe.*, p.display_name
+          FROM person_expertise pe
+          JOIN people p ON p.id = pe.person_id
+          WHERE pe.person_id = $1
+          ORDER BY pe.chunk_type, pe.id
+        `, [personId])
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ chunks: result.rows }))
+        return
+      }
+
+      // Summary: how many people have chunks, total chunks, breakdown by type
+      const statsRes = await query(`
+        SELECT
+          COUNT(DISTINCT person_id) as people_with_chunks,
+          COUNT(*) as total_chunks,
+          (SELECT COUNT(*) FROM person_enrichment WHERE source = 'claude' AND ai_summary IS NOT NULL) as total_enriched
+      `)
+      const typeRes = await query(`
+        SELECT chunk_type, COUNT(*) as count FROM person_expertise GROUP BY chunk_type ORDER BY chunk_type
+      `)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        stats: statsRes.rows[0],
+        by_type: typeRes.rows,
+      }))
+    } catch (err) {
+      console.error('[/api/admin/expertise error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }
