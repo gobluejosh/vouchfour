@@ -13,6 +13,7 @@ import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
 import { normalizeOrgName } from './lib/orgNormalize.js'
 import { extractExpertise, extractExpertiseBatch } from './lib/expertise.js'
 import { extractContent, extractContentBatch } from './lib/contentExtract.js'
+import { semanticSearch, embedPerson, embedBatch, getEmbeddingStats } from './lib/embeddings.js'
 
 
 const PORT = process.env.PORT || 3001
@@ -3621,6 +3622,82 @@ Rules:
         if (sharedOrgs.size > 0) overlapMap.set(personId, [...sharedOrgs])
       }
 
+      // ─── Helper: build mentioned people with vouch paths ─────────
+      async function buildMentionedPeople(answer, { semanticResults = null } = {}) {
+        const mentioned = talent.filter(t =>
+          answer.toLowerCase().includes(t.display_name.toLowerCase())
+        )
+        if (mentioned.length === 0) return []
+
+        // Get vouch paths for mentioned people
+        const mentionedIds = mentioned.map(t => t.id)
+        const paths = await getVouchPaths(userId, mentionedIds, { directional: true })
+
+        // Build semantic evidence map from v2 results
+        const evidenceMap = new Map()
+        if (semanticResults) {
+          for (const r of semanticResults) {
+            if (r.matchedChunks?.length > 0) {
+              // Take the top chunk's text, truncated for display
+              const topChunk = r.matchedChunks[0]
+              evidenceMap.set(r.personId, topChunk.text.slice(0, 150))
+            }
+          }
+        }
+
+        // Get photo_urls for intermediate path people (not in structuredMap)
+        const intermediateIds = new Set()
+        for (const path of paths.values()) {
+          for (const node of path) {
+            if (node.id !== userId && !structuredMap.has(node.id)) {
+              intermediateIds.add(node.id)
+            }
+          }
+        }
+        let intermediatePhotos = new Map()
+        if (intermediateIds.size > 0) {
+          const photoRes = await query(
+            'SELECT id, photo_url FROM people WHERE id = ANY($1)',
+            [[...intermediateIds]]
+          )
+          for (const row of photoRes.rows) intermediatePhotos.set(row.id, row.photo_url)
+        }
+
+        return mentioned.map(t => {
+          const s = structuredMap.get(t.id)
+          const maxDeg = askDegreeLimit(s?.ask_receive_degree, s?.has_vouched)
+          let canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
+          if (!canAsk && !!s?.email && s?.ask_allow_career_overlap !== false && overlapMap.has(t.id)) canAsk = true
+
+          // Build vouch path with photo_urls for mini avatars
+          const rawPath = paths.get(t.id)
+          const vouchPath = rawPath
+            ? rawPath.map(node => ({
+                id: node.id,
+                name: node.name,
+                photo_url: node.id === userId
+                  ? userProfile?.photo_url || null
+                  : structuredMap.get(node.id)?.photo_url || intermediatePhotos.get(node.id) || null,
+              }))
+            : null
+
+          return {
+            id: t.id,
+            name: t.display_name,
+            linkedin_url: t.linkedin_url,
+            degree: t.degree,
+            vouch_score: t.vouch_score,
+            current_title: s?.current_title || null,
+            current_company: s?.current_company || null,
+            photo_url: s?.photo_url || null,
+            can_ask: canAsk,
+            career_overlap: overlapMap.has(t.id) ? overlapMap.get(t.id) : null,
+            vouch_path: vouchPath,
+            evidence: evidenceMap.get(t.id) || null,
+          }
+        })
+      }
+
       // Build user's own profile context
       const userProfile = userProfileRes.rows[0]
       const userSummary = userSummaryRes.rows[0]?.ai_summary || ''
@@ -3676,25 +3753,129 @@ Rules:
         const answer = nameMatches.length === 1
           ? answerParts[0]
           : answerParts.join('\n\n---\n\n')
-        const matchedPeople = nameMatches.map(t => {
-          const s = structuredMap.get(t.id)
-          const maxDeg = askDegreeLimit(s?.ask_receive_degree, s?.has_vouched)
-          let canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
-          if (!canAsk && !!s?.email && s?.ask_allow_career_overlap !== false && overlapMap.has(t.id)) canAsk = true
-          return {
-            id: t.id, name: t.display_name, linkedin_url: t.linkedin_url,
-            degree: t.degree, vouch_score: t.vouch_score,
-            current_title: s?.current_title || null, current_company: s?.current_company || null,
-            photo_url: s?.photo_url || null, can_ask: canAsk,
-            career_overlap: overlapMap.has(t.id) ? overlapMap.get(t.id) : null,
-          }
-        })
+        const matchedPeople = await buildMentionedPeople(answer)
         console.log(`[NetworkBrain] Name shortcut: "${question}" → ${nameMatches.length} match(es) in ${Date.now() - start}ms`)
         res.writeHead(200)
         res.end(JSON.stringify({ answer, people: matchedPeople, max_recipients: maxRecipients }))
         return
       }
 
+      // ─── Brain v2: semantic retrieval path ──────────────────────────
+      const brainVersion = body.version === 2 ? 2 : 1
+
+      if (brainVersion === 2) {
+        try {
+          // Semantic search: embed the question, find top matching people/chunks
+          const semanticResults = await semanticSearch(question, {
+            topK: 15,
+            networkPersonIds: personIds,
+            minSimilarity: 0.25,
+          })
+
+          if (semanticResults.length === 0) {
+            // Fall back to v1 if no embeddings match (e.g., embeddings not generated yet)
+            console.log(`[NetworkBrain v2] No semantic matches, falling back to v1`)
+          } else {
+            const matchedPersonIds = semanticResults.map(r => r.personId)
+
+            // Build focused context: only matched people, with their specific matching evidence
+            const v2Context = semanticResults.map(result => {
+              const t = talent.find(t => t.id === result.personId)
+              if (!t) return null
+              const s = structuredMap.get(t.id)
+              const summary = summaryMap.get(t.id) || ''
+              const parts = [`- ${t.display_name}`]
+              if (s?.current_title && s?.current_company) parts.push(`| ${s.current_title} at ${s.current_company}`)
+              else if (s?.current_company) parts.push(`| ${s.current_company}`)
+              if (s?.industry) parts.push(`| ${s.industry}`)
+              parts.push(`| Degree ${t.degree}, Score ${t.vouch_score}`)
+              parts.push(`| Relevance: ${(result.topSimilarity * 100).toFixed(0)}%`)
+              const overlap = overlapMap.get(t.id)
+              if (overlap) parts.push(`| ⚡ Worked with user at: ${overlap.join(', ')}`)
+              const gives = s?.gives || []
+              if (gives.length > 0) {
+                const giveLabels = gives.map(g => GIVE_TYPE_LABELS[g] || g).join(', ')
+                parts.push(`| Gives: ${giveLabels}`)
+              }
+              if (s?.gives_free_text) parts.push(`| Also: ${s.gives_free_text}`)
+              const note = notesMap.get(t.id)
+              if (note) parts.push(`| 📝 User's note: ${note}`)
+              if (summary) parts.push(`\n  Profile: ${summary}`)
+
+              // Add the specific matching evidence (expertise chunks / content)
+              const evidence = result.matchedChunks
+                .slice(0, 3)
+                .map(c => `    • [${c.sourceType}] ${c.text.slice(0, 200)}`)
+                .join('\n')
+              if (evidence) parts.push(`\n  Matching expertise/content:\n${evidence}`)
+
+              return parts.join(' ')
+            }).filter(Boolean).join('\n\n')
+
+            // Build v2 system prompt — focused, with evidence
+            const v2SystemPrompt = `You are a professional network advisor. The user has a trusted vouch-based professional network.
+
+About the user asking questions:
+${userContext}
+
+I've searched the user's network using semantic similarity to find the people most relevant to their question. Each person below includes their profile, connection details, and the SPECIFIC expertise or content that matched the question. Use this evidence to give precise, well-supported recommendations.
+
+People marked with ⚡ "Worked with user at: [company]" were at the same company during an overlapping time period. At a smaller company or startup, this likely means they worked together directly. At a large company (e.g. Amazon, Google), they may or may not have crossed paths — use language like "you overlapped at Amazon" rather than "you worked together."
+
+Answer the user's question by recommending specific people from the matches below. Always reference people by name and explain why they're relevant, citing the specific expertise or content that makes them a good match. You know the user's background, so tailor recommendations based on shared experience, complementary skills, or relevant connections. If none of the matches truly fit, say so honestly.
+
+Keep responses to 2-4 short paragraphs. Use bullet points when listing multiple people. Be direct and actionable.
+
+Some people have indicated specific ways they're willing to help (listed as "Gives"). Use this as a helpful signal when relevant. People marked with 📝 have a private note from the user — treat these as reliable first-person knowledge.
+
+Top ${semanticResults.length} matches for this question:
+
+${v2Context}`
+
+            // Call Claude with focused context
+            const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify({
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 1000,
+                system: v2SystemPrompt,
+                messages: [
+                  ...history
+                    .filter(m => m.role === 'user' || m.role === 'assistant')
+                    .map(m => ({ role: m.role, content: m.content }))
+                    .slice(-10),
+                  { role: 'user', content: question },
+                ],
+              }),
+            })
+
+            const data = await claudeRes.json()
+            const answer = (data.content || [])
+              .filter(b => b.type === 'text')
+              .map(b => b.text)
+              .join('')
+
+            const elapsed = Date.now() - start
+            console.log(`[NetworkBrain v2] Response in ${elapsed}ms | ${answer.length} chars | ${semanticResults.length} semantic matches`)
+
+            const mentionedPeople = await buildMentionedPeople(answer, { semanticResults })
+
+            res.writeHead(200)
+            res.end(JSON.stringify({ answer, people: mentionedPeople, max_recipients: maxRecipients, version: 2 }))
+            return
+          }
+        } catch (v2Err) {
+          console.error(`[NetworkBrain v2] Error, falling back to v1:`, v2Err.message)
+          // Fall through to v1
+        }
+      }
+
+      // ─── Brain v1: full network context ─────────────────────────────
       // Build network context for Claude (includes gives + career overlap)
       const networkContext = talent.map(t => {
         const s = structuredMap.get(t.id)
@@ -3764,30 +3945,10 @@ ${networkContext}`,
 
       console.log(`[NetworkBrain] Response in ${Date.now() - start}ms | ${answer.length} chars`)
 
-      // Extract mentioned people for structured response (with can_ask)
-      const mentionedPeople = talent.filter(t =>
-        answer.toLowerCase().includes(t.display_name.toLowerCase())
-      ).map(t => {
-        const s = structuredMap.get(t.id)
-        const maxDeg = askDegreeLimit(s?.ask_receive_degree, s?.has_vouched)
-        let canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
-        if (!canAsk && !!s?.email && s?.ask_allow_career_overlap !== false && overlapMap.has(t.id)) canAsk = true
-        return {
-          id: t.id,
-          name: t.display_name,
-          linkedin_url: t.linkedin_url,
-          degree: t.degree,
-          vouch_score: t.vouch_score,
-          current_title: s?.current_title || null,
-          current_company: s?.current_company || null,
-          photo_url: s?.photo_url || null,
-          can_ask: canAsk,
-          career_overlap: overlapMap.has(t.id) ? overlapMap.get(t.id) : null,
-        }
-      })
+      const mentionedPeople = await buildMentionedPeople(answer)
 
       res.writeHead(200)
-      res.end(JSON.stringify({ answer, people: mentionedPeople, max_recipients: maxRecipients }))
+      res.end(JSON.stringify({ answer, people: mentionedPeople, max_recipients: maxRecipients, version: 1 }))
     } catch (err) {
       console.error('[/api/network-brain error]', err)
       res.writeHead(500)

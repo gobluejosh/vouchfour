@@ -198,6 +198,47 @@ function PhotoAvatar({ name, photoUrl, size = 36, degree }) {
 
 // ── Person card ────────────────────────────────────────────────────────
 
+function VouchPath({ path }) {
+  if (!path || path.length < 2) return null;
+  // path = [{id, name, photo_url}, ...] from user to target
+  // Show intermediate nodes (skip first "you" and last "target" since target is already shown)
+  const intermediates = path.slice(1, -1);
+  if (intermediates.length === 0) return null; // 1st degree — no intermediary
+
+  const firstName = (name) => (name || "").split(/\s+/)[0];
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 4,
+      marginTop: 6, paddingTop: 6,
+      borderTop: `1px solid ${C.border}`,
+    }}>
+      <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT, marginRight: 2 }}>via</span>
+      {intermediates.map((node, i) => (
+        <a
+          key={node.id}
+          href={`/person/${node.id}`}
+          onClick={e => e.stopPropagation()}
+          style={{
+            display: "flex", alignItems: "center", gap: 4,
+            textDecoration: "none",
+          }}
+        >
+          <PhotoAvatar name={node.name} photoUrl={node.photo_url} size={20} />
+          <span style={{ fontSize: 11, fontWeight: 500, color: C.accent, fontFamily: FONT }}>
+            {firstName(node.name)}
+          </span>
+          {i < intermediates.length - 1 && (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          )}
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
   const subtitle = [person.current_title, person.current_company].filter(Boolean).join(" at ");
   const canCheck = person.can_ask !== false;
@@ -205,7 +246,7 @@ function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
   return (
     <div
       style={{
-        display: "flex", alignItems: "center", gap: 12,
+        display: "flex", alignItems: "flex-start", gap: 12,
         padding: "10px 14px",
         background: isSelected ? C.accentLight : "#FFFFFF",
         borderRadius: 12,
@@ -223,6 +264,7 @@ function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
               background: isSelected ? C.accent : "#fff",
               display: "flex", alignItems: "center", justifyContent: "center",
               flexShrink: 0, transition: "all 0.15s", cursor: "pointer",
+              marginTop: 8,
             }}
           >
             {isSelected && (
@@ -232,7 +274,7 @@ function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
             )}
           </div>
         ) : (
-          <div className="disabled-check-tip" style={{ position: "relative", flexShrink: 0 }}>
+          <div className="disabled-check-tip" style={{ position: "relative", flexShrink: 0, marginTop: 8 }}>
             <div style={{
               width: 20, height: 20, borderRadius: 6,
               border: `2px solid ${C.border}`,
@@ -245,23 +287,36 @@ function PersonCard({ person, showCheckbox, isSelected, onToggle }) {
       <a
         href={`/person/${person.id}`}
         style={{
-          display: "flex", alignItems: "center", gap: 12,
+          display: "flex", alignItems: "flex-start", gap: 12,
           flex: 1, minWidth: 0,
           textDecoration: "none", cursor: "pointer",
         }}
       >
         <PhotoAvatar name={person.name} photoUrl={person.photo_url} size={36} degree={person.degree} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{person.name}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{person.name}</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: "auto" }}>
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </div>
           {subtitle && (
             <div style={{ fontSize: 12, color: C.ink, fontFamily: FONT, marginTop: 2, opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {subtitle}
             </div>
           )}
+          {person.evidence && (
+            <div style={{
+              fontSize: 11, color: C.sub, fontFamily: FONT,
+              marginTop: 4, lineHeight: 1.4,
+              overflow: "hidden", textOverflow: "ellipsis",
+              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+            }}>
+              ↳ {person.evidence}
+            </div>
+          )}
+          <VouchPath path={person.vouch_path} />
         </div>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
       </a>
     </div>
   );
@@ -456,6 +511,9 @@ export default function NetworkBrainPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [brainVersion, setBrainVersion] = useState(() => {
+    try { return parseInt(sessionStorage.getItem("brain_version") || "1"); } catch { return 1; }
+  });
   const bottomRef = useRef(null);
   const lastBrainRef = useRef(null);
   const inputRef = useRef(null);
@@ -488,6 +546,9 @@ export default function NetworkBrainPage() {
   // People from the most recent brain response (for right column on desktop)
   const latestBrainMsg = [...messages].reverse().find(m => m.role === "brain" && m.people?.length > 0);
   const latestBrainMsgIndex = latestBrainMsg ? messages.indexOf(latestBrainMsg) : -1;
+
+  // Debug mode (show version toggle) via ?debug=1
+  const showDebug = new URLSearchParams(window.location.search).has("debug");
 
   // Auth flow on mount
   useEffect(() => {
@@ -581,6 +642,7 @@ export default function NetworkBrainPage() {
         credentials: "include",
         body: JSON.stringify({
           question: q,
+          version: brainVersion,
           history: messages
             .filter(m => m.role === "user" || m.role === "brain")
             .map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text })),
@@ -599,11 +661,13 @@ export default function NetworkBrainPage() {
         role: "brain",
         text: linkifyNames(answerText, data.people),
         people: data.people || [],
+        version: data.version || 1,
       }]);
 
       capture("network_brain_answer", {
         answer_length: (data.answer || "").length,
         people_count: (data.people || []).length,
+        version: data.version || 1,
       });
     } catch (err) {
       setError(err.message);
@@ -1001,6 +1065,11 @@ export default function NetworkBrainPage() {
                             boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                           }}>
                             {renderMarkdown(msg.text)}
+                            {showDebug && msg.version && (
+                              <div style={{ textAlign: "right", marginTop: 4, fontSize: 10, color: "#9CA3AF", fontFamily: FONT }}>
+                                v{msg.version}
+                              </div>
+                            )}
                           </div>
                           {/* People mentioned — checkboxes for messaging */}
                           {msg.people?.length > 0 && (
@@ -1454,6 +1523,11 @@ export default function NetworkBrainPage() {
                               boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                             }}>
                               {renderMarkdown(msg.text)}
+                              {showDebug && msg.version && (
+                                <div style={{ textAlign: "right", marginTop: 4, fontSize: 10, color: "#9CA3AF", fontFamily: FONT }}>
+                                  v{msg.version}
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
@@ -1912,7 +1986,22 @@ export default function NetworkBrainPage() {
                     <SendIcon />
                   </button>
                 </form>
-                {!isMobile && <div style={{ flex: 1, minWidth: 0 }} />}
+                {showDebug && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: isMobile ? 8 : 0, flexShrink: 0 }}>
+                    <button
+                      onClick={() => { const v = brainVersion === 1 ? 2 : 1; setBrainVersion(v); sessionStorage.setItem("brain_version", v); }}
+                      style={{
+                        padding: "6px 12px", fontSize: 11, fontWeight: 600, fontFamily: FONT,
+                        background: brainVersion === 2 ? "#4F46E5" : "#6B7280",
+                        color: "#fff", border: "none", borderRadius: 8, cursor: "pointer",
+                        letterSpacing: "0.02em",
+                      }}
+                    >
+                      v{brainVersion}
+                    </button>
+                  </div>
+                )}
+                {!isMobile && !showDebug && <div style={{ flex: 1, minWidth: 0 }} />}
                 </div>
               </div>
             </>
