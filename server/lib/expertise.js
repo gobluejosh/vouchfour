@@ -54,7 +54,7 @@ RULES:
  * Gather all available data for a person to feed into expertise extraction.
  */
 async function gatherPersonData(personId) {
-  const [personRes, historyRes, summaryRes, braveRes, vouchRes] = await Promise.all([
+  const [personRes, historyRes, summaryRes, braveRes, apolloRes, vouchRes] = await Promise.all([
     query(`SELECT id, display_name, current_title, current_company, location, industry, headline
            FROM people WHERE id = $1`, [personId]),
     query(`SELECT organization, title, start_date, end_date, is_current, location, description
@@ -64,6 +64,9 @@ async function gatherPersonData(personId) {
            WHERE person_id = $1 AND source = 'claude' AND ai_summary IS NOT NULL`, [personId]),
     query(`SELECT raw_payload FROM person_enrichment
            WHERE person_id = $1 AND source = 'brave'`, [personId]),
+    // Apollo raw data — org details (employee count, funding, stage, revenue)
+    query(`SELECT raw_payload FROM person_enrichment
+           WHERE person_id = $1 AND source = 'apollo'`, [personId]),
     // Vouch context: who vouched for this person and in what function
     query(`SELECT jf.name as function_name, p.display_name as voucher_name, p.current_company as voucher_company
            FROM vouches v
@@ -78,13 +81,39 @@ async function gatherPersonData(personId) {
   const history = historyRes.rows
   const summary = summaryRes.rows[0]?.ai_summary || ''
 
+  // Extract Apollo org data (company size, funding, stage, etc.)
+  let apolloOrg = null
+  let apolloSeniority = null
+  let apolloDepartments = null
+  if (apolloRes.rows[0]?.raw_payload) {
+    const apolloData = typeof apolloRes.rows[0].raw_payload === 'string'
+      ? JSON.parse(apolloRes.rows[0].raw_payload)
+      : apolloRes.rows[0].raw_payload
+    const p = apolloData.person || apolloData
+    apolloSeniority = p.seniority || null
+    apolloDepartments = p.departments || null
+    if (p.organization) {
+      const org = p.organization
+      apolloOrg = {
+        name: org.name,
+        employees: org.estimated_num_employees,
+        totalFunding: org.total_funding_printed,
+        annualRevenue: org.annual_revenue_printed,
+        fundingStage: org.latest_funding_stage,
+        foundedYear: org.founded_year,
+        industry: org.industry,
+        description: org.short_description,
+      }
+    }
+  }
+
   // Parse Brave results into clean snippets
   let braveSnippets = []
   if (braveRes.rows[0]?.raw_payload) {
     const payload = typeof braveRes.rows[0].raw_payload === 'string'
       ? JSON.parse(braveRes.rows[0].raw_payload)
       : braveRes.rows[0].raw_payload
-    const allResults = [...(payload.results1 || []), ...(payload.results2 || [])]
+    const allResults = [...(payload.results1 || []), ...(payload.results2 || []), ...(payload.results3 || [])]
     const seen = new Set()
     for (const r of allResults) {
       if (!r.url || seen.has(r.url)) continue
@@ -97,22 +126,39 @@ async function gatherPersonData(personId) {
 
   const vouches = vouchRes.rows
 
-  return { person, history, summary, braveSnippets, vouches }
+  return { person, history, summary, braveSnippets, apolloOrg, apolloSeniority, apolloDepartments, vouches }
 }
 
 /**
  * Build the user prompt for Claude from gathered data.
  */
 function buildExtractionPrompt(data) {
-  const { person, history, summary, braveSnippets, vouches } = data
+  const { person, history, summary, braveSnippets, apolloOrg, apolloSeniority, apolloDepartments, vouches } = data
   const parts = []
 
   parts.push(`Person: ${person.display_name}`)
   if (person.current_title && person.current_company) {
     parts.push(`Current: ${person.current_title} at ${person.current_company}`)
   }
+  if (apolloSeniority) parts.push(`Seniority: ${apolloSeniority}`)
   if (person.industry) parts.push(`Industry: ${person.industry}`)
   if (person.location) parts.push(`Location: ${person.location}`)
+
+  // Include Apollo org data for current company — employee count, funding, stage
+  if (apolloOrg) {
+    const orgParts = []
+    if (apolloOrg.employees) orgParts.push(`~${apolloOrg.employees} employees`)
+    if (apolloOrg.totalFunding) orgParts.push(`$${apolloOrg.totalFunding} total funding`)
+    if (apolloOrg.annualRevenue) orgParts.push(`$${apolloOrg.annualRevenue} annual revenue`)
+    if (apolloOrg.fundingStage) orgParts.push(`stage: ${apolloOrg.fundingStage}`)
+    if (apolloOrg.foundedYear) orgParts.push(`founded ${apolloOrg.foundedYear}`)
+    if (orgParts.length > 0) {
+      parts.push(`Current company details: ${apolloOrg.name} — ${orgParts.join(', ')}`)
+    }
+    if (apolloOrg.description) {
+      parts.push(`Company description: ${apolloOrg.description.slice(0, 300)}`)
+    }
+  }
 
   if (summary) {
     parts.push(`\nAI Summary:\n${summary}`)

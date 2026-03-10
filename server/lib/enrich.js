@@ -1,11 +1,189 @@
 import { query } from './db.js'
 import { normalizeLinkedInUrl } from './linkedin.js'
+import { normalizeOrgName } from './orgNormalize.js'
 
 const APOLLO_API_KEY = process.env.APOLLO_API_KEY || ''
 const BRAVE_API_KEY = process.env.BRAVE_API_KEY
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+// ── Network-aware company fingerprint ─────────────────────────────────
+// Uses the vouch network's shared employment data to identify the best
+// disambiguation terms for Brave searches. Companies where many network
+// members overlap are the strongest identity signals.
+
+// Orgs too generic to be useful as search disambiguation
+const SKIP_ORGS_FOR_FINGERPRINT = new Set([
+  'unknown', 'self-employed', 'freelance', 'career break', 'independent',
+  'retired', 'sabbatical', 'consultant', 'consulting',
+])
+
+// Large companies that are poor disambiguators (too many people globally)
+const LOW_DISTINCTIVENESS_ORGS = new Set([
+  'google', 'amazon', 'meta', 'facebook', 'apple', 'microsoft', 'netflix',
+  'uber', 'salesforce', 'oracle', 'ibm', 'deloitte', 'accenture', 'pwc',
+  'kpmg', 'ernst & young', 'ey', 'jp morgan', 'jpmorgan', 'goldman sachs',
+  'morgan stanley', 'bank of america', 'wells fargo', 'citigroup',
+])
+
+// Cached network company map — computed once per server lifecycle
+let _networkCompanyMap = null
+let _networkCompanyMapAge = 0
+const COMPANY_MAP_TTL = 1000 * 60 * 60 // 1 hour
+
+/**
+ * Build a map of { normalizedOrg → { name, count, distinctiveness } }
+ * from all employment histories in the database.
+ */
+async function getNetworkCompanyMap() {
+  if (_networkCompanyMap && (Date.now() - _networkCompanyMapAge) < COMPANY_MAP_TTL) {
+    return _networkCompanyMap
+  }
+
+  const res = await query(`
+    SELECT organization, COUNT(DISTINCT person_id) as people_count
+    FROM employment_history
+    WHERE organization IS NOT NULL
+    GROUP BY organization
+  `)
+
+  const map = new Map()
+  for (const row of res.rows) {
+    const norm = normalizeOrgName(row.organization)
+    if (!norm || SKIP_ORGS_FOR_FINGERPRINT.has(norm)) continue
+    const count = parseInt(row.people_count)
+    const existing = map.get(norm)
+    if (existing) {
+      existing.count += count // Combine counts for normalized aliases
+      // Keep the longer/more descriptive spelling (e.g., "Guild Education" over "Guild")
+      if (row.organization.trim().length > existing.name.length) {
+        existing.name = row.organization.trim()
+      }
+    } else {
+      const isLowDistinctiveness = LOW_DISTINCTIVENESS_ORGS.has(norm)
+      map.set(norm, {
+        name: row.organization.trim(),
+        count,
+        distinctiveness: isLowDistinctiveness ? 0.2 : 1.0,
+      })
+    }
+  }
+
+  _networkCompanyMap = map
+  _networkCompanyMapAge = Date.now()
+  console.log(`[Enrich] Network company map: ${map.size} unique orgs`)
+  return map
+}
+
+/**
+ * Build a disambiguation fingerprint for a person using their employment
+ * history cross-referenced with the network company map.
+ *
+ * Returns { companies: string[], industry: string|null }
+ * where companies are the 2-3 best disambiguation terms, ordered by score.
+ */
+export async function buildFingerprint(personId) {
+  const networkMap = await getNetworkCompanyMap()
+
+  // Get this person's employment history
+  const histRes = await query(`
+    SELECT organization, title, start_date, end_date, is_current
+    FROM employment_history WHERE person_id = $1
+    ORDER BY start_date DESC NULLS LAST
+  `, [personId])
+
+  // Get industry from people table
+  const personRes = await query('SELECT industry FROM people WHERE id = $1', [personId])
+  const industry = personRes.rows[0]?.industry || null
+
+  // Score each company this person worked at
+  const scored = []
+  const seenNorm = new Set()
+  for (const job of histRes.rows) {
+    const norm = normalizeOrgName(job.organization)
+    if (!norm || SKIP_ORGS_FOR_FINGERPRINT.has(norm) || seenNorm.has(norm)) continue
+    seenNorm.add(norm)
+
+    const networkData = networkMap.get(norm)
+    const networkCount = networkData?.count || 0
+    const distinctiveness = networkData?.distinctiveness || 0.8
+
+    // Tenure bonus — longer tenure = more likely to appear in their web presence
+    let tenureYears = 0
+    if (job.start_date) {
+      const start = new Date(job.start_date)
+      const end = job.is_current ? new Date() : (job.end_date ? new Date(job.end_date) : new Date())
+      tenureYears = (end - start) / (1000 * 60 * 60 * 24 * 365)
+    }
+
+    // Seniority bonus — higher titles more likely to appear in press/content
+    const titleLower = (job.title || '').toLowerCase()
+    const seniorityBonus =
+      /\b(ceo|cto|coo|cfo|president|founder|co-founder|partner)\b/.test(titleLower) ? 2.0 :
+      /\b(vp|vice president|svp|evp|director|head of|managing)\b/.test(titleLower) ? 1.5 :
+      1.0
+
+    // Combined score: network importance × distinctiveness × tenure × seniority
+    const score = (networkCount * distinctiveness) + (tenureYears * 0.5) + (seniorityBonus * 0.5)
+
+    scored.push({
+      name: networkData?.name || job.organization.trim(),
+      norm,
+      score,
+      networkCount,
+      distinctiveness,
+    })
+  }
+
+  // Sort by score descending, take top 3
+  scored.sort((a, b) => b.score - a.score)
+  const companies = scored.slice(0, 3).map(s => s.name)
+
+  return { companies, industry }
+}
+
+// ── Brave result post-filter ─────────────────────────────────────────
+// Noise domains that just scrape/regurgitate profile data
+const NOISE_DOMAINS = new Set([
+  'linkedin.com', 'zoominfo.com', 'rocketreach.co', 'signalhire.com',
+  'leadiq.com', 'apollo.io', 'lusha.com', 'contactout.com', 'seamless.ai',
+  'snov.io', 'hunter.io', 'clearbit.com', 'peopledatalabs.com',
+  'theorg.com', 'org.com', 'dnb.com', 'crunchbase.com',
+  'pitchbook.com', 'owler.com', 'glassdoor.com', 'indeed.com',
+  'facebook.com', 'twitter.com', 'x.com', 'instagram.com',
+  'tiktok.com', 'pinterest.com',
+])
+
+/**
+ * Filter Brave results to keep only those likely about the right person.
+ * Uses fingerprint companies + name as validation signals.
+ */
+function filterBraveResults(results, fingerprint, personName) {
+  const fpTerms = fingerprint.companies.map(c => c.toLowerCase())
+  if (fingerprint.industry) fpTerms.push(fingerprint.industry.toLowerCase())
+
+  return results.filter(r => {
+    // Always skip noise domains
+    try {
+      const host = new URL(r.url).hostname.replace(/^www\./, '')
+      if (NOISE_DOMAINS.has(host)) return false
+      // Also skip if a subdomain of a noise domain
+      for (const nd of NOISE_DOMAINS) {
+        if (host.endsWith('.' + nd)) return false
+      }
+    } catch {}
+
+    // Check if result mentions any fingerprint term
+    const text = `${r.title || ''} ${r.description || ''}`.toLowerCase()
+    const hasFingerprint = fpTerms.some(term => text.includes(term))
+
+    // If we have fingerprint terms and the result mentions none, skip it
+    if (fpTerms.length > 0 && !hasFingerprint) return false
+
+    return true
+  })
+}
 
 // ── Name mismatch guard (the "Lee Mayer" / "Brian Egan" cases) ─────────
 // Apollo sometimes returns a different person for a LinkedIn URL.
@@ -246,20 +424,37 @@ export async function enrichPerson(personId) {
     steps.apollo = 'error'
   }
 
-  // ── Step B: Brave Search ────────────────────────────────────────────
+  // ── Step B: Brave Search (network-aware fingerprint queries) ────────
   try {
     const start = Date.now()
 
-    // Query 1: professional news / activity
-    const q1Parts = [`"${context.name}"`]
-    if (context.company) q1Parts.push(context.company)
-    else if (context.notablePastCompany) q1Parts.push(context.notablePastCompany)
-    const braveQuery1 = q1Parts.join(' ')
+    // Build disambiguation fingerprint from network data
+    const fingerprint = await buildFingerprint(personId)
+    const fpCompanies = fingerprint.companies
 
-    // Query 2: public content / thought leadership
-    const q2Parts = [`"${context.name}"`, 'podcast interview blog speaker']
-    if (context.company) q2Parts.push(context.company)
-    const braveQuery2 = q2Parts.join(' ')
+    // Build OR clause from fingerprint companies for disambiguation
+    // e.g. ("Craftsy" OR "Guild Education" OR "Anuvi")
+    const disambigTerms = fpCompanies.length > 0
+      ? `(${fpCompanies.map(c => `"${c}"`).join(' OR ')})`
+      : (context.company ? `"${context.company}"` : '')
+
+    // Query 1: Professional presence (disambiguated)
+    // "Josh Scott" ("Craftsy" OR "Guild Education" OR "Anuvi")
+    const braveQuery1 = disambigTerms
+      ? `"${context.name}" ${disambigTerms}`
+      : `"${context.name}" ${context.company || ''}`
+
+    // Query 2: Written content (disambiguated)
+    // "Josh Scott" ("Craftsy" OR "Guild Education") blog OR article OR wrote OR published
+    const braveQuery2 = disambigTerms
+      ? `"${context.name}" ${disambigTerms} blog OR article OR wrote OR published OR newsletter`
+      : `"${context.name}" ${context.company || ''} blog OR article`
+
+    // Query 3: Speaking & appearances (disambiguated)
+    // "Josh Scott" ("Craftsy" OR "Guild Education") podcast OR interview OR keynote OR speaker
+    const braveQuery3 = disambigTerms
+      ? `"${context.name}" ${disambigTerms} podcast OR interview OR keynote OR speaker OR conference`
+      : `"${context.name}" ${context.company || ''} podcast OR interview`
 
     const braveSearch = async (q) => {
       const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=10`
@@ -276,15 +471,27 @@ export async function enrichPerson(personId) {
     const data1 = await braveSearch(braveQuery1)
     await sleep(500)
     const data2 = await braveSearch(braveQuery2)
+    await sleep(500)
+    const data3 = await braveSearch(braveQuery3)
 
     const results1 = data1.web?.results || []
     const results2 = data2.web?.results || []
-    const totalResults = results1.length + results2.length
+    const results3 = data3.web?.results || []
+    const totalResults = results1.length + results2.length + results3.length
 
-    // Save combined results
+    // Post-filter: remove noise domains and results that don't match the fingerprint
+    const filtered1 = filterBraveResults(results1, fingerprint, context.name)
+    const filtered2 = filterBraveResults(results2, fingerprint, context.name)
+    const filtered3 = filterBraveResults(results3, fingerprint, context.name)
+    const filteredTotal = filtered1.length + filtered2.length + filtered3.length
+
+    // Save combined results (both raw and filtered for debugging)
     const payload = {
-      query1: braveQuery1, query2: braveQuery2,
-      results1, results2,
+      fingerprint: { companies: fpCompanies, industry: fingerprint.industry },
+      query1: braveQuery1, query2: braveQuery2, query3: braveQuery3,
+      results1: filtered1, results2: filtered2, results3: filtered3,
+      rawCounts: { q1: results1.length, q2: results2.length, q3: results3.length },
+      filteredCounts: { q1: filtered1.length, q2: filtered2.length, q3: filtered3.length },
     }
     await query(`
       INSERT INTO person_enrichment (person_id, source, raw_payload, enriched_at)
@@ -293,17 +500,17 @@ export async function enrichPerson(personId) {
       SET raw_payload = EXCLUDED.raw_payload, enriched_at = NOW()
     `, [personId, JSON.stringify(payload)])
 
-    // Build snippets for Claude context
-    const allResults = [...results1, ...results2]
+    // Build snippets for Claude context (from filtered results)
+    const allFiltered = [...filtered1, ...filtered2, ...filtered3]
     const seen = new Set()
-    for (const r of allResults) {
+    for (const r of allFiltered) {
       if (seen.has(r.url)) continue
       seen.add(r.url)
       context.braveSnippets.push({ title: r.title || '', description: r.description || '', url: r.url || '' })
     }
 
     steps.brave = 'ok'
-    console.log(`[Enrich] Brave ${Date.now() - start}ms | ${person.display_name} | ${totalResults} results`)
+    console.log(`[Enrich] Brave ${Date.now() - start}ms | ${person.display_name} | ${totalResults} raw → ${filteredTotal} filtered | fp: [${fpCompanies.join(', ')}]`)
   } catch (err) {
     console.error(`[Enrich] Brave error | ${person.display_name}:`, err.message)
     steps.brave = 'error'
