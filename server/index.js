@@ -12,6 +12,7 @@ import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/p
 import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
 import { normalizeOrgName } from './lib/orgNormalize.js'
 import { extractExpertise, extractExpertiseBatch } from './lib/expertise.js'
+import { extractContent, extractContentBatch } from './lib/contentExtract.js'
 
 
 const PORT = process.env.PORT || 3001
@@ -2869,6 +2870,68 @@ Rules:
       }))
     } catch (err) {
       console.error('[/api/admin/expertise error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Admin: content extraction ──────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/admin/extract-content') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const body = await readBody(req)
+      if (body.person_id) {
+        const items = await extractContent(body.person_id, { force: !!body.force, verbose: !!body.verbose })
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true, count: items.length, items }))
+      } else if (body.all) {
+        // Run in background
+        extractContentBatch([], { force: !!body.force, verbose: !!body.verbose })
+          .then(r => console.log('[Admin] Content batch complete:', r))
+          .catch(e => console.error('[Admin] Content batch error:', e))
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true, message: 'Content extraction started in background' }))
+      } else {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Provide person_id or all:true' }))
+      }
+    } catch (err) {
+      console.error('[/api/admin/extract-content error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/admin/content')) {
+    if (!requireAdmin(req, res)) return
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`)
+      const personId = url.searchParams.get('person_id')
+
+      if (personId) {
+        const contentRes = await db.query(
+          `SELECT id, content_type, source_platform, title, content_summary, topics, source_url, raw_metadata
+           FROM person_content WHERE person_id = $1 ORDER BY content_type, id`, [personId]
+        )
+        res.writeHead(200)
+        res.end(JSON.stringify({ person_id: parseInt(personId), count: contentRes.rows.length, content: contentRes.rows }))
+      } else {
+        const statsRes = await db.query(`
+          SELECT content_type, source_platform, COUNT(*) as count
+          FROM person_content GROUP BY content_type, source_platform ORDER BY count DESC
+        `)
+        const totalRes = await db.query(`SELECT COUNT(DISTINCT person_id) as people, COUNT(*) as items FROM person_content`)
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          people_with_content: parseInt(totalRes.rows[0].people),
+          total_items: parseInt(totalRes.rows[0].items),
+          by_type_platform: statsRes.rows,
+        }))
+      }
+    } catch (err) {
+      console.error('[/api/admin/content error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }
