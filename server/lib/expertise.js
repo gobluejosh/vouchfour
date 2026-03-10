@@ -54,7 +54,7 @@ RULES:
  * Gather all available data for a person to feed into expertise extraction.
  */
 async function gatherPersonData(personId) {
-  const [personRes, historyRes, summaryRes, braveRes, apolloRes, vouchRes] = await Promise.all([
+  const [personRes, historyRes, summaryRes, braveRes, apolloRes, vouchRes, contentRes] = await Promise.all([
     query(`SELECT id, display_name, current_title, current_company, location, industry, headline
            FROM people WHERE id = $1`, [personId]),
     query(`SELECT organization, title, start_date, end_date, is_current, location, description
@@ -73,6 +73,10 @@ async function gatherPersonData(personId) {
            JOIN job_functions jf ON jf.id = v.job_function_id
            JOIN people p ON p.id = v.voucher_id
            WHERE v.vouchee_id = $1`, [personId]),
+    // Discovered content (blog posts, podcasts, GitHub repos, talks, etc.)
+    query(`SELECT content_type, source_platform, title, content_summary, topics
+           FROM person_content WHERE person_id = $1
+           ORDER BY content_type, id`, [personId]),
   ])
 
   const person = personRes.rows[0]
@@ -125,15 +129,16 @@ async function gatherPersonData(personId) {
   }
 
   const vouches = vouchRes.rows
+  const content = contentRes.rows
 
-  return { person, history, summary, braveSnippets, apolloOrg, apolloSeniority, apolloDepartments, vouches }
+  return { person, history, summary, braveSnippets, apolloOrg, apolloSeniority, apolloDepartments, vouches, content }
 }
 
 /**
  * Build the user prompt for Claude from gathered data.
  */
 function buildExtractionPrompt(data) {
-  const { person, history, summary, braveSnippets, apolloOrg, apolloSeniority, apolloDepartments, vouches } = data
+  const { person, history, summary, braveSnippets, apolloOrg, apolloSeniority, apolloDepartments, vouches, content } = data
   const parts = []
 
   parts.push(`Person: ${person.display_name}`)
@@ -186,6 +191,16 @@ function buildExtractionPrompt(data) {
       `- Vouched for in ${v.function_name} by ${v.voucher_name}${v.voucher_company ? ` (${v.voucher_company})` : ''}`
     ).join('\n')
     parts.push(`\nVouch Context:\n${vouchStr}`)
+  }
+
+  // Include discovered content (blog posts, podcasts, GitHub repos, talks)
+  if (content && content.length > 0) {
+    const contentStr = content.map(c => {
+      const topics = c.topics?.length > 0 ? ` [topics: ${c.topics.join(', ')}]` : ''
+      const summary = c.content_summary ? ` — ${c.content_summary}` : ''
+      return `- [${c.content_type}] ${c.title}${summary}${topics}`
+    }).join('\n')
+    parts.push(`\nDiscovered Content (${content.length} items — blog posts, podcasts, talks, GitHub repos):\n${contentStr}`)
   }
 
   return parts.join('\n')
