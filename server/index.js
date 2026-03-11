@@ -270,7 +270,7 @@ async function validateSession(req) {
   if (!sessionToken) return null
   const result = await query(
     `SELECT s.person_id, p.id, p.display_name, p.linkedin_url, p.email,
-            p.current_title, p.current_company, p.photo_url, p.welcome_seen_at
+            p.current_title, p.current_company, p.photo_url, p.welcome_seen_at, p.visit_count
      FROM sessions s JOIN people p ON p.id = s.person_id
      WHERE s.token = $1 AND s.expires_at > NOW()`,
     [sessionToken]
@@ -7283,8 +7283,8 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         .sort((a, b) => new Date(b.ts) - new Date(a.ts))
         .slice(0, 5)
 
-      // Mark feed as seen so these items don't resurface on next visit
-      await query('UPDATE people SET feed_last_seen_at = NOW() WHERE id = $1', [userId])
+      // Mark feed as seen so these items don't resurface on next visit, and increment visit count
+      await query('UPDATE people SET feed_last_seen_at = NOW(), visit_count = COALESCE(visit_count, 0) + 1 WHERE id = $1', [userId])
 
       res.writeHead(200)
       res.end(JSON.stringify({ items }))
@@ -7755,6 +7755,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
           email: person.email,
           has_vouched: vouchCheck.rows[0].has_vouched,
           welcome_seen: !!person.welcome_seen_at,
+          visit_count: person.visit_count || 0,
           current_title: person.current_title || null,
           current_company: person.current_company || null,
           photo_url: person.photo_url || null,

@@ -1866,6 +1866,20 @@ export default function NetworkBrainPage() {
     return () => revealTimersRef.current.forEach(id => clearTimeout(id));
   }, []);
 
+  // Progressive onboarding nudges for visits 2-4
+  // visit_count is the value at page load (before /api/feed increments it)
+  // visit 1 = onboarding tour (visit_count still 0), visit 2 = visit_count 0 at load, etc.
+  function getVisitNudge(visitCount) {
+    const nudges = [
+      "Remember, everyone in your network was recommended by someone you know well — and they were only allowed to pick up to 4 people per job function. These are people with truly valuable expertise. If you're working through a challenge or could use some guidance, let me help you find the right person.",
+      "Your network grows as the people you vouch for vouch for their best colleagues — that's how you discover people you don't know yet but can trust to be real subject matter experts.",
+      "If you haven't tried /bio yet, a quick career interview helps me make much better recommendations for you.",
+    ];
+    // visitCount 0 → nudge[0] (visit 2), 1 → nudge[1] (visit 3), 2 → nudge[2] (visit 4)
+    if (visitCount >= 0 && visitCount < nudges.length) return nudges[visitCount];
+    return null;
+  }
+
   // Welcome message — context-aware greeting on fresh page load
   const welcomeInsertedRef = useRef(false);
   useEffect(() => {
@@ -2050,7 +2064,11 @@ export default function NetworkBrainPage() {
           }
 
           msg += " What can I help with today?";
-          setMessages([{ role: "brain", isWelcome: true, text: msg }]);
+
+          const welcomeMsgs = [{ role: "brain", isWelcome: true, text: msg }];
+          const nudge = getVisitNudge(user.visit_count);
+          if (nudge) welcomeMsgs.push({ role: "brain", isWelcome: true, text: nudge });
+          setMessages(welcomeMsgs);
         } catch {
           setMessages([{ role: "brain", isWelcome: true, text: `Hey ${name}, welcome back. What can I help with today?` }]);
         }
@@ -2100,7 +2118,10 @@ export default function NetworkBrainPage() {
 
           msg += " What can I help with today?";
 
-          setMessages([{ role: "brain", isWelcome: true, text: msg }]);
+          const welcomeMsgs = [{ role: "brain", isWelcome: true, text: msg }];
+          const nudge = getVisitNudge(user.visit_count);
+          if (nudge) welcomeMsgs.push({ role: "brain", isWelcome: true, text: nudge });
+          setMessages(welcomeMsgs);
         } catch {
           setMessages([{ role: "brain", isWelcome: true, text: `Hey ${name}, welcome back. What can I help with today?` }]);
         }
