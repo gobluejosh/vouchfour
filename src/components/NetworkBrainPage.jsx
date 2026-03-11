@@ -2131,7 +2131,12 @@ export default function NetworkBrainPage() {
   useEffect(() => {
     if (!isMobile) return;
 
+    // Ignore autoFocus on page load — only respond to user-initiated focus
+    let ready = false;
+    const readyTimer = setTimeout(() => { ready = true; }, 1000);
+
     function handleFocusIn(e) {
+      if (!ready) return;
       if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") {
         setMobileKeyboardOpen(true);
       }
@@ -2151,6 +2156,7 @@ export default function NetworkBrainPage() {
     document.addEventListener("focusin", handleFocusIn);
     document.addEventListener("focusout", handleFocusOut);
     return () => {
+      clearTimeout(readyTimer);
       document.removeEventListener("focusin", handleFocusIn);
       document.removeEventListener("focusout", handleFocusOut);
     };
