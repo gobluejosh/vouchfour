@@ -2124,10 +2124,16 @@ export default function NetworkBrainPage() {
     function handleFocusIn(e) {
       if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") {
         setMobileKeyboardOpen(true);
-        // Scroll last message into view after keyboard animation
+        // Scroll content into view after keyboard animation
         setTimeout(() => {
-          const target = lastBrainRef.current || bottomRef.current;
-          target?.scrollIntoView({ behavior: "smooth", block: "end" });
+          // Few messages? Keep first one visible. Many? Show the latest.
+          const msgCount = (messages?.length || 0) + (bioMessages?.length || 0);
+          if (msgCount <= 2) {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          } else {
+            const target = lastBrainRef.current || bottomRef.current;
+            target?.scrollIntoView({ behavior: "smooth", block: "end" });
+          }
         }, 300);
       }
     }
