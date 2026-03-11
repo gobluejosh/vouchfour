@@ -4597,6 +4597,47 @@ Categories:
       const classification = await classifyBrainIntent(question, history)
       console.log(`[NetworkBrain] Intent: ${classification.intent} | ${classification.category || '-'}/${classification.term || '-'} | ${Date.now() - start}ms`)
 
+      // ─── Name lookup shortcut (classifier identified a name query) ────
+      if (classification.category === 'name' && classification.term) {
+        const termLower = classification.term.toLowerCase()
+        const nameHits = talent.filter(t => {
+          const name = (t.display_name || '').toLowerCase()
+          const parts = name.split(/\s+/)
+          if (name === termLower) return true
+          // Match on last name or first name
+          if (parts.some(p => p === termLower)) return true
+          // Partial match (e.g. "levisay" matches "john levisay")
+          if (name.includes(termLower) || termLower.includes(name)) return true
+          return false
+        })
+
+        if (nameHits.length > 0) {
+          const answerParts = nameHits.map(t => {
+            const s = structuredMap.get(t.id)
+            const summary = summaryMap.get(t.id)
+            const degreeLabel = t.degree === 1 ? '1st' : t.degree === 2 ? '2nd' : '3rd'
+            const parts = [`**${t.display_name}**`]
+            if (s?.current_title && s?.current_company) parts.push(` — ${s.current_title} at ${s.current_company}`)
+            else if (s?.current_company) parts.push(` — ${s.current_company}`)
+            parts.push(` (${degreeLabel} degree connection)`)
+            if (summary) parts.push(`\n\n${summary}`)
+            const note = notesMap.get(t.id)
+            if (note) parts.push(`\n\n*Your note:* ${note}`)
+            return parts.join('')
+          })
+          const answer = nameHits.length === 1
+            ? answerParts[0]
+            : answerParts.join('\n\n---\n\n')
+          const matchedPeople = await buildMentionedPeople(answer)
+          console.log(`[NetworkBrain] Name lookup: "${classification.term}" → ${nameHits.length} match(es) in ${Date.now() - start}ms`)
+          res.writeHead(200)
+          res.end(JSON.stringify({ answer, people: matchedPeople, max_recipients: maxRecipients }))
+          return
+        }
+        // Name not found in network — fall through to semantic/narrative
+        console.log(`[NetworkBrain] Name lookup: "${classification.term}" not found in network, falling through`)
+      }
+
       if (classification.intent === 'browse' && classification.category
           && classification.category !== 'name' && classification.category !== 'pathway') {
         const browseResult = executeBrowseQuery(classification.category, classification.term)
