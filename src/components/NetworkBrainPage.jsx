@@ -850,15 +850,26 @@ function PersonDetailPanel({ person, isMobile, onClose, onAsk, noDim }) {
 
   const content = (
     <div style={{ padding: isMobile ? "16px 20px 32px" : "24px" }}>
-      {/* Drag handle (mobile) */}
-      {isMobile && (
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+      {/* Drag handle + close (mobile) / Close button (desktop) */}
+      {isMobile ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", marginBottom: 16 }}>
           <div style={{ width: 36, height: 4, borderRadius: 2, background: C.border }} />
+          <button
+            onClick={onClose}
+            style={{
+              position: "absolute", right: 0, top: -4,
+              width: 32, height: 32, borderRadius: 8,
+              border: "none", background: "transparent", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.sub} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
         </div>
-      )}
-
-      {/* Close button (desktop) */}
-      {!isMobile && (
+      ) : (
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
           <button
             onClick={onClose}
@@ -1016,18 +1027,22 @@ function PersonDetailPanel({ person, isMobile, onClose, onAsk, noDim }) {
       )}
 
       {/* SHARED HISTORY */}
-      {person.career_overlap_detail?.length > 0 && (
+      {person.user_overlap?.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          {sectionHeader("Shared History")}
-          {person.career_overlap_detail.map((o, i) => (
-            <div key={i} style={{ fontSize: 13, color: C.ink, fontFamily: FONT, lineHeight: 1.5, marginBottom: i < person.career_overlap_detail.length - 1 ? 8 : 0 }}>
-              <span style={{ marginRight: 4 }}>⚡</span>
-              <strong>{o.org}</strong> ({o.userYears} / {o.personYears})
-              <div style={{ color: C.sub, fontSize: 12, marginLeft: 20 }}>
-                You: {o.userTitle} · {firstName}: {o.personTitle}
+          {sectionHeader("Career Overlap")}
+          {person.user_overlap.map((o, i) => {
+            const fmtDate = (d) => {
+              if (!d) return "?";
+              const dt = new Date(d);
+              return dt.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+            };
+            return (
+              <div key={i} style={{ fontSize: 13, color: C.ink, fontFamily: FONT, lineHeight: 1.5, marginBottom: i < person.user_overlap.length - 1 ? 8 : 0 }}>
+                <span style={{ marginRight: 4 }}>⚡</span>
+                <strong>{o.organization}</strong> · {fmtDate(o.overlap_start)} – {fmtDate(o.overlap_end)}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1098,9 +1113,9 @@ function PersonDetailPanel({ person, isMobile, onClose, onAsk, noDim }) {
               rows={3}
               style={{
                 width: "100%", padding: "8px 12px",
-                fontSize: 13, fontFamily: FONT, color: C.ink,
+                fontSize: 16, fontFamily: FONT, color: C.ink,
                 background: "#fff", border: `1.5px solid ${C.accent}`,
-                borderRadius: 8, resize: "vertical", lineHeight: 1.5,
+                borderRadius: 8, resize: "vertical", lineHeight: 1.4,
                 boxSizing: "border-box", outline: "none",
               }}
             />
@@ -1687,6 +1702,7 @@ export default function NetworkBrainPage() {
   const [slashMode, setSlashMode] = useState(null); // 'ask' | 'group' | null
   const [slashQuery, setSlashQuery] = useState("");
   const [slashResults, setSlashResults] = useState([]);
+  const [slashGuideOpen, setSlashGuideOpen] = useState(false);
   const [slashSelectedPeople, setSlashSelectedPeople] = useState([]); // for /group
   const [slashSearchLoading, setSlashSearchLoading] = useState(false);
   const slashDebounceRef = useRef(null);
@@ -2746,10 +2762,14 @@ export default function NetworkBrainPage() {
   // Fetch full person data from /api/person/:id and build rich profile for PersonDetailPanel
   async function fetchFullPerson(personId, fallback = {}) {
     try {
-      const res = await fetch(`/api/person/${personId}`, { credentials: "include" });
+      const [res, overlapRes] = await Promise.all([
+        fetch(`/api/person/${personId}`, { credentials: "include" }),
+        fetch(`/api/person/${personId}/career-overlap`, { credentials: "include" }).catch(() => null),
+      ]);
       if (!res.ok) return fallback;
       const data = await res.json();
       if (!data?.person) return fallback;
+      const overlapData = overlapRes?.ok ? await overlapRes.json() : null;
       return {
         id: data.person.id || fallback.id,
         name: data.person.name || data.person.display_name || fallback.name,
@@ -2763,7 +2783,7 @@ export default function NetworkBrainPage() {
         ai_summary: data.ai_summary || fallback.ai_summary,
         employment_history: data.employment_history || [],
         recommendation_count: data.recommendation_count || fallback.recommendation_count || 0,
-        career_overlap_detail: fallback.career_overlap_detail || null,
+        user_overlap: overlapData?.user_overlap || null,
         gives: (data.person.gives || []).map(g => {
           const found = GIVE_TYPES.find(t => t.key === g);
           return found ? found.label : g;
@@ -3127,7 +3147,7 @@ export default function NetworkBrainPage() {
             <>
 
               {/* Conversation area — single-column layout */}
-              <div style={{ flex: 1, paddingTop: 16, paddingBottom: 16, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
+              <div style={{ flex: 1, paddingTop: 16, paddingBottom: 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
 
 
                 {/* Messages */}
@@ -3217,7 +3237,6 @@ export default function NetworkBrainPage() {
                                             <div key={oi} style={{ fontSize: 12, color: C.ink, fontFamily: FONT, lineHeight: 1.4 }}>
                                               <span style={{ marginRight: 3 }}>⚡</span>
                                               <strong>{o.org}</strong>
-                                              <span style={{ color: C.sub }}> ({o.userYears} / {o.personYears})</span>
                                             </div>
                                           ))}
                                         </div>
@@ -3913,7 +3932,7 @@ export default function NetworkBrainPage() {
                       outline: "none",
                       transition: "border-color 0.15s, box-shadow 0.15s",
                     }}
-                    onFocus={e => { setHasInteracted(true); e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(109,91,208,0.12)"; }}
+                    onFocus={e => { setHasInteracted(true); e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(109,91,208,0.12)"; if (isMobile) setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 300); }}
                     onBlur={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
                   />
                   <button
@@ -3932,32 +3951,107 @@ export default function NetworkBrainPage() {
                     <SendIcon />
                   </button>
                 </form>
-                {/* Persistent slash command hints */}
-                <div style={{
-                  display: "flex", justifyContent: "center", gap: 14,
-                  marginTop: 8, fontSize: 12, fontFamily: "'SF Mono', 'Fira Code', monospace",
-                  color: slashHighlighted ? C.accent : "rgba(109,91,208,0.65)", letterSpacing: "0.02em",
-                  fontWeight: slashHighlighted ? 600 : 500,
-                  padding: "8px 16px",
-                  borderRadius: 10,
-                  background: slashHighlighted ? "rgba(109,91,208,0.08)" : "transparent",
-                  border: slashHighlighted ? `1.5px solid rgba(109,91,208,0.3)` : "1.5px solid transparent",
-                  transition: "all 0.5s ease-in-out",
-                }}>
-                  <span>/ask</span>
-                  <span style={{ color: slashHighlighted ? "rgba(109,91,208,0.4)" : "rgba(109,91,208,0.25)" }}>·</span>
-                  <span>/group</span>
-                  <span style={{ color: slashHighlighted ? "rgba(109,91,208,0.4)" : "rgba(109,91,208,0.25)" }}>·</span>
-                  <span>/vouch</span>
-                  <span style={{ color: slashHighlighted ? "rgba(109,91,208,0.4)" : "rgba(109,91,208,0.25)" }}>·</span>
-                  <span>/note</span>
-                  <span style={{ color: slashHighlighted ? "rgba(109,91,208,0.4)" : "rgba(109,91,208,0.25)" }}>·</span>
-                  <span>/give</span>
-                  <span style={{ color: slashHighlighted ? "rgba(109,91,208,0.4)" : "rgba(109,91,208,0.25)" }}>·</span>
-                  <span>/status</span>
-                  <span style={{ color: slashHighlighted ? "rgba(109,91,208,0.4)" : "rgba(109,91,208,0.25)" }}>·</span>
-                  <span>/compare</span>
-                </div>
+                {/* Slash command hints — clickable to open guide */}
+                {isMobile ? (
+                  <div
+                    onClick={() => setSlashGuideOpen(true)}
+                    style={{
+                      display: "flex", justifyContent: "center",
+                      marginTop: 8, fontSize: 12, fontFamily: "'SF Mono', 'Fira Code', monospace",
+                      color: slashHighlighted ? C.accent : "rgba(109,91,208,0.65)", letterSpacing: "0.02em",
+                      fontWeight: slashHighlighted ? 600 : 500,
+                      padding: "8px 16px", cursor: "pointer",
+                      borderRadius: 10,
+                      background: slashHighlighted ? "rgba(109,91,208,0.08)" : "transparent",
+                      border: slashHighlighted ? `1.5px solid rgba(109,91,208,0.3)` : "1.5px solid transparent",
+                      transition: "all 0.5s ease-in-out",
+                    }}
+                  >
+                    <span>/ commands</span>
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => setSlashGuideOpen(v => !v)}
+                    style={{
+                      display: "flex", justifyContent: "center", gap: 14,
+                      marginTop: 8, fontSize: 12, fontFamily: "'SF Mono', 'Fira Code', monospace",
+                      color: slashHighlighted ? C.accent : "rgba(109,91,208,0.65)", letterSpacing: "0.02em",
+                      fontWeight: slashHighlighted ? 600 : 500,
+                      padding: "8px 16px", cursor: "pointer",
+                      borderRadius: 10,
+                      background: slashHighlighted ? "rgba(109,91,208,0.08)" : "transparent",
+                      border: slashHighlighted ? `1.5px solid rgba(109,91,208,0.3)` : "1.5px solid transparent",
+                      transition: "all 0.5s ease-in-out",
+                    }}
+                  >
+                    {["/ask", "/group", "/vouch", "/note", "/give", "/status", "/compare"].map((cmd, i) => (
+                      <span key={cmd}>
+                        {i > 0 && <span style={{ color: slashHighlighted ? "rgba(109,91,208,0.4)" : "rgba(109,91,208,0.25)", marginRight: 14 }}>·</span>}
+                        {cmd}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Slash command guide panel */}
+                {slashGuideOpen && (() => {
+                  const SLASH_COMMANDS = [
+                    { cmd: "/ask", desc: "Send a message to someone in your network", action: () => handleInputChange("/ask ") },
+                    { cmd: "/group", desc: "Start a group conversation", action: () => handleInputChange("/group ") },
+                    { cmd: "/vouch", desc: "Recommend your best colleagues", action: () => handleInputChange("/vouch") },
+                    { cmd: "/note", desc: "Add a private note about someone", action: () => handleInputChange("/note ") },
+                    { cmd: "/give", desc: "Update what help you offer", action: () => handleInputChange("/give") },
+                    { cmd: "/status", desc: "Check invite responses", action: () => handleInputChange("/status") },
+                    { cmd: "/compare", desc: "Compare two people side by side", action: () => handleInputChange("/compare ") },
+                  ];
+                  const guideContent = (
+                    <div style={{ padding: "16px 20px 20px" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: C.ink, fontFamily: FONT }}>Commands</span>
+                        <button onClick={() => setSlashGuideOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, fontSize: 18, color: C.sub }}>✕</button>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        {SLASH_COMMANDS.map(({ cmd, desc, action }) => (
+                          <button
+                            key={cmd}
+                            onClick={() => { setSlashGuideOpen(false); action(); inputRef.current?.focus(); }}
+                            style={{
+                              display: "flex", alignItems: "baseline", gap: 10, padding: "10px 8px",
+                              background: "none", border: "none", cursor: "pointer", textAlign: "left",
+                              borderRadius: 8, transition: "background 0.15s", width: "100%",
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = C.accentLight; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                          >
+                            <span style={{ fontSize: 13, fontWeight: 600, color: C.accent, fontFamily: "'SF Mono', 'Fira Code', monospace", flexShrink: 0, width: 72 }}>{cmd}</span>
+                            <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT }}>{desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                  if (isMobile) {
+                    return (
+                      <div onClick={() => setSlashGuideOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 250, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end" }}>
+                        <div onClick={e => e.stopPropagation()} style={{ width: "100%", background: "#fff", borderRadius: "16px 16px 0 0", overflow: "auto", WebkitOverflowScrolling: "touch", animation: "slideUp 0.25s ease-out" }}>
+                          {guideContent}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <>
+                      <div onClick={() => setSlashGuideOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 249 }} />
+                      <div style={{
+                        position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 4, zIndex: 250,
+                        background: "#fff", borderRadius: 12, border: `1.5px solid ${C.border}`,
+                        boxShadow: "0 4px 16px rgba(0,0,0,0.1)", animation: "fadeSlideDown 0.15s ease-out",
+                      }}>
+                        {guideContent}
+                      </div>
+                    </>
+                  );
+                })()}
                 </div>
               </div>
             </>
