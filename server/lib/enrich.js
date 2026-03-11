@@ -359,7 +359,7 @@ export async function generateSummary(personId, { braveSnippets = [] } = {}) {
            FROM person_content WHERE person_id = $1
            ORDER BY content_type, id`, [personId]),
     query(`SELECT chunk_type, chunk_text, tags
-           FROM person_expertise WHERE person_id = $1
+           FROM person_expertise WHERE person_id = $1 AND chunk_type != 'bio'
            ORDER BY chunk_type, id`, [personId]),
     // Load Brave snippets from DB if not passed in (standalone call vs enrichPerson)
     braveSnippets.length === 0

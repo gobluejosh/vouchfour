@@ -1647,6 +1647,14 @@ export default function NetworkBrainPage() {
     } catch {}
   }, [messages]);
 
+  // Reset textarea height when input is cleared
+  useEffect(() => {
+    if (!input && inputRef.current) {
+      inputRef.current.style.height = "auto";
+      inputRef.current.style.height = "48px";
+    }
+  }, [input]);
+
   // Track whether user is scrolled near the bottom (for auto-scroll during streaming)
   useEffect(() => {
     const handleScroll = () => {
@@ -1709,6 +1717,19 @@ export default function NetworkBrainPage() {
   const [vouchFunctions, setVouchFunctions] = useState([]); // for /vouch
   const [vouchedSlugs, setVouchedSlugs] = useState(new Set());
   const [vouchLoading, setVouchLoading] = useState(false);
+
+  // Bio interview state
+  const [bioMode, setBioMode] = useState(false);
+  const [bioMessages, setBioMessages] = useState([]); // [{ role: 'user'|'bio', text, vouchSuggestion? }]
+  const [bioLoading, setBioLoading] = useState(false);
+  const [bioStatus, setBioStatus] = useState("none"); // none | active | paused | completed
+
+  // Scroll to bottom when bio messages change or bio mode is entered
+  useEffect(() => {
+    if (bioMode && bioMessages.length > 0) {
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    }
+  }, [bioMode, bioMessages]);
 
   // Fetch job functions when /vouch is activated
   useEffect(() => {
@@ -2094,6 +2115,38 @@ export default function NetworkBrainPage() {
     prevLoadingRef.current = loading;
   }, [messages, loading]);
 
+  // ── Mobile keyboard handler: keep content visible when keyboard opens ──
+  useEffect(() => {
+    if (!isMobile || !window.visualViewport) return;
+
+    let prevHeight = window.visualViewport.height;
+
+    function handleViewportResize() {
+      const currentHeight = window.visualViewport.height;
+      const heightDiff = prevHeight - currentHeight;
+
+      // Keyboard opened (viewport shrank by > 100px)
+      if (heightDiff > 100) {
+        // Scroll last message into visible area above keyboard
+        setTimeout(() => {
+          const lastMsg = lastBrainRef.current || bottomRef.current;
+          if (lastMsg) {
+            const rect = lastMsg.getBoundingClientRect();
+            const visibleBottom = window.visualViewport.height - 80; // 80px for input bar
+            if (rect.top > visibleBottom || rect.bottom > visibleBottom) {
+              window.scrollBy({ top: rect.top - visibleBottom + 60, behavior: "smooth" });
+            }
+          }
+        }, 50);
+      }
+
+      prevHeight = currentHeight;
+    }
+
+    window.visualViewport.addEventListener("resize", handleViewportResize);
+    return () => window.visualViewport.removeEventListener("resize", handleViewportResize);
+  }, [isMobile]);
+
   async function askQuestion(question) {
     if (!question.trim() || loading) return;
 
@@ -2250,6 +2303,12 @@ export default function NetworkBrainPage() {
 
   function handleSubmit(e) {
     e.preventDefault();
+    // If in bio mode, route to bio handler
+    if (bioMode) {
+      handleBioSubmit(input);
+      setInput("");
+      return;
+    }
     // If in /group mode with 2+ selected people, trigger group thread flow
     if (slashMode === "group" && slashSelectedPeople.length >= 2) {
       triggerGroupThreadForPeople(slashSelectedPeople);
@@ -2307,6 +2366,9 @@ export default function NetworkBrainPage() {
       const q = compareMatch[1].trim();
       setSlashQuery(q);
       fetchSlashResults(q);
+    } else if (/^\/bio\b/i.test(val)) {
+      handleStartBio();
+      return;
     } else if (/^\/vouch\b/i.test(val)) {
       setSlashMode("vouch");
       setSlashQuery("");
@@ -2800,10 +2862,115 @@ export default function NetworkBrainPage() {
   // Open/close person detail panel
   function handleOpenPerson(person) {
     setActivePerson(person);
+    // Fetch full data (career overlap, gives, etc.) in background
+    if (person?.id) fetchFullPerson(person.id, person).then(full => setActivePerson(full));
   }
   function handleClosePerson() {
     setActivePerson(null);
   }
+
+  // ─── Bio interview handlers ──────────────────────────────────────
+  async function handleStartBio() {
+    setInput("");
+    setSlashMode(null);
+    setSlashQuery("");
+    setSlashResults([]);
+
+    try {
+      // Check existing interview state
+      const res = await fetch("/api/bio-interview", { credentials: "include" });
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (data.status === "active" || data.status === "paused") {
+        // Resume existing interview
+        const restored = (data.turns || []).map(t => ({
+          role: t.role === "user" ? "user" : "bio",
+          text: t.content,
+        }));
+        setBioMessages(restored);
+        setBioStatus("active");
+        setBioMode(true);
+        return;
+      }
+
+      // Start new interview
+      setBioMessages([]);
+      setBioStatus("active");
+      setBioMode(true);
+      setBioLoading(true);
+
+      const startRes = await fetch("/api/bio-interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ message: "[start]" }),
+      });
+      if (!startRes.ok) {
+        setBioLoading(false);
+        return;
+      }
+      const startData = await startRes.json();
+      setBioMessages([{ role: "bio", text: startData.reply }]);
+      setBioLoading(false);
+    } catch (err) {
+      console.error("Bio start error:", err);
+      setBioLoading(false);
+    }
+  }
+
+  async function handleBioSubmit(text) {
+    if (!text.trim() || bioLoading) return;
+    const userMsg = text.trim();
+
+    setBioMessages(prev => [...prev, { role: "user", text: userMsg }]);
+    setBioLoading(true);
+
+    try {
+      const res = await fetch("/api/bio-interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ message: userMsg }),
+      });
+      if (!res.ok) {
+        setBioLoading(false);
+        return;
+      }
+      const data = await res.json();
+      const bioMsg = { role: "bio", text: data.reply };
+      if (data.vouch_suggestion) bioMsg.vouchSuggestion = data.vouch_suggestion;
+      if (data.interview_complete) bioMsg.interviewComplete = true;
+
+      setBioMessages(prev => [...prev, bioMsg]);
+      setBioLoading(false);
+
+      if (data.interview_complete) {
+        setBioStatus("completed");
+      }
+    } catch (err) {
+      console.error("Bio submit error:", err);
+      setBioLoading(false);
+    }
+  }
+
+  async function handleBioPause() {
+    try {
+      await fetch("/api/bio-interview/pause", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {}
+    setBioMode(false);
+    setBioStatus("paused");
+    // Add a note to the main conversation
+    setMessages(prev => [...prev, {
+      role: "brain",
+      text: "Career interview paused. Type /bio anytime to pick up where you left off.",
+      isWelcome: true,
+    }]);
+  }
+
 
   async function handleOpenGives() {
     setInput("");
@@ -3149,9 +3316,132 @@ export default function NetworkBrainPage() {
               {/* Conversation area — single-column layout */}
               <div style={{ flex: 1, paddingTop: 16, paddingBottom: 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
 
+                {/* Bio interview mode */}
+                {bioMode && (
+                  <>
+                    {/* Bio header banner — sticky at top */}
+                    <div style={{
+                      position: "sticky", top: 52, zIndex: 50,
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "10px 16px", marginBottom: 16,
+                      background: "#EEF2FF", borderRadius: 12,
+                      border: "1px solid #C7D2FE",
+                      boxShadow: "0 2px 8px rgba(99,102,241,0.08)",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 16 }}>🎙️</span>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>Career Interview</span>
+                      </div>
+                      <button
+                        onClick={handleBioPause}
+                        style={{
+                          padding: "5px 14px", fontSize: 12, fontWeight: 600,
+                          background: "#fff", color: C.sub, border: `1px solid ${C.border}`,
+                          borderRadius: 8, fontFamily: FONT, cursor: "pointer",
+                        }}
+                      >
+                        Pause
+                      </button>
+                    </div>
 
-                {/* Messages */}
-                {messages.map((msg, i) => {
+                    {/* Bio messages */}
+                    {bioMessages.map((msg, i) => (
+                      <div key={i} style={{ marginBottom: 16 }}>
+                        {msg.role === "user" ? (
+                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <div style={{
+                              background: C.userBubble, color: C.ink,
+                              border: `1px solid ${C.userBubbleBorder}`,
+                              padding: "10px 16px", borderRadius: "16px 16px 4px 16px",
+                              fontSize: 14, lineHeight: 1.5, fontFamily: FONT,
+                              maxWidth: "85%",
+                            }}>
+                              {msg.text}
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <div style={{
+                              background: "#fff", color: C.ink,
+                              border: `1px solid ${C.border}`,
+                              padding: "12px 16px", borderRadius: "16px 16px 16px 4px",
+                              fontSize: 14, lineHeight: 1.6, fontFamily: FONT,
+                              maxWidth: "85%",
+                            }}>
+                              {msg.text}
+                            </div>
+
+                            {/* Vouch suggestion nudge */}
+                            {msg.vouchSuggestion && (
+                              <div
+                                onClick={() => { handleBioPause(); setTimeout(() => handleInputChange("/vouch"), 100); }}
+                                style={{
+                                  marginTop: 8, padding: "8px 14px",
+                                  background: "#FFFBEB", border: "1px solid #FDE68A",
+                                  borderRadius: 10, fontSize: 13, color: "#92400E",
+                                  fontFamily: FONT, cursor: "pointer",
+                                  maxWidth: "85%",
+                                }}
+                              >
+                                💡 Want to vouch for <strong>{msg.vouchSuggestion.name}</strong>?
+                                {msg.vouchSuggestion.organization && ` (${msg.vouchSuggestion.organization})`}
+                              </div>
+                            )}
+
+                            {/* Interview complete card */}
+                            {msg.interviewComplete && (
+                              <div style={{
+                                marginTop: 12, padding: "14px 16px",
+                                background: "#F0FDF4", border: "1px solid #86EFAC",
+                                borderRadius: 12, maxWidth: "85%",
+                              }}>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: "#16A34A", fontFamily: FONT, marginBottom: 4 }}>
+                                  Interview complete
+                                </div>
+                                <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT, lineHeight: 1.5 }}>
+                                  Your profile is being updated with the details you shared. This will improve how the Brain understands your background.
+                                </div>
+                                <button
+                                  onClick={() => { setBioMode(false); }}
+                                  style={{
+                                    marginTop: 10, padding: "7px 16px",
+                                    background: C.accent, color: "#fff", border: "none",
+                                    borderRadius: 8, fontSize: 13, fontWeight: 600,
+                                    fontFamily: FONT, cursor: "pointer",
+                                  }}
+                                >
+                                  Back to Brain
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {/* Bio loading indicator */}
+                    {bioLoading && (
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{
+                          background: "#fff", border: `1px solid ${C.border}`,
+                          padding: "12px 16px", borderRadius: "16px 16px 16px 4px",
+                          display: "inline-flex", gap: 4,
+                        }}>
+                          {[0, 1, 2].map(j => (
+                            <div key={j} style={{
+                              width: 6, height: 6, borderRadius: "50%",
+                              background: C.sub,
+                              animation: `typingDot 1.4s ease-in-out ${j * 0.2}s infinite`,
+                            }} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Normal messages (hidden when in bio mode) */}
+                {!bioMode && messages.map((msg, i) => {
                   const isLastBrain = msg.role === "brain" && i === messages.length - 1;
                   const isLastCompare = msg.role === "compare" && i === messages.length - 1;
                   return (
@@ -3386,7 +3676,7 @@ export default function NetworkBrainPage() {
 
 
                 {/* Loading indicator */}
-                {loading && (
+                {loading && !bioMode && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
                     <div style={{
                       width: 8, height: 8, borderRadius: "50%",
@@ -3910,18 +4200,40 @@ export default function NetworkBrainPage() {
                 <form
                   onSubmit={handleSubmit}
                   style={{
-                    display: "flex", gap: 8,
+                    display: "flex", gap: 8, alignItems: "flex-end",
                   }}
                 >
-                  <input
+                  <textarea
                     ref={inputRef}
                     value={input}
-                    onChange={e => handleInputChange(e.target.value)}
-                    placeholder={hasInteracted || messages.length > 0
-                      ? (firstName ? `Ask about your network, ${firstName}...` : "Ask about your network...")
-                      : PLACEHOLDER_PROMPTS[placeholderIndex]}
-                    disabled={loading || welcomeRevealing}
+                    onChange={e => {
+                      const val = e.target.value;
+                      bioMode ? setInput(val) : handleInputChange(val);
+                      // Auto-grow: reset to 1 row then expand to scrollHeight
+                      e.target.style.height = "auto";
+                      e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit(e);
+                        // Reset height after submit
+                        requestAnimationFrame(() => {
+                          if (inputRef.current) {
+                            inputRef.current.style.height = "auto";
+                            inputRef.current.style.height = "48px";
+                          }
+                        });
+                      }
+                    }}
+                    placeholder={bioMode
+                      ? "Share your experience..."
+                      : (hasInteracted || messages.length > 0
+                        ? (firstName ? `Ask about your network, ${firstName}...` : "Ask about your network...")
+                        : PLACEHOLDER_PROMPTS[placeholderIndex])}
+                    disabled={loading || welcomeRevealing || bioLoading}
                     autoFocus
+                    rows={1}
                     style={{
                       flex: 1, padding: "14px 16px",
                       fontSize: 16, border: `1.5px solid ${C.border}`,
@@ -3931,19 +4243,24 @@ export default function NetworkBrainPage() {
                       boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
                       outline: "none",
                       transition: "border-color 0.15s, box-shadow 0.15s",
+                      resize: "none",
+                      overflow: "hidden",
+                      lineHeight: "20px",
+                      height: 48,
+                      maxHeight: 120,
                     }}
-                    onFocus={e => { setHasInteracted(true); e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(109,91,208,0.12)"; if (isMobile) setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 300); }}
+                    onFocus={e => { setHasInteracted(true); e.target.style.borderColor = C.accent; e.target.style.boxShadow = "0 0 0 3px rgba(109,91,208,0.12)"; }}
                     onBlur={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
                   />
                   <button
                     type="submit"
-                    disabled={!input.trim() || loading || welcomeRevealing}
+                    disabled={!input.trim() || loading || welcomeRevealing || bioLoading}
                     style={{
                       width: 48, height: 48,
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      background: input.trim() && !loading ? C.accent : "#D4CAFE",
+                      background: input.trim() && !loading && !bioLoading ? C.accent : "#D4CAFE",
                       color: "#fff", border: "none", borderRadius: 14,
-                      cursor: input.trim() && !loading ? "pointer" : "not-allowed",
+                      cursor: input.trim() && !loading && !bioLoading ? "pointer" : "not-allowed",
                       flexShrink: 0, transition: "background 0.15s",
                       boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
                     }}
@@ -3951,8 +4268,8 @@ export default function NetworkBrainPage() {
                     <SendIcon />
                   </button>
                 </form>
-                {/* Slash command hints — clickable to open guide */}
-                {isMobile ? (
+                {/* Slash command hints — clickable to open guide (hidden in bio mode) */}
+                {bioMode ? null : isMobile ? (
                   <div
                     onClick={() => setSlashGuideOpen(true)}
                     style={{
@@ -3984,7 +4301,7 @@ export default function NetworkBrainPage() {
                       transition: "all 0.5s ease-in-out",
                     }}
                   >
-                    {["/ask", "/group", "/vouch", "/note", "/give", "/status", "/compare"].map((cmd, i) => (
+                    {["/ask", "/group", "/vouch", "/note", "/give", "/status", "/compare", "/bio"].map((cmd, i) => (
                       <span key={cmd}>
                         {i > 0 && <span style={{ color: slashHighlighted ? "rgba(109,91,208,0.4)" : "rgba(109,91,208,0.25)", marginRight: 14 }}>·</span>}
                         {cmd}
@@ -4003,6 +4320,7 @@ export default function NetworkBrainPage() {
                     { cmd: "/give", desc: "Update what help you offer", action: () => handleInputChange("/give") },
                     { cmd: "/status", desc: "Check invite responses", action: () => handleInputChange("/status") },
                     { cmd: "/compare", desc: "Compare two people side by side", action: () => handleInputChange("/compare ") },
+                    { cmd: "/bio", desc: "Tell the Brain about your career journey", action: () => handleInputChange("/bio") },
                   ];
                   const guideContent = (
                     <div style={{ padding: "16px 20px 20px" }}>

@@ -4021,7 +4021,7 @@ Rules:
               action: 'highlight_slash',
             })
             claudeMessages.push({
-              text: `What's a problem you're working on where subject matter expertise would be helpful? I can help you figure out who in your network to talk to, or make a warm introduction.`,
+              text: `What's a problem you're working on where subject matter expertise would be helpful? I can help you figure out who in your network to talk to, or make a warm introduction.\n\nOr, we can start with me asking you a few questions about your career so that I can make better suggestions for you. If you want to try this now, type **/bio** — I'll walk you through a quick interview.`,
               highlight_person: null,
               people: [],
               action: 'clear_highlight',
@@ -4548,36 +4548,81 @@ Categories:
       }
 
       // ─── Name-match shortcut: skip Claude for simple name lookups ─────
+      // Handles both bare names ("jonathan mullins") and question forms ("who is jonathan mullins?")
       const nameMatches = (() => {
         const cleaned = question.replace(/[?!.,;:'"]/g, '').trim()
         const words = cleaned.split(/\s+/)
-        if (words.length === 0 || words.length > 3) return []
-        // Skip if it looks like a question or command
+        if (words.length === 0) return []
+
+        // Try to extract a name from question patterns
+        // "who is X", "tell me about X", "do you know X", "what about X", "know X"
+        const namePatterns = [
+          /^who\s+is\s+(.+)/i,
+          /^tell\s+me\s+about\s+(.+)/i,
+          /^what\s+about\s+(.+)/i,
+          /^do\s+you\s+know\s+(.+)/i,
+          /^know\s+(.+)/i,
+          /^what\s+do\s+you\s+know\s+about\s+(.+)/i,
+          /^anything\s+on\s+(.+)/i,
+          /^info\s+on\s+(.+)/i,
+          /^look\s+up\s+(.+)/i,
+          /^find\s+(.+)/i,
+        ]
+
+        let candidate = cleaned
+        for (const pat of namePatterns) {
+          const m = cleaned.match(pat)
+          if (m) { candidate = m[1].replace(/[?!.,;:'"]/g, '').trim(); break }
+        }
+
+        // Skip obvious non-name queries (too many words for a name)
+        const candidateWords = candidate.split(/\s+/)
+        if (candidateWords.length > 4) return []
+
+        // Also skip if the candidate still starts with a question/command word
+        // (pattern didn't match, and the original starts with a skip word)
         const skipWords = ['who','what','where','when','how','why','which','can','do','does',
-          'is','are','find','tell','list','show','recommend','suggest','any','help','looking',
-          'anyone','know','about','get','best','top','strongest','work','works']
-        if (skipWords.includes(words[0].toLowerCase())) return []
-        if (question.includes('?')) return []
-        const qLower = cleaned.toLowerCase()
+          'is','are','list','show','recommend','suggest','any','help','looking',
+          'anyone','get','best','top','strongest','work','works']
+        if (skipWords.includes(candidateWords[0].toLowerCase()) && candidate === cleaned) return []
+
+        const qLower = candidate.toLowerCase()
         return talent.filter(t => {
           const name = t.display_name.toLowerCase()
           const nameParts = name.split(/\s+/)
           if (name === qLower) return true
-          if (words.length === 1 && nameParts.some(p => p === qLower)) return true
-          if (words.length >= 2 && name.includes(qLower)) return true
+          if (candidateWords.length === 1 && nameParts.some(p => p === qLower)) return true
+          if (candidateWords.length >= 2 && name.includes(qLower)) return true
           return false
         })
       })()
 
       if (nameMatches.length > 0) {
+        // Fetch vouch paths for the matched people
+        const matchedIds = nameMatches.map(t => t.id)
+        const pathMap = await getVouchPaths(userId, matchedIds, { directional: true })
+
         const answerParts = nameMatches.map(t => {
           const s = structuredMap.get(t.id)
           const summary = summaryMap.get(t.id)
-          const degreeLabel = t.degree === 1 ? '1st' : t.degree === 2 ? '2nd' : '3rd'
           const parts = [`**${t.display_name}**`]
           if (s?.current_title && s?.current_company) parts.push(` — ${s.current_title} at ${s.current_company}`)
           else if (s?.current_company) parts.push(` — ${s.current_company}`)
-          parts.push(` (${degreeLabel} degree connection)`)
+
+          // Show recommendation pathway instead of "Xth degree connection"
+          const path = pathMap.get(t.id)
+          if (path && path.length >= 2) {
+            // path = [sender, ..., recipient] — show intermediaries
+            const intermediaries = path.slice(1, -1) // people between sender and recipient
+            if (intermediaries.length === 0) {
+              // 1st degree — you recommended them directly
+              parts.push(` (you recommended ${t.display_name.split(' ')[0]})`)
+            } else {
+              const through = intermediaries.map(p => p.name?.split(' ')[0] || p.name).join(' → ')
+              parts.push(` (via ${through})`)
+            }
+          }
+
           if (summary) parts.push(`\n\n${summary}`)
           const note = notesMap.get(t.id)
           if (note) parts.push(`\n\n*Your note:* ${note}`)
@@ -4612,14 +4657,27 @@ Categories:
         })
 
         if (nameHits.length > 0) {
+          const hitIds = nameHits.map(t => t.id)
+          const hitPathMap = await getVouchPaths(userId, hitIds, { directional: true })
+
           const answerParts = nameHits.map(t => {
             const s = structuredMap.get(t.id)
             const summary = summaryMap.get(t.id)
-            const degreeLabel = t.degree === 1 ? '1st' : t.degree === 2 ? '2nd' : '3rd'
             const parts = [`**${t.display_name}**`]
             if (s?.current_title && s?.current_company) parts.push(` — ${s.current_title} at ${s.current_company}`)
             else if (s?.current_company) parts.push(` — ${s.current_company}`)
-            parts.push(` (${degreeLabel} degree connection)`)
+
+            const path = hitPathMap.get(t.id)
+            if (path && path.length >= 2) {
+              const intermediaries = path.slice(1, -1)
+              if (intermediaries.length === 0) {
+                parts.push(` (you recommended ${t.display_name.split(' ')[0]})`)
+              } else {
+                const through = intermediaries.map(p => p.name?.split(' ')[0] || p.name).join(' → ')
+                parts.push(` (via ${through})`)
+              }
+            }
+
             if (summary) parts.push(`\n\n${summary}`)
             const note = notesMap.get(t.id)
             if (note) parts.push(`\n\n*Your note:* ${note}`)
@@ -4897,6 +4955,445 @@ ${v2Context}`
           res.end()
         } catch {}
       }
+    }
+    return
+  }
+
+  // ─── Bio Interview: Process facts into expertise chunks ────────
+  // Takes accumulated bio facts, uses Claude to synthesize per-role paragraphs,
+  // saves as person_expertise chunks (chunk_type='bio'), then embeds them.
+  // Bio chunks are NEVER passed to generateSummary — they're Brain-only.
+  async function processBioFacts(personId) {
+    const start = Date.now()
+    try {
+      // Load interview facts
+      const interviewRes = await query('SELECT facts FROM bio_interviews WHERE person_id = $1', [personId])
+      if (!interviewRes.rows[0]) return
+      const facts = interviewRes.rows[0].facts || []
+      if (facts.length === 0) {
+        console.log(`[BioProcess] No facts for person ${personId}, skipping`)
+        return
+      }
+
+      // Load employment history (chronological, same order as interview)
+      const histRes = await query(
+        `SELECT id, organization, title, start_date, end_date, is_current
+         FROM employment_history WHERE person_id = $1
+         ORDER BY start_date ASC NULLS LAST`, [personId]
+      )
+      const roles = histRes.rows
+
+      // Load person name
+      const personRes = await query('SELECT display_name FROM people WHERE id = $1', [personId])
+      const personName = personRes.rows[0]?.display_name || 'Unknown'
+
+      // Group facts by role_index
+      const factsByRole = {}
+      for (const f of facts) {
+        const idx = f.role_index ?? 0
+        if (!factsByRole[idx]) factsByRole[idx] = []
+        factsByRole[idx].push(f.text)
+      }
+
+      // Build prompt for Claude to synthesize per-role paragraphs
+      const roleSections = Object.entries(factsByRole).map(([idx, roleFacts]) => {
+        const role = roles[parseInt(idx)]
+        const roleLabel = role
+          ? `${role.title || 'Role'} at ${role.organization || 'Unknown'} (${role.start_date ? new Date(role.start_date).getFullYear() : '?'} – ${role.is_current ? 'Present' : (role.end_date ? new Date(role.end_date).getFullYear() : '?')})`
+          : `Role ${idx}`
+        return `## ${roleLabel}\nFacts from interview:\n${roleFacts.map(f => `- ${f}`).join('\n')}`
+      }).join('\n\n')
+
+      const systemPrompt = `You are synthesizing first-person career interview notes into concise professional expertise descriptions.
+For each role, write a 2-4 sentence paragraph that captures what this person actually did, what they learned, and what made their experience distinctive.
+Write in third person ("Josh led..." not "I led...").
+Be specific — include company names, concrete details, and real outcomes when available.
+Focus on what makes this experience useful context for someone considering working with or vouching for this person.
+
+Output a JSON array of objects, one per role discussed. Each object has:
+- "role_index": the index number from the input
+- "text": the synthesized paragraph
+- "tags": array of lowercase keyword tags for semantic matching (e.g., "saas", "marketplace", "zero-to-one", "performance-marketing")
+
+Only include roles that have meaningful facts. Skip roles where the facts are too thin to synthesize.`
+
+      const userPrompt = `Person: ${personName}\n\n${roleSections}`
+
+      // Call Claude to synthesize
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 30000)
+
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        signal: controller.signal,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+      })
+
+      const result = await claudeRes.json()
+      clearTimeout(timeout)
+
+      if (result.type === 'error') {
+        console.error(`[BioProcess] Claude error for person ${personId}:`, result.error)
+        return
+      }
+
+      const text = (result.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+      let cleaned = text.trim()
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+      }
+
+      let synthesized
+      try {
+        synthesized = JSON.parse(cleaned)
+      } catch (parseErr) {
+        console.error(`[BioProcess] JSON parse failed for person ${personId}:`, parseErr.message)
+        return
+      }
+
+      if (!Array.isArray(synthesized) || synthesized.length === 0) {
+        console.warn(`[BioProcess] No valid chunks from Claude for person ${personId}`)
+        return
+      }
+
+      // Delete existing bio chunks for this person, then insert new ones
+      await query(`DELETE FROM person_expertise WHERE person_id = $1 AND chunk_type = 'bio'`, [personId])
+      // Also delete orphaned expertise embeddings (they'll be recreated by embedPerson)
+      await query(`DELETE FROM person_embeddings WHERE person_id = $1 AND expertise_id IS NOT NULL AND expertise_id NOT IN (SELECT id FROM person_expertise WHERE person_id = $1)`, [personId])
+
+      let inserted = 0
+      for (const chunk of synthesized) {
+        if (!chunk.text || chunk.text.length < 20) continue
+        const tags = Array.isArray(chunk.tags) ? chunk.tags : []
+        const metadata = { role_index: chunk.role_index, source: 'bio_interview' }
+        await query(`
+          INSERT INTO person_expertise (person_id, chunk_type, chunk_text, tags, metadata)
+          VALUES ($1, 'bio', $2, $3, $4)
+        `, [personId, chunk.text, tags, JSON.stringify(metadata)])
+        inserted++
+      }
+
+      // Embed the new bio chunks
+      try {
+        await embedPerson(personId, { force: false })
+        console.log(`[BioProcess] ${personName} | ${inserted} bio chunks created + embedded | ${Date.now() - start}ms`)
+      } catch (embedErr) {
+        console.error(`[BioProcess] Embedding failed for person ${personId}:`, embedErr.message)
+        console.log(`[BioProcess] ${personName} | ${inserted} bio chunks created (embedding failed) | ${Date.now() - start}ms`)
+      }
+    } catch (err) {
+      console.error(`[BioProcess] Failed for person ${personId}:`, err)
+    }
+  }
+
+  // ─── Bio Interview: Get state ──────────────────────────────────
+  if (req.method === 'GET' && req.url === '/api/bio-interview') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const userId = session.person_id
+
+      const result = await query('SELECT status, turns, current_role_index, facts, vouch_suggestions FROM bio_interviews WHERE person_id = $1', [userId])
+      if (result.rows.length === 0) {
+        res.writeHead(200); res.end(JSON.stringify({ status: 'none' })); return
+      }
+      const row = result.rows[0]
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        status: row.status,
+        turns: row.turns || [],
+        current_role_index: row.current_role_index,
+        facts: row.facts || [],
+        vouch_suggestions: row.vouch_suggestions || [],
+      }))
+    } catch (err) {
+      console.error('[BioInterview] GET error:', err)
+      res.writeHead(500); res.end(JSON.stringify({ error: 'Internal error' }))
+    }
+    return
+  }
+
+  // ─── Bio Interview: Pause ──────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/bio-interview/pause') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const userId = session.person_id
+
+      await query(`UPDATE bio_interviews SET status = 'paused', updated_at = NOW() WHERE person_id = $1 AND status = 'active'`, [userId])
+
+      // Fire-and-forget: process accumulated bio facts into expertise chunks + embeddings
+      processBioFacts(userId).catch(err => {
+        console.error(`[BioInterview] Bio fact processing on pause failed for person ${userId}:`, err)
+      })
+
+      res.writeHead(200); res.end(JSON.stringify({ ok: true }))
+    } catch (err) {
+      console.error('[BioInterview] pause error:', err)
+      res.writeHead(500); res.end(JSON.stringify({ error: 'Internal error' }))
+    }
+    return
+  }
+
+  // ─── Bio Interview: Reset ─────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/bio-interview/reset') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const userId = session.person_id
+
+      await query('DELETE FROM bio_interviews WHERE person_id = $1', [userId])
+      res.writeHead(200); res.end(JSON.stringify({ ok: true }))
+    } catch (err) {
+      console.error('[BioInterview] reset error:', err)
+      res.writeHead(500); res.end(JSON.stringify({ error: 'Internal error' }))
+    }
+    return
+  }
+
+  // ─── Bio Interview: Main turn ─────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/bio-interview') {
+    const start = Date.now()
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+      const userId = session.person_id
+      const userName = session.display_name || 'there'
+
+      const body = await readBody(req)
+      const message = body.message?.trim()
+      if (!message) { res.writeHead(400); res.end(JSON.stringify({ error: 'Message required' })); return }
+
+      // Load employment history (chronological — oldest first for interview walkthrough)
+      const histRes = await query(
+        `SELECT id, organization, title, start_date, end_date, is_current, location, description
+         FROM employment_history WHERE person_id = $1
+         ORDER BY start_date ASC NULLS LAST`, [userId]
+      )
+      const roles = histRes.rows
+
+      // Load or create interview row
+      let interview = (await query('SELECT * FROM bio_interviews WHERE person_id = $1', [userId])).rows[0]
+
+      if (!interview) {
+        // Create new interview
+        const ins = await query(
+          `INSERT INTO bio_interviews (person_id, status, current_role_index, turns, facts, vouch_suggestions)
+           VALUES ($1, 'active', 0, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
+           RETURNING *`,
+          [userId]
+        )
+        interview = ins.rows[0]
+      } else if (interview.status === 'completed') {
+        // Reset for a new round
+        const upd = await query(
+          `UPDATE bio_interviews SET status = 'active', current_role_index = 0,
+           turns = '[]'::jsonb, facts = '[]'::jsonb, vouch_suggestions = '[]'::jsonb,
+           completed_at = NULL, updated_at = NOW()
+           WHERE person_id = $1 RETURNING *`,
+          [userId]
+        )
+        interview = upd.rows[0]
+      } else if (interview.status === 'paused') {
+        // Resume
+        await query(`UPDATE bio_interviews SET status = 'active', updated_at = NOW() WHERE person_id = $1`, [userId])
+        interview.status = 'active'
+      }
+
+      const turns = interview.turns || []
+      const facts = interview.facts || []
+      const vouchSuggestions = interview.vouch_suggestions || []
+      let currentRoleIndex = interview.current_role_index || 0
+
+      // Append user message (unless it's the [start] signal)
+      if (message !== '[start]') {
+        turns.push({ role: 'user', content: message })
+      }
+
+      // Load user's existing enrichment summary for context
+      const summaryRes = await query(
+        `SELECT ai_summary FROM person_enrichment WHERE person_id = $1 AND source = 'claude'`,
+        [userId]
+      )
+      const existingSummary = summaryRes.rows[0]?.ai_summary || ''
+
+      // Build career timeline text
+      const careerTimeline = roles.length > 0
+        ? roles.map((r, i) => {
+            const start = r.start_date ? new Date(r.start_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '?'
+            const end = r.is_current ? 'Present' : (r.end_date ? new Date(r.end_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '?')
+            const desc = r.description ? ` — ${r.description}` : ''
+            return `${i}. ${r.title || 'Role'} at ${r.organization || 'Unknown'} (${start} – ${end})${desc}`
+          }).join('\n')
+        : 'No career history on file yet — ask them about their background from the start.'
+
+      // Build facts summary
+      const factsSummary = facts.length > 0
+        ? facts.map(f => `  Role #${f.role_index}: ${f.text}`).join('\n')
+        : 'None yet.'
+
+      // Current focus role
+      const focusRole = roles[currentRoleIndex]
+      const focusText = focusRole
+        ? `Role #${currentRoleIndex} — ${focusRole.title || 'Role'} at ${focusRole.organization || 'Unknown'}`
+        : 'All roles covered — wrap up the interview.'
+
+      const systemPrompt = `You are a professional career interviewer for VouchFour, a vouch-based professional network. You're having a casual, warm conversation with ${userName} about their career journey. Your goal is to learn what they actually DID — projects, achievements, leadership moments, expertise — in their own words.
+
+CAREER TIMELINE (from their profile):
+${careerTimeline}
+
+EXISTING PROFILE SUMMARY:
+${existingSummary || 'None yet.'}
+
+FACTS CONFIRMED SO FAR:
+${factsSummary}
+
+CURRENT FOCUS: ${focusText}
+Total roles: ${roles.length}
+
+RULES:
+- Ask 2-3 questions per role, then naturally transition to the next
+- Focus on: what they did, what they're proud of, who they worked closely with
+- When they mention a colleague positively, note it as a vouch suggestion (but keep it conversational — don't push)
+- Keep responses to 2-3 sentences + one question
+- If they want to skip a role or move on, respect that
+- When you've covered all roles (or there are no roles and you've learned enough), wrap up warmly and summarize key themes
+- For the [start] signal, give a warm opening that references their career and asks about their first role
+
+RESPONSE FORMAT — your entire response MUST be valid JSON with this exact structure:
+{
+  "reply": "Your conversational message to the user",
+  "facts": ["fact1 about this role", "fact2"],
+  "vouch_suggestion": null,
+  "advance_role": false,
+  "interview_complete": false
+}
+
+For vouch_suggestion, use null OR: { "name": "colleague name", "organization": "company", "context": "why mentioned" }
+Set advance_role to true when you're ready to move to the next role.
+Set interview_complete to true only when all roles are covered and it's time to wrap up.
+facts should contain concise professional facts gleaned from the user's response. Empty array if nothing new.`
+
+      // Build messages array for Claude
+      const claudeMessages = turns.map(t => ({
+        role: t.role === 'user' ? 'user' : 'assistant',
+        content: t.role === 'user' ? t.content : t.content,
+      }))
+
+      // For the [start] signal, send a user message to kick things off
+      if (message === '[start]') {
+        claudeMessages.push({ role: 'user', content: 'Please start the career interview.' })
+      }
+
+      // Call Claude
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 30000)
+
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 512,
+          system: systemPrompt,
+          messages: claudeMessages,
+        }),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+
+      if (!claudeRes.ok) {
+        const err = await claudeRes.text()
+        console.error('[BioInterview] Claude error:', err)
+        res.writeHead(502); res.end(JSON.stringify({ error: 'AI service error' })); return
+      }
+
+      const claudeData = await claudeRes.json()
+      const rawText = claudeData.content?.[0]?.text || ''
+
+      // Parse JSON response from Claude
+      let parsed
+      try {
+        // Strip markdown fencing if present
+        const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
+        parsed = JSON.parse(cleaned)
+      } catch (parseErr) {
+        console.error('[BioInterview] JSON parse failed, raw:', rawText)
+        // Fallback: treat the whole text as the reply
+        parsed = { reply: rawText, facts: [], vouch_suggestion: null, advance_role: false, interview_complete: false }
+      }
+
+      const reply = parsed.reply || rawText
+      const newFacts = Array.isArray(parsed.facts) ? parsed.facts : []
+      const vouchSuggestion = parsed.vouch_suggestion || null
+      const advanceRole = parsed.advance_role === true
+      const interviewComplete = parsed.interview_complete === true
+
+      // Append assistant turn
+      turns.push({ role: 'assistant', content: reply })
+
+      // Accumulate facts with role index
+      for (const factText of newFacts) {
+        facts.push({ role_index: currentRoleIndex, type: 'bio', text: factText })
+      }
+
+      // Accumulate vouch suggestions
+      if (vouchSuggestion && vouchSuggestion.name) {
+        vouchSuggestions.push(vouchSuggestion)
+      }
+
+      // Advance role if signaled
+      if (advanceRole && currentRoleIndex < roles.length - 1) {
+        currentRoleIndex++
+      }
+
+      // Update interview row
+      const newStatus = interviewComplete ? 'completed' : 'active'
+      await query(
+        `UPDATE bio_interviews SET
+           turns = $1, facts = $2, vouch_suggestions = $3,
+           current_role_index = $4, status = $5, updated_at = NOW(),
+           completed_at = ${interviewComplete ? 'NOW()' : 'NULL'}
+         WHERE person_id = $6`,
+        [JSON.stringify(turns), JSON.stringify(facts), JSON.stringify(vouchSuggestions), currentRoleIndex, newStatus, userId]
+      )
+
+      // If interview complete, process bio facts into expertise chunks + embeddings
+      if (interviewComplete) {
+        // Fire-and-forget: synthesize facts → expertise chunks → embeddings (Brain-only)
+        processBioFacts(userId).catch(err => {
+          console.error(`[BioInterview] Bio fact processing failed for person ${userId}:`, err)
+        })
+      }
+
+      console.log(`[BioInterview] Turn for person ${userId} in ${Date.now() - start}ms (role ${currentRoleIndex}, facts: ${newFacts.length}, complete: ${interviewComplete})`)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        reply,
+        status: newStatus,
+        vouch_suggestion: vouchSuggestion,
+        current_role_index: currentRoleIndex,
+        interview_complete: interviewComplete,
+      }))
+    } catch (err) {
+      console.error('[BioInterview] turn error:', err)
+      res.writeHead(500); res.end(JSON.stringify({ error: 'Internal error' }))
     }
     return
   }

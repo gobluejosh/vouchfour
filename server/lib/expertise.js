@@ -313,8 +313,9 @@ export async function extractExpertise(personId, { verbose = false } = {}) {
     return true
   })
 
-  // Save to DB — delete old chunks first, then insert new ones
-  await query(`DELETE FROM person_expertise WHERE person_id = $1`, [personId])
+  // Save to DB — delete old non-bio chunks first, then insert new ones
+  // Bio chunks (from /bio interview) are managed separately and must be preserved
+  await query(`DELETE FROM person_expertise WHERE person_id = $1 AND chunk_type != 'bio'`, [personId])
 
   for (const chunk of validChunks) {
     const tags = Array.isArray(chunk.tags) ? chunk.tags : []
