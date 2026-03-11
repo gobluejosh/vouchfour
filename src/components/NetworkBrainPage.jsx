@@ -3319,7 +3319,7 @@ export default function NetworkBrainPage() {
             <>
 
               {/* Conversation area — single-column layout */}
-              <div style={{ flex: 1, paddingTop: 16, paddingBottom: keyboardOffset > 0 ? (keyboardOffset + 80) : 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
+              <div style={{ flex: 1, paddingTop: 16, paddingBottom: keyboardOffset > 0 ? 80 : 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
 
                 {/* Bio interview mode */}
                 {bioMode && (
