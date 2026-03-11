@@ -157,8 +157,17 @@ function TalentCard({ talent }) {
 function VouchStatusCard({ vouches, vouchToken, shareToken, label, dropdown }) {
   const [expanded, setExpanded] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  const responded = vouches.filter(v => v.inviteStatus === "completed").length;
+  const vouched = vouches.filter(v => v.inviteStatus === "vouched").length;
+  const visited = vouches.filter(v => v.inviteStatus === "visited").length;
+  const pending = vouches.filter(v => v.inviteStatus === "pending").length;
   const inviteLink = shareToken ? `${window.location.origin}/invite/${shareToken}` : null;
+
+  // Build summary: "2 vouched · 1 visited · 1 pending"
+  const parts = [];
+  if (vouched) parts.push(`${vouched} vouched`);
+  if (visited) parts.push(`${visited} visited`);
+  if (pending) parts.push(`${pending} pending`);
+  const summaryText = parts.join(" · ") || `${vouches.length} pending`;
 
   return (
     <div style={{
@@ -178,7 +187,7 @@ function VouchStatusCard({ vouches, vouchToken, shareToken, label, dropdown }) {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT }}>
-            {responded} of {vouches.length} responded
+            {summaryText}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -204,12 +213,19 @@ function VouchStatusCard({ vouches, vouchToken, shareToken, label, dropdown }) {
             }}>
               <Avatar name={v.name} size={30} />
               <div style={{ flex: 1, fontSize: 14, color: C.ink, fontFamily: FONT }}>{v.name}</div>
-              {v.inviteStatus === "completed" ? (
+              {v.inviteStatus === "vouched" ? (
                 <div style={{
                   fontSize: 11, color: C.success, fontWeight: 600,
                   background: C.successLight, padding: "3px 8px", borderRadius: 6,
                 }}>
-                  Responded
+                  Vouched
+                </div>
+              ) : v.inviteStatus === "visited" ? (
+                <div style={{
+                  fontSize: 11, color: "#2563EB", fontWeight: 600,
+                  background: "#EFF6FF", padding: "3px 8px", borderRadius: 6,
+                }}>
+                  Visited
                 </div>
               ) : (
                 <div style={{

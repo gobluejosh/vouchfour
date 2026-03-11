@@ -609,8 +609,17 @@ function VouchStatusContent({ person }) {
 
   const currentFn = myVouches[selectedSlug] || myVouches[functionSlugs[0]];
   const vouches = currentFn?.vouches || [];
-  const responded = vouches.filter(v => v.inviteStatus === "completed").length;
+  const vouchedCount = vouches.filter(v => v.inviteStatus === "vouched").length;
+  const visitedCount = vouches.filter(v => v.inviteStatus === "visited").length;
+  const pendingCount = vouches.filter(v => v.inviteStatus === "pending").length;
   const currentToken = vouchTokens[selectedSlug || functionSlugs[0]];
+
+  // Build summary: "2 vouched · 1 visited · 1 pending"
+  const summaryParts = [];
+  if (vouchedCount) summaryParts.push(`${vouchedCount} vouched`);
+  if (visitedCount) summaryParts.push(`${visitedCount} visited`);
+  if (pendingCount) summaryParts.push(`${pendingCount} pending`);
+  const summaryText = summaryParts.join(" · ") || `${vouches.length} pending`;
 
   return (
     <div>
@@ -640,33 +649,41 @@ function VouchStatusContent({ person }) {
 
       {/* Summary */}
       <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT, marginBottom: 14 }}>
-        {responded} of {vouches.length} responded
+        {summaryText}
       </div>
 
       {/* Vouchee list */}
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {vouches.map(v => (
-          <div
-            key={v.personId}
-            style={{
-              display: "flex", alignItems: "center", gap: 10,
-              padding: "8px 10px", borderRadius: 8,
-            }}
-          >
-            <PhotoAvatar name={v.name} size={28} />
-            <div style={{ flex: 1, fontSize: 14, color: C.ink, fontFamily: FONT, fontWeight: 500, minWidth: 0 }}>
-              {v.name}
+        {vouches.map(v => {
+          const badgeStyle = v.inviteStatus === "vouched"
+            ? { background: C.successLight, color: C.success }
+            : v.inviteStatus === "visited"
+            ? { background: "#EFF6FF", color: "#2563EB" }
+            : { background: "#FFFBEB", color: "#D97706" };
+          const badgeLabel = v.inviteStatus === "vouched" ? "Vouched"
+            : v.inviteStatus === "visited" ? "Visited" : "Pending";
+          return (
+            <div
+              key={v.personId}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "8px 10px", borderRadius: 8,
+              }}
+            >
+              <PhotoAvatar name={v.name} size={28} />
+              <div style={{ flex: 1, fontSize: 14, color: C.ink, fontFamily: FONT, fontWeight: 500, minWidth: 0 }}>
+                {v.name}
+              </div>
+              <div style={{
+                padding: "3px 8px", borderRadius: 6,
+                fontSize: 11, fontWeight: 600, fontFamily: FONT, flexShrink: 0,
+                ...badgeStyle,
+              }}>
+                {badgeLabel}
+              </div>
             </div>
-            <div style={{
-              padding: "3px 8px", borderRadius: 6,
-              fontSize: 11, fontWeight: 600, fontFamily: FONT, flexShrink: 0,
-              background: v.inviteStatus === "completed" ? C.successLight : "#FFFBEB",
-              color: v.inviteStatus === "completed" ? C.success : "#D97706",
-            }}>
-              {v.inviteStatus === "completed" ? "Responded" : "Pending"}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
@@ -1726,6 +1743,7 @@ export default function NetworkBrainPage() {
   const slashDebounceRef = useRef(null);
   const [vouchFunctions, setVouchFunctions] = useState([]); // for /vouch
   const [vouchedSlugs, setVouchedSlugs] = useState(new Set());
+  const [vouchCounts, setVouchCounts] = useState({}); // slug → count
   const [vouchLoading, setVouchLoading] = useState(false);
 
   // Bio interview state
@@ -1753,9 +1771,10 @@ export default function NetworkBrainPage() {
         ]);
         if (cancelled) return;
         const fnData = await fnRes.json();
-        const myData = myRes.ok ? await myRes.json() : { vouchedFunctions: [] };
+        const myData = myRes.ok ? await myRes.json() : { vouchedFunctions: [], vouchCounts: {} };
         setVouchFunctions(fnData.jobFunctions || []);
         setVouchedSlugs(new Set(myData.vouchedFunctions || []));
+        setVouchCounts(myData.vouchCounts || {});
       } catch {}
     })();
     return () => { cancelled = true; };
@@ -4053,7 +4072,9 @@ export default function NetworkBrainPage() {
                         Loading functions...
                       </div>
                     ) : vouchFunctions.map(fn => {
-                      const alreadyVouched = vouchedSlugs.has(fn.slug);
+                      const count = vouchCounts[fn.slug] || 0;
+                      const isFull = count >= 4;
+                      const isPartial = count > 0 && count < 4;
                       return (
                         <div
                           key={fn.id}
@@ -4068,20 +4089,20 @@ export default function NetworkBrainPage() {
                           onMouseEnter={e => { e.currentTarget.style.background = "#F9FAFB"; }}
                           onMouseLeave={e => { e.currentTarget.style.background = ""; }}
                         >
-                          <div>
-                            <div style={{ fontSize: 14, color: C.ink, fontFamily: FONT, fontWeight: 500 }}>
-                              {fn.name}
-                            </div>
-                            {alreadyVouched && (
-                              <div style={{ fontSize: 11, color: C.success, fontFamily: FONT, marginTop: 1 }}>
-                                Update your picks
-                              </div>
-                            )}
+                          <div style={{ fontSize: 14, color: C.ink, fontFamily: FONT, fontWeight: 500 }}>
+                            {fn.name}
                           </div>
-                          {alreadyVouched && (
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.success} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
+                          {isFull ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: C.success, fontFamily: FONT }}>4/4</span>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.success} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            </div>
+                          ) : isPartial ? (
+                            <span style={{ fontSize: 11, fontWeight: 600, color: C.warn, fontFamily: FONT }}>{count}/4</span>
+                          ) : (
+                            <span style={{ fontSize: 11, fontWeight: 600, color: C.sub, fontFamily: FONT }}>0/4</span>
                           )}
                         </div>
                       );

@@ -588,13 +588,19 @@ const server = http.createServer(async (req, res) => {
         return
       }
       const result = await query(`
-        SELECT DISTINCT jf.id, jf.slug, jf.name
+        SELECT jf.slug, COUNT(*)::int AS count
         FROM vouches v
         JOIN job_functions jf ON jf.id = v.job_function_id
         WHERE v.voucher_id = $1
+        GROUP BY jf.slug
       `, [session.id])
+      const vouchCounts = {}
+      for (const r of result.rows) vouchCounts[r.slug] = r.count
       res.writeHead(200)
-      res.end(JSON.stringify({ vouchedFunctions: result.rows.map(r => r.slug) }))
+      res.end(JSON.stringify({
+        vouchedFunctions: result.rows.map(r => r.slug),
+        vouchCounts,
+      }))
     } catch (err) {
       console.error('[/api/my-vouch-functions error]', err)
       res.writeHead(500)
@@ -611,7 +617,9 @@ const server = http.createServer(async (req, res) => {
 
       const userId = session.id
 
-      // 1. Vouch status with invite_status computed
+      // 1. Vouch status with 3-state invite_status computed
+      // Priority: vouched (they've made vouches) > visited (has ever logged in) > pending
+      // Uses sessions table as ground truth for "visited" (not vouch_invites.status)
       const vouchesRes = await query(`
         SELECT v.job_function_id, jf.name AS jf_name, jf.slug AS jf_slug, jf.practitioner_label AS jf_practitioner_label,
                p.id AS person_id, p.display_name AS name,
@@ -619,7 +627,11 @@ const server = http.createServer(async (req, res) => {
                  WHEN EXISTS (
                    SELECT 1 FROM vouches v2
                    WHERE v2.voucher_id = v.vouchee_id AND v2.job_function_id = v.job_function_id
-                 ) THEN 'completed'
+                 ) THEN 'vouched'
+                 WHEN EXISTS (
+                   SELECT 1 FROM sessions s
+                   WHERE s.person_id = v.vouchee_id
+                 ) THEN 'visited'
                  ELSE 'pending'
                END AS invite_status
         FROM vouches v
@@ -1558,7 +1570,9 @@ Rules:
         siblingCoefficient,
       })
 
-      // Get user's vouches grouped by job function, with invite status per vouchee
+      // Get user's vouches grouped by job function, with 3-state invite status per vouchee
+      // Priority: vouched (they've made vouches) > visited (has ever logged in) > pending
+      // Uses sessions table as ground truth for "visited" (not vouch_invites.status)
       const vouchesRes = await query(`
         SELECT v.job_function_id, jf.name AS jf_name, jf.slug AS jf_slug, jf.practitioner_label AS jf_practitioner_label,
                p.id AS person_id, p.display_name AS name, p.linkedin_url AS linkedin,
@@ -1566,7 +1580,11 @@ Rules:
                  WHEN EXISTS (
                    SELECT 1 FROM vouches v2
                    WHERE v2.voucher_id = v.vouchee_id AND v2.job_function_id = v.job_function_id
-                 ) THEN 'completed'
+                 ) THEN 'vouched'
+                 WHEN EXISTS (
+                   SELECT 1 FROM sessions s
+                   WHERE s.person_id = v.vouchee_id
+                 ) THEN 'visited'
                  ELSE 'pending'
                END AS invite_status
         FROM vouches v
@@ -7599,6 +7617,12 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         [sessionToken, person.id]
       )
 
+      // Mark any pending vouch invites as 'visited' (they logged in)
+      await query(
+        `UPDATE vouch_invites SET status = 'visited' WHERE invitee_id = $1 AND status = 'pending'`,
+        [person.id]
+      )
+
       // Set httpOnly cookie
       res.setHeader('Set-Cookie',
         `vf_session=${sessionToken}; HttpOnly; Path=/; Max-Age=${30 * 24 * 60 * 60}; SameSite=Lax`
@@ -7619,7 +7643,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         FROM vouches v
         JOIN people p ON p.id = v.voucher_id
         JOIN job_functions jf ON jf.id = v.job_function_id
-        LEFT JOIN vouch_invites vi ON vi.invitee_id = v.vouchee_id AND vi.job_function_id = v.job_function_id AND vi.status = 'pending'
+        LEFT JOIN vouch_invites vi ON vi.invitee_id = v.vouchee_id AND vi.job_function_id = v.job_function_id AND vi.status IN ('pending', 'visited')
         WHERE v.vouchee_id = $1
         ORDER BY v.created_at DESC LIMIT 1
       `, [person.id])
@@ -7697,7 +7721,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         FROM vouches v
         JOIN people p ON p.id = v.voucher_id
         JOIN job_functions jf ON jf.id = v.job_function_id
-        LEFT JOIN vouch_invites vi ON vi.invitee_id = v.vouchee_id AND vi.job_function_id = v.job_function_id AND vi.status = 'pending'
+        LEFT JOIN vouch_invites vi ON vi.invitee_id = v.vouchee_id AND vi.job_function_id = v.job_function_id AND vi.status IN ('pending', 'visited')
         WHERE v.vouchee_id = $1
         ORDER BY v.created_at DESC LIMIT 1
       `, [person.id])
