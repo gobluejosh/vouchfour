@@ -2879,7 +2879,11 @@ export default function NetworkBrainPage() {
     try {
       // Check existing interview state
       const res = await fetch("/api/bio-interview", { credentials: "include" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error("Bio GET failed:", res.status);
+        setMessages(prev => [...prev, { role: "brain", text: "Sorry, something went wrong starting the career interview. Please try again." }]);
+        return;
+      }
       const data = await res.json();
 
       if (data.status === "active" || data.status === "paused") {
@@ -2907,7 +2911,10 @@ export default function NetworkBrainPage() {
         body: JSON.stringify({ message: "[start]" }),
       });
       if (!startRes.ok) {
+        console.error("Bio POST failed:", startRes.status);
         setBioLoading(false);
+        setBioMode(false);
+        setMessages(prev => [...prev, { role: "brain", text: "Sorry, something went wrong starting the career interview. Please try again." }]);
         return;
       }
       const startData = await startRes.json();
@@ -2916,6 +2923,8 @@ export default function NetworkBrainPage() {
     } catch (err) {
       console.error("Bio start error:", err);
       setBioLoading(false);
+      setBioMode(false);
+      setMessages(prev => [...prev, { role: "brain", text: "Sorry, something went wrong starting the career interview. Please try again." }]);
     }
   }
 
