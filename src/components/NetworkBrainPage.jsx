@@ -2952,7 +2952,11 @@ export default function NetworkBrainPage() {
         return;
       }
       const startData = await startRes.json();
-      setBioMessages([{ role: "bio", text: startData.reply }]);
+      const introText = "A brief interview will help me understand your career in your own words — the choices you've made, problems you've solved, and expertise you've built. I'll use it to make better recommendations for you about your network and surface you when someone in your network needs what you're good at. Nothing you share here appears on your profile — it's just between us.";
+      setBioMessages([
+        { role: "bio", text: introText },
+        { role: "bio", text: startData.reply },
+      ]);
       setBioLoading(false);
     } catch (err) {
       console.error("Bio start error:", err);
