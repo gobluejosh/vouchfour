@@ -2115,31 +2115,39 @@ export default function NetworkBrainPage() {
     prevLoadingRef.current = loading;
   }, [messages, loading]);
 
-  // ── Mobile keyboard handler: lift input bar above keyboard ──
-  const [keyboardOffset, setKeyboardOffset] = useState(0);
+  // ── Mobile keyboard handler: detect focus to reduce padding + scroll ──
+  const [mobileKeyboardOpen, setMobileKeyboardOpen] = useState(false);
 
   useEffect(() => {
-    if (!isMobile || !window.visualViewport) return;
+    if (!isMobile) return;
 
-    function handleViewportResize() {
-      // Calculate how much the keyboard is covering
-      const offset = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
-      setKeyboardOffset(Math.max(0, offset));
-
-      // Scroll last message into view when keyboard opens
-      if (offset > 100) {
+    function handleFocusIn(e) {
+      if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") {
+        setMobileKeyboardOpen(true);
+        // Scroll last message into view after keyboard animation
         setTimeout(() => {
           const target = lastBrainRef.current || bottomRef.current;
           target?.scrollIntoView({ behavior: "smooth", block: "end" });
+        }, 300);
+      }
+    }
+
+    function handleFocusOut(e) {
+      if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") {
+        // Delay to avoid flicker when tapping from one input to another
+        setTimeout(() => {
+          if (!document.activeElement || (document.activeElement.tagName !== "TEXTAREA" && document.activeElement.tagName !== "INPUT")) {
+            setMobileKeyboardOpen(false);
+          }
         }, 100);
       }
     }
 
-    window.visualViewport.addEventListener("resize", handleViewportResize);
-    window.visualViewport.addEventListener("scroll", handleViewportResize);
+    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("focusout", handleFocusOut);
     return () => {
-      window.visualViewport.removeEventListener("resize", handleViewportResize);
-      window.visualViewport.removeEventListener("scroll", handleViewportResize);
+      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("focusout", handleFocusOut);
     };
   }, [isMobile]);
 
@@ -3319,7 +3327,7 @@ export default function NetworkBrainPage() {
             <>
 
               {/* Conversation area — single-column layout */}
-              <div style={{ flex: 1, paddingTop: 16, paddingBottom: keyboardOffset > 0 ? 80 : 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
+              <div style={{ flex: 1, paddingTop: 16, paddingBottom: mobileKeyboardOpen ? 20 : 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
 
                 {/* Bio interview mode */}
                 {bioMode && (
@@ -3998,11 +4006,10 @@ export default function NetworkBrainPage() {
 
               {/* Fixed input bar */}
               <div style={{
-                position: "fixed", bottom: isMobile ? keyboardOffset : 0, left: "50%", transform: "translateX(-50%)",
+                position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
                 width: "100%",
                 background: "linear-gradient(0deg, #FAF9F6 0%, #FAF9F6 80%, transparent 100%)",
-                padding: isMobile ? "12px 16px 12px" : "24px 16px 24px",
-                transition: keyboardOffset > 0 ? "none" : "bottom 0.2s",
+                padding: isMobile ? "10px 16px 10px" : "24px 16px 24px",
               }}>
                 <div style={{
                   maxWidth: isMobile ? 480 : 700, margin: "0 auto", position: "relative",
@@ -4275,7 +4282,7 @@ export default function NetworkBrainPage() {
                   </button>
                 </form>
                 {/* Slash command hints — clickable to open guide (hidden in bio mode + when keyboard open) */}
-                {bioMode || (isMobile && keyboardOffset > 0) ? null : isMobile ? (
+                {bioMode || (isMobile && mobileKeyboardOpen) ? null : isMobile ? (
                   <div
                     onClick={() => setSlashGuideOpen(true)}
                     style={{
