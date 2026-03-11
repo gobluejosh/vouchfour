@@ -2129,8 +2129,9 @@ export default function NetworkBrainPage() {
       // Scroll last message into view when keyboard opens
       if (offset > 100) {
         setTimeout(() => {
-          bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-        }, 50);
+          const target = lastBrainRef.current || bottomRef.current;
+          target?.scrollIntoView({ behavior: "smooth", block: "end" });
+        }, 100);
       }
     }
 
@@ -3318,7 +3319,7 @@ export default function NetworkBrainPage() {
             <>
 
               {/* Conversation area — single-column layout */}
-              <div style={{ flex: 1, paddingTop: 16, paddingBottom: 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
+              <div style={{ flex: 1, paddingTop: 16, paddingBottom: keyboardOffset > 0 ? (keyboardOffset + 80) : 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
 
                 {/* Bio interview mode */}
                 {bioMode && (
@@ -4273,8 +4274,8 @@ export default function NetworkBrainPage() {
                     <SendIcon />
                   </button>
                 </form>
-                {/* Slash command hints — clickable to open guide (hidden in bio mode) */}
-                {bioMode ? null : isMobile ? (
+                {/* Slash command hints — clickable to open guide (hidden in bio mode + when keyboard open) */}
+                {bioMode || (isMobile && keyboardOffset > 0) ? null : isMobile ? (
                   <div
                     onClick={() => setSlashGuideOpen(true)}
                     style={{
