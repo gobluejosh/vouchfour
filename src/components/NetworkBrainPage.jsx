@@ -1639,6 +1639,16 @@ export default function NetworkBrainPage() {
   const inputRef = useRef(null);
   const isNearBottomRef = useRef(true); // Track if user is scrolled near bottom (for auto-scroll during streaming)
 
+  // Scroll helper: only scroll to bottom when content is tall enough to need it
+  function scrollToLatest() {
+    if (!bottomRef.current) return;
+    // Check if content exceeds viewport — if not, don't scroll (avoids pushing first message off screen)
+    const contentBottom = bottomRef.current.getBoundingClientRect().bottom;
+    const viewportHeight = window.innerHeight;
+    if (contentBottom <= viewportHeight + 50) return; // content fits, no scroll needed
+    bottomRef.current.scrollIntoView({ behavior: "smooth" });
+  }
+
   // Persist messages to sessionStorage (exclude welcome messages)
   useEffect(() => {
     try {
@@ -1727,7 +1737,7 @@ export default function NetworkBrainPage() {
   // Scroll to bottom when bio messages change or bio mode is entered
   useEffect(() => {
     if (bioMode && bioMessages.length > 0) {
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      setTimeout(() => scrollToLatest(), 50);
     }
   }, [bioMode, bioMessages]);
 
@@ -1930,8 +1940,8 @@ export default function NetworkBrainPage() {
                         { role: "brain", text: linkedText, people: msg.people || [], isWelcome: true },
                       ]);
 
-                      // Scroll new message into view
-                      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+                      // Scroll new message into view (only if content exceeds viewport)
+                      setTimeout(() => scrollToLatest(), 50);
 
                       // After a beat, do the sequenced panel action
                       // idx 0: inviter msg → close bin
@@ -1947,7 +1957,7 @@ export default function NetworkBrainPage() {
                         } else if (idx === 3) {
                           setActivePerson(null);
                           setSlashHighlighted(true);
-                          setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+                          setTimeout(() => scrollToLatest(), 50);
                         } else if (idx === 4) {
                           setSlashHighlighted(false);
                         }
@@ -2099,17 +2109,17 @@ export default function NetworkBrainPage() {
   useEffect(() => {
     if (loading) {
       // Scrolls down to show the thinking indicator
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollToLatest();
     } else if (prevLoadingRef.current && lastBrainRef.current) {
       // Just finished loading — scroll to the latest response with header offset
       const el = lastBrainRef.current;
       const y = el.getBoundingClientRect().top + window.scrollY - 96; // 80px header + 16px breathing room
-      window.scrollTo({ top: y, behavior: "smooth" });
+      if (y > 10) window.scrollTo({ top: y, behavior: "smooth" });
     } else {
       // During streaming: auto-scroll if user hasn't scrolled away
       const lastMsg = messages[messages.length - 1];
       if ((lastMsg?.streaming || lastMsg?.narrationStreaming) && isNearBottomRef.current) {
-        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+        scrollToLatest();
       }
     }
     prevLoadingRef.current = loading;
@@ -2124,17 +2134,6 @@ export default function NetworkBrainPage() {
     function handleFocusIn(e) {
       if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") {
         setMobileKeyboardOpen(true);
-        // Scroll content into view after keyboard finishes animating
-        // (500ms delay to fire AFTER iOS auto-scroll-to-input completes)
-        setTimeout(() => {
-          const target = lastBrainRef.current || bottomRef.current;
-          if (target) {
-            const msgCount = (messages?.length || 0) + (bioMessages?.length || 0);
-            // Few messages: put message at top of visible area
-            // Many messages: put latest at bottom of visible area
-            target.scrollIntoView({ behavior: "smooth", block: msgCount <= 2 ? "start" : "end" });
-          }
-        }, 500);
       }
     }
 
