@@ -7200,6 +7200,10 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
       const userId = session.id
 
+      // Get feed_last_seen_at to filter out previously surfaced items
+      const seenRes = await query('SELECT feed_last_seen_at FROM people WHERE id = $1', [userId])
+      const feedLastSeen = seenRes.rows[0]?.feed_last_seen_at || null
+
       // 1. New people in network: vouches by your 1st-degree connections (last 10 days)
       const vouchesRes = await query(`
         SELECT 'vouch' AS type, v.created_at AS ts,
@@ -7213,9 +7217,10 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         JOIN job_functions jf ON jf.id = v.job_function_id
         WHERE v.created_at > NOW() - INTERVAL '10 days'
           AND v.voucher_id != $1
+          AND ($2::timestamptz IS NULL OR v.created_at > $2)
         ORDER BY v.created_at DESC
         LIMIT 7
-      `, [userId])
+      `, [userId, feedLastSeen])
 
       // 2. Ask messages received (sent, last 10 days)
       const asksRes = await query(`
@@ -7228,11 +7233,13 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         WHERE qar.recipient_id = $1
           AND qar.status = 'sent'
           AND qar.sent_at > NOW() - INTERVAL '10 days'
+          AND ($2::timestamptz IS NULL OR qar.sent_at > $2)
         ORDER BY qar.sent_at DESC
         LIMIT 7
-      `, [userId])
+      `, [userId, feedLastSeen])
 
-      // 3. Thread messages (not by me, in threads I'm in, last 10 days)
+      // 3. Thread messages (not by me, unread, in threads I'm in, last 10 days)
+      // Uses GREATEST(feed_last_seen_at, last_read_at) so threads you've read OR been told about don't resurface
       const threadsRes = await query(`
         SELECT 'thread' AS type, tm.created_at AS ts,
                p.display_name AS actor_name, p.id AS actor_id, p.photo_url AS actor_photo,
@@ -7246,11 +7253,15 @@ What ${senderFirst} wants to discuss: "${question}"` }],
           AND t.status = 'active'
           AND tm.is_initial = false
           AND tm.created_at > NOW() - INTERVAL '10 days'
+          AND tm.created_at > GREATEST(
+            COALESCE(tp_me.last_read_at, '1970-01-01'),
+            COALESCE($2::timestamptz, '1970-01-01')
+          )
         ORDER BY tm.created_at DESC
         LIMIT 7
-      `, [userId])
+      `, [userId, feedLastSeen])
 
-      // Merge, sort by timestamp, cap at 7
+      // Merge, sort by timestamp, cap at 5
       const items = [
         ...vouchesRes.rows.map(r => ({
           type: 'vouch', ts: r.ts,
@@ -7271,6 +7282,9 @@ What ${senderFirst} wants to discuss: "${question}"` }],
       ]
         .sort((a, b) => new Date(b.ts) - new Date(a.ts))
         .slice(0, 5)
+
+      // Mark feed as seen so these items don't resurface on next visit
+      await query('UPDATE people SET feed_last_seen_at = NOW() WHERE id = $1', [userId])
 
       res.writeHead(200)
       res.end(JSON.stringify({ items }))
