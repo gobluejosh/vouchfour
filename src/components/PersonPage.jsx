@@ -3,6 +3,7 @@ import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
 import QuickAskDraftPanel from "./QuickAskDraftPanel.jsx";
 import ThreadDraftPanel from "./ThreadDraftPanel.jsx";
+import SharedHeader from "./SharedHeader.jsx";
 
 const C = {
   ink: "#171717",
@@ -2209,21 +2210,12 @@ export default function PersonPage() {
       display: "flex", flexDirection: "column", alignItems: "center",
       overflowX: "hidden",
     }}>
-      {/* Fixed logo bar */}
-      <div style={{
-        position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)",
-        zIndex: 100, width: "100%",
-        background: "#FFFFFF", padding: "12px 20px",
-      }}>
-        <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
-          Vouch<span style={{ color: C.accent }}>Four</span>
-        </a>
-      </div>
+      <SharedHeader user={authSlug ? {} : null} isMobile={isMobile} />
 
       {/* Main content */}
       <div style={{
         width: "100%",
-        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
+        background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)",
         padding: "0 16px 80px", margin: "52px 0 0",
         minHeight: "calc(100vh - 52px)",
       }}>
@@ -2281,19 +2273,6 @@ export default function PersonPage() {
           {/* Person detail */}
           {authState === "authenticated" && !loading && !error && data && (
             <>
-              {/* Back navigation */}
-              <a
-                href={authSlug ? `/talent/${authSlug}` : "/"}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  fontSize: 13, color: C.ink, fontWeight: 600,
-                  textDecoration: "none", fontFamily: FONT,
-                  paddingTop: 20, paddingBottom: 4,
-                }}
-              >
-                <BackIcon /> Talent Network
-              </a>
-
               {/* Hero section */}
               <div style={{ paddingTop: 12, marginBottom: 24 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { capture, identify } from "../lib/posthog.js";
+import SharedHeader from "./SharedHeader.jsx";
 
 // ─── Palette ────────────────────────────────────────────────────────────────
 const C = {
@@ -130,17 +131,10 @@ export default function StartVouchPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
-      {/* Fixed logo bar */}
-      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
-        <a href="/" style={{ textDecoration: "none" }}>
-          <span style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, fontFamily: FONT }}>
-            Vouch<span style={{ color: C.accent }}>Four</span>
-          </span>
-        </a>
-      </div>
+      <SharedHeader user={user} />
       <div style={{
         width: "100%",
-        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px",
+        background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)", padding: "0 16px 120px",
         borderRadius: 0, margin: "52px 0 0",
       }}>
 
@@ -238,13 +232,13 @@ export default function StartVouchPage() {
             You'll vouch for the 4 best professionals you've worked with in that function.
           </p>
 
-          {authState === "authenticated" && user?.linkedin && (
+          {authState === "authenticated" && (
             <div style={{ marginTop: 28, textAlign: "center" }}>
               <a
-                href={`/talent/${user.linkedin.match(/\/in\/([^/]+)/)?.[1] || ""}`}
+                href="/brain"
                 style={{ fontSize: 13, color: C.accent, textDecoration: "none", fontWeight: 500 }}
               >
-                View your talent network results
+                Go to the Brain
               </a>
             </div>
           )}

@@ -9,7 +9,7 @@ import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations, getVouchPaths } from './lib/graph.js'
 import { sendVouchInviteEmail, sendLoginLinkEmail, sendEmail, loadTemplate, applyVariables, emailLayout, isUnsubscribed, getRecipient } from './lib/email.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
-import { enrichPerson, enrichBatch, saveApolloData } from './lib/enrich.js'
+import { enrichPerson, enrichBatch, saveApolloData, generateSummary } from './lib/enrich.js'
 import { normalizeOrgName } from './lib/orgNormalize.js'
 import { extractExpertise, extractExpertiseBatch } from './lib/expertise.js'
 import { extractContent, extractContentBatch } from './lib/contentExtract.js'
@@ -19,6 +19,57 @@ import { semanticSearch, embedPerson, embedBatch, getEmbeddingStats } from './li
 const PORT = process.env.PORT || 3001
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+// ─── Full enrichment pipeline (single person) ─────────────────────────
+// Runs all enrichment steps in order:
+// 1. enrichPerson (Apollo + Brave + initial summary)
+// 2. extractContent (discover blog posts, podcasts, GitHub from Brave data)
+// 3. extractExpertise (career narrative chunks for semantic search)
+// 4. embedPerson (vectorize expertise + content for pgvector)
+// 5. generateSummary (final summary using everything, including expertise)
+async function fullEnrichPipeline(personId) {
+  const start = Date.now()
+  console.log(`[Pipeline] Starting full enrichment for person ${personId}`)
+
+  // Step 1: Apollo + Brave + initial summary
+  const enrichResult = await enrichPerson(personId)
+  console.log(`[Pipeline] ${personId} | enrich done (apollo=${enrichResult.steps.apollo} brave=${enrichResult.steps.brave} claude=${enrichResult.steps.claude})`)
+
+  // Step 2: Content extraction (blog posts, podcasts, GitHub repos from Brave data)
+  try {
+    await extractContent(personId)
+    console.log(`[Pipeline] ${personId} | content extraction done`)
+  } catch (err) {
+    console.error(`[Pipeline] ${personId} | content extraction failed:`, err.message)
+  }
+
+  // Step 3: Expertise chunks (career narrative analysis)
+  try {
+    await extractExpertise(personId)
+    console.log(`[Pipeline] ${personId} | expertise extraction done`)
+  } catch (err) {
+    console.error(`[Pipeline] ${personId} | expertise extraction failed:`, err.message)
+  }
+
+  // Step 4: Embed expertise + content for semantic search
+  try {
+    await embedPerson(personId, { force: true })
+    console.log(`[Pipeline] ${personId} | embedding done`)
+  } catch (err) {
+    console.error(`[Pipeline] ${personId} | embedding failed:`, err.message)
+  }
+
+  // Step 5: Final summary — now includes expertise chunks for richer output
+  try {
+    await generateSummary(personId)
+    console.log(`[Pipeline] ${personId} | final summary done`)
+  } catch (err) {
+    console.error(`[Pipeline] ${personId} | final summary failed:`, err.message)
+  }
+
+  console.log(`[Pipeline] Complete for person ${personId} | ${Date.now() - start}ms`)
+  return enrichResult
+}
 
 // ─── IP rate limiting (in-memory) ──────────────────────────────────
 const ipRequestCounts = new Map() // ip -> { count, resetAt }
@@ -219,7 +270,7 @@ async function validateSession(req) {
   if (!sessionToken) return null
   const result = await query(
     `SELECT s.person_id, p.id, p.display_name, p.linkedin_url, p.email,
-            p.current_title, p.current_company, p.photo_url
+            p.current_title, p.current_company, p.photo_url, p.welcome_seen_at
      FROM sessions s JOIN people p ON p.id = s.person_id
      WHERE s.token = $1 AND s.expires_at > NOW()`,
     [sessionToken]
@@ -546,6 +597,90 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ vouchedFunctions: result.rows.map(r => r.slug) }))
     } catch (err) {
       console.error('[/api/my-vouch-functions error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Vouch invite status (lightweight, for Brain /status command) ────
+  if (req.method === 'GET' && req.url === '/api/my-vouch-status') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Authentication required' })); return }
+
+      const userId = session.id
+
+      // 1. Vouch status with invite_status computed
+      const vouchesRes = await query(`
+        SELECT v.job_function_id, jf.name AS jf_name, jf.slug AS jf_slug, jf.practitioner_label AS jf_practitioner_label,
+               p.id AS person_id, p.display_name AS name,
+               CASE
+                 WHEN EXISTS (
+                   SELECT 1 FROM vouches v2
+                   WHERE v2.voucher_id = v.vouchee_id AND v2.job_function_id = v.job_function_id
+                 ) THEN 'completed'
+                 ELSE 'pending'
+               END AS invite_status
+        FROM vouches v
+        JOIN people p ON p.id = v.vouchee_id
+        JOIN job_functions jf ON jf.id = v.job_function_id
+        WHERE v.voucher_id = $1
+        ORDER BY jf.display_order, v.created_at
+      `, [userId])
+
+      // Group by function
+      const myVouches = {}
+      for (const row of vouchesRes.rows) {
+        const key = row.jf_slug
+        if (!myVouches[key]) {
+          myVouches[key] = { name: row.jf_name, slug: row.jf_slug, id: row.job_function_id, practitionerLabel: row.jf_practitioner_label, vouches: [] }
+        }
+        myVouches[key].vouches.push({
+          personId: row.person_id,
+          name: row.name,
+          inviteStatus: row.invite_status,
+        })
+      }
+
+      // 2. Vouch tokens (pending self-referencing invites)
+      const activeFnIds = Object.values(myVouches).map(f => f.id)
+      const vouchTokens = {}
+      if (activeFnIds.length > 0) {
+        const tokensRes = await query(`
+          SELECT DISTINCT ON (job_function_id) job_function_id, token
+          FROM vouch_invites
+          WHERE invitee_id = $1 AND job_function_id = ANY($2) AND status = 'pending'
+          ORDER BY job_function_id, created_at DESC
+        `, [userId, activeFnIds])
+
+        const foundFnIds = new Set()
+        for (const row of tokensRes.rows) {
+          const fnSlug = Object.values(myVouches).find(f => f.id === row.job_function_id)?.slug
+          if (fnSlug) { vouchTokens[fnSlug] = row.token; foundFnIds.add(row.job_function_id) }
+        }
+
+        // Create self-referencing invites for functions without pending tokens
+        for (const fnData of Object.values(myVouches)) {
+          if (!foundFnIds.has(fnData.id)) {
+            const newToken = crypto.randomUUID()
+            await query(
+              `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
+              [newToken, userId, userId, fnData.id]
+            )
+            vouchTokens[fnData.slug] = newToken
+          }
+        }
+      }
+
+      // 3. Share token
+      const stRes = await query('SELECT share_token FROM people WHERE id = $1', [userId])
+      const shareToken = stRes.rows[0]?.share_token || null
+
+      res.writeHead(200)
+      res.end(JSON.stringify({ myVouches, vouchTokens, shareToken }))
+    } catch (err) {
+      console.error('[/api/my-vouch-status error]', err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }
@@ -1345,12 +1480,12 @@ Rules:
           await sleep(2000) // Let the dust settle after form submission
           const toEnrich = vouchedPeople.filter(v => v.isNew).map(v => v.id)
           if (toEnrich.length === 0) return
-          console.log(`[Enrich] Queuing enrichment for ${toEnrich.length} new people from vouch submission`)
+          console.log(`[Pipeline] Queuing full enrichment for ${toEnrich.length} new people from vouch submission`)
           for (const personId of toEnrich) {
             try {
-              await enrichPerson(personId)
+              await fullEnrichPipeline(personId)
             } catch (err) {
-              console.error(`[Enrich] Post-vouch enrichment failed for ${personId}:`, err.message)
+              console.error(`[Pipeline] Post-vouch enrichment failed for ${personId}:`, err.message)
             }
             await sleep(2000)
           }
@@ -1842,6 +1977,16 @@ Rules:
           )
         }
 
+        // Auto re-enrich full pipeline after career edit.
+        // Delete stale Brave/Claude data first so they refresh with new career fingerprint
+        query(
+          `DELETE FROM person_enrichment WHERE person_id = $1 AND source IN ('brave', 'claude', 'claude-compact')`,
+          [personId]
+        ).then(() => fullEnrichPipeline(personId)
+        ).catch(err => {
+          console.error(`[Career Edit] Pipeline failed for ${personId}:`, err.message)
+        })
+
         res.writeHead(200)
         res.end(JSON.stringify({ ok: true }))
         return
@@ -2043,7 +2188,7 @@ Rules:
       const person = personRes.rows[0]
 
       // Fetch AI summary, employment history, and brave web mentions in parallel
-      const [summaryRes, historyRes, braveRes, degreeRes] = await Promise.all([
+      const [summaryRes, historyRes, braveRes, degreeRes, vouchCountRes] = await Promise.all([
         query(`
           SELECT ai_summary FROM person_enrichment
           WHERE person_id = $1 AND source = 'claude'
@@ -2092,7 +2237,14 @@ Rules:
             ELSE NULL
           END AS degree
         `, [session.id, personId]),
+        // Vouch count: how many distinct people vouch for this person
+        query(`
+          SELECT COUNT(DISTINCT voucher_id) AS recommendation_count
+          FROM vouches WHERE vouchee_id = $1
+        `, [personId]),
       ])
+
+      const recommendationCount = Number(vouchCountRes.rows[0]?.recommendation_count || 0)
 
       // Extract brave web mentions (titles + descriptions from search results)
       let webMentions = []
@@ -2301,6 +2453,7 @@ Rules:
         ai_summary: summaryRes.rows[0]?.ai_summary || null,
         employment_history: historyRes.rows,
         web_mentions: webMentions,
+        recommendation_count: recommendationCount,
         is_self: isSelf,
         can_ask: canAsk,
         conversation,
@@ -2528,11 +2681,10 @@ Rules:
         WHERE id = $1
       `, [person_id, status, notes || null])
 
-      // Auto re-enrich when flagged (runs in background, doesn't block response)
+      // Auto re-enrich full pipeline when flagged (runs in background)
       if (status === 'flagged') {
-        enrichPerson(person_id)
-          .then(result => console.log(`[Review] Auto re-enrichment complete for person ${person_id}:`, JSON.stringify(result.steps)))
-          .catch(err => console.error(`[Review] Auto re-enrichment failed for person ${person_id}:`, err.message))
+        fullEnrichPipeline(person_id)
+          .catch(err => console.error(`[Review] Pipeline failed for person ${person_id}:`, err.message))
       }
 
       res.writeHead(200)
@@ -3202,8 +3354,8 @@ Rules:
           res.end(JSON.stringify({ error: 'Invalid person_id' }))
           return
         }
-        enrichPerson(personId).catch(err =>
-          console.error(`[Enrich] Failed for person ${personId}:`, err.message)
+        fullEnrichPipeline(personId).catch(err =>
+          console.error(`[Pipeline] Failed for person ${personId}:`, err.message)
         )
         res.writeHead(200)
         res.end(JSON.stringify({ status: 'started', person_id: personId }))
@@ -3529,6 +3681,469 @@ Rules:
       // Get user's full network (all functions)
       const talent = await getTalentRecommendations(userId, null)
 
+      // ─── Onboarding flow: user hasn't vouched yet ──────────────────────
+      const hasVouchedRes = await query('SELECT EXISTS(SELECT 1 FROM vouches WHERE voucher_id = $1) AS has_vouched', [userId])
+      const userHasVouched = hasVouchedRes.rows[0]?.has_vouched
+      const welcomeSeenRes = await query('SELECT welcome_seen_at FROM people WHERE id = $1', [userId])
+      const welcomeSeenAt = welcomeSeenRes.rows[0]?.welcome_seen_at
+
+      // Scenario A: first visit, no vouch — full onboarding (welcome tour + onboarding conversation)
+      // Scenario B: returning, no vouch — falls through to normal Brain path below (with vouch nudge)
+      if (!userHasVouched && !welcomeSeenAt) {
+        // Fetch user's own profile + career history + inviter info + network people for onboarding
+        const networkPersonIds = talent.map(t => t.id)
+        const [onboardProfileRes, onboardSummaryRes, onboardHistoryRes, onboardInviterRes, networkSummariesRes, networkStructuredRes, networkHistoryRes] = await Promise.all([
+          query('SELECT id, display_name, current_title, current_company, location, industry FROM people WHERE id = $1', [userId]),
+          query(`SELECT ai_summary FROM person_enrichment WHERE person_id = $1 AND source = 'claude' LIMIT 1`, [userId]),
+          query('SELECT organization, title, is_current, start_date, end_date FROM employment_history WHERE person_id = $1 ORDER BY start_date DESC NULLS LAST', [userId]),
+          query(`SELECT p.display_name FROM vouches v JOIN people p ON p.id = v.voucher_id WHERE v.vouchee_id = $1 ORDER BY v.created_at DESC LIMIT 1`, [userId]),
+          networkPersonIds.length > 0
+            ? query(`SELECT DISTINCT ON (person_id) person_id, ai_summary FROM person_enrichment WHERE person_id = ANY($1) AND source IN ('claude-compact','claude') AND ai_summary IS NOT NULL ORDER BY person_id, CASE source WHEN 'claude-compact' THEN 0 ELSE 1 END`, [networkPersonIds])
+            : { rows: [] },
+          networkPersonIds.length > 0
+            ? query(`SELECT id, display_name, current_title, current_company, photo_url, location, industry, linkedin_url,
+                      email, ask_receive_degree, ask_allow_career_overlap, gives, gives_free_text,
+                      EXISTS(SELECT 1 FROM vouches WHERE voucher_id = people.id) AS has_vouched
+               FROM people WHERE id = ANY($1)`, [networkPersonIds])
+            : { rows: [] },
+          networkPersonIds.length > 0
+            ? query('SELECT person_id, organization, title, is_current, start_date, end_date FROM employment_history WHERE person_id = ANY($1) ORDER BY person_id, start_date DESC NULLS LAST', [networkPersonIds])
+            : { rows: [] },
+        ])
+
+        const profile = onboardProfileRes.rows[0]
+        const aiSummary = onboardSummaryRes.rows[0]?.ai_summary || ''
+        const careerHistory = onboardHistoryRes.rows || []
+        const inviterName = onboardInviterRes.rows[0]?.display_name || null
+
+        // Build network context
+        const networkSummaryMap = new Map()
+        for (const r of networkSummariesRes.rows) networkSummaryMap.set(r.person_id, r.ai_summary)
+        const networkStructuredMap = new Map()
+        for (const r of networkStructuredRes.rows) networkStructuredMap.set(r.id, r)
+        // Group employment history by person (with normalization for overlap computation)
+        const networkHistoryMap = new Map()
+        for (const r of networkHistoryRes.rows) {
+          if (!networkHistoryMap.has(r.person_id)) networkHistoryMap.set(r.person_id, [])
+          networkHistoryMap.get(r.person_id).push({
+            ...r,
+            norm: normalizeOrgName(r.organization),
+            startDate: r.start_date ? new Date(r.start_date) : new Date('1970-01-01'),
+            endDate: (r.is_current || !r.end_date) ? new Date() : new Date(r.end_date),
+          })
+        }
+
+        // Compute career overlaps between user and each network person
+        const userHistoryNormed = careerHistory.map(r => ({
+          ...r,
+          norm: normalizeOrgName(r.organization),
+          startDate: r.start_date ? new Date(r.start_date) : new Date('1970-01-01'),
+          endDate: (r.is_current || !r.end_date) ? new Date() : new Date(r.end_date),
+        }))
+        const overlapDetailMap = new Map()
+        for (const [personId, history] of networkHistoryMap) {
+          const sharedOrgs = new Set()
+          const details = []
+          for (const uh of userHistoryNormed) {
+            for (const ph of history) {
+              if (uh.norm && ph.norm && uh.norm === ph.norm && uh.startDate <= ph.endDate && ph.startDate <= uh.endDate) {
+                if (!sharedOrgs.has(ph.organization)) {
+                  sharedOrgs.add(ph.organization)
+                  const fmtYear = (d) => d ? d.getFullYear() : '?'
+                  const userYears = `${fmtYear(uh.startDate)}-${uh.is_current ? 'present' : fmtYear(uh.endDate)}`
+                  const personYears = `${fmtYear(ph.startDate)}-${ph.is_current ? 'present' : fmtYear(ph.endDate)}`
+                  details.push({ org: ph.organization, userTitle: uh.title || 'Role', personTitle: ph.title || 'Role', userYears, personYears })
+                }
+              }
+            }
+          }
+          if (details.length > 0) overlapDetailMap.set(personId, details)
+        }
+
+        // Fetch vouch paths for all network people (for context + preview cards)
+        const allNetworkIds = talent.map(t => t.id)
+        const allVouchPaths = allNetworkIds.length > 0
+          ? await getVouchPaths(userId, allNetworkIds, { directional: true })
+          : new Map()
+
+        let networkContext = ''
+        if (talent.length > 0) {
+          const personLines = talent.map(t => {
+            const s = networkStructuredMap.get(t.id)
+            const summary = networkSummaryMap.get(t.id)
+            const history = networkHistoryMap.get(t.id) || []
+            // Build recommendation pathway description
+            const rawPath = allVouchPaths.get(t.id) || []
+            let pathDesc = ''
+            if (rawPath.length >= 2) {
+              const pathNames = rawPath.map(n => n.name)
+              pathDesc = `Recommendation path: ${pathNames.join(' → ')}`
+            }
+            const parts = [`**${s?.display_name || t.display_name}** — ${t.degree === 1 ? '1st degree' : t.degree === 2 ? '2nd degree' : '3rd degree'}`]
+            if (pathDesc) parts.push(`  ${pathDesc}`)
+            if (s?.current_title && s?.current_company) parts.push(`  Current: ${s.current_title} at ${s.current_company}`)
+            if (history.length > 0) parts.push(`  Career: ${history.map(j => `${j.title || 'Role'} at ${j.organization}${j.is_current ? ' (current)' : ''}`).join(' → ')}`)
+            if (summary) parts.push(`  Background: ${summary}`)
+            return parts.join('\n')
+          })
+          networkContext = `\n\nPEOPLE ALREADY IN THIS PERSON'S NETWORK (${talent.length} people):\n${personLines.join('\n\n')}`
+        }
+
+        let profileContext = ''
+        if (profile) {
+          const parts = [`Name: ${profile.display_name}`]
+          if (profile.current_title && profile.current_company) parts.push(`Current role: ${profile.current_title} at ${profile.current_company}`)
+          if (profile.location) parts.push(`Location: ${profile.location}`)
+          if (profile.industry) parts.push(`Industry: ${profile.industry}`)
+          if (careerHistory.length > 0) {
+            parts.push(`Career history:\n${careerHistory.map(j => `  - ${j.title || 'Role'} at ${j.organization}${j.is_current ? ' (current)' : ''}`).join('\n')}`)
+          }
+          if (aiSummary) parts.push(`Professional background: ${aiSummary}`)
+          profileContext = parts.join('\n')
+        }
+
+        // ─── Shared onboarding system prompt (common context) ───────────
+        const onboardingBaseContext = `You are a warm, conversational guide helping a new VouchFour user understand the platform and decide who to vouch for. You are NOT a generic chatbot — you are a knowledgeable thinking partner who knows this person's career AND their existing network.
+
+ABOUT THIS PERSON:
+${profileContext}
+${inviterName ? `\nThey were recommended/invited by: ${inviterName}` : ''}
+${networkContext}`
+
+        // ─── Helper: build full person objects from name matches ─────────
+        async function buildMentionedPeopleFromNames(names) {
+          if (!names?.length || !talent.length) return []
+          const matched = []
+          for (const name of names) {
+            const nameLower = (name || '').toLowerCase()
+            const t = talent.find(t => (t.display_name || '').toLowerCase() === nameLower)
+            if (t) matched.push(t)
+          }
+          if (matched.length === 0) return []
+
+          const matchedIds = matched.map(t => t.id)
+          const [pathMap, recCountRes] = await Promise.all([
+            getVouchPaths(userId, matchedIds, { directional: true }),
+            query('SELECT vouchee_id, COUNT(DISTINCT voucher_id)::int AS cnt FROM vouches WHERE vouchee_id = ANY($1) GROUP BY vouchee_id', [matchedIds]),
+          ])
+          const recCounts = new Map()
+          for (const r of recCountRes.rows) recCounts.set(r.vouchee_id, r.cnt)
+
+          const intermediateIds = new Set()
+          for (const path of pathMap.values()) {
+            for (const node of path) {
+              if (node.id !== userId && !networkStructuredMap.has(node.id)) intermediateIds.add(node.id)
+            }
+          }
+          let intermediatePhotos = new Map()
+          if (intermediateIds.size > 0) {
+            const photoRes = await query('SELECT id, photo_url FROM people WHERE id = ANY($1)', [[...intermediateIds]])
+            for (const r of photoRes.rows) intermediatePhotos.set(r.id, r.photo_url)
+          }
+
+          return matched.map(t => {
+            const s = networkStructuredMap.get(t.id)
+            const fullSummary = networkSummaryMap.get(t.id) || ''
+            const rawPath = pathMap.get(t.id) || []
+            const maxDeg = askDegreeLimit(s?.ask_receive_degree, s?.has_vouched)
+            const canAsk = t.degree >= 1 && t.degree <= maxDeg && !!s?.email
+            let aiSnippet = null
+            if (fullSummary) {
+              const truncated = fullSummary.slice(0, 200)
+              const lastPeriod = truncated.lastIndexOf('.')
+              aiSnippet = lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated + '...'
+            }
+            return {
+              id: t.id,
+              name: s?.display_name || t.display_name,
+              linkedin_url: s?.linkedin_url || t.linkedin_url || null,
+              degree: t.degree,
+              vouch_score: t.vouch_score,
+              current_title: s?.current_title || null,
+              current_company: s?.current_company || null,
+              photo_url: s?.photo_url || null,
+              can_ask: canAsk,
+              vouch_path: rawPath.map(node => ({
+                id: node.id, name: node.name,
+                photo_url: networkStructuredMap.get(node.id)?.photo_url || intermediatePhotos.get(node.id) || null,
+              })),
+              ai_summary_snippet: aiSnippet,
+              ai_summary: fullSummary || null,
+              location: s?.location || null,
+              gives: (s?.gives || []).map(g => GIVE_TYPE_LABELS[g] || g),
+              gives_free_text: s?.gives_free_text || null,
+              recommendation_count: recCounts.get(t.id) || 0,
+              career_overlap_detail: overlapDetailMap.get(t.id) || null,
+            }
+          })
+        }
+
+        // ─── [welcome] path: structured JSON response (non-streaming) ───
+        if (question === '[welcome]') {
+          // Mark that this user has seen the welcome tour
+          await query('UPDATE people SET welcome_seen_at = NOW() WHERE id = $1 AND welcome_seen_at IS NULL', [userId])
+
+          const firstName = profile?.display_name?.split(' ')[0] || 'there'
+
+          // Message 1 is hardcoded — sets the tone and signals what's coming
+          const hardcodedMessage1 = {
+            text: `Hey ${firstName}! I'm your Network Brain. VouchFour is built on a simple idea: we all benefit from support from real, trusted people in our network. Everyone in your network here was personally recommended by someone trusted — either directly by you or by someone you trust.\n\nLet me show you a few things to give you a sense for some of what I can do.`,
+            highlight_person: null,
+            people: [],
+          }
+
+          const welcomePrompt = `${onboardingBaseContext}
+
+Return ONLY a valid JSON array (no markdown fences, no extra text) with exactly 3 message objects. Each object has:
+- "text": the message text (use **Full Name** bold for any person mentioned)
+- "highlight_person": the full name of ONE person to open a preview card for, or null
+
+Message 1 — Who recommended them:
+"${inviterName ? `**${inviterName}** recommended you` : 'Someone in the network recommended you'}..." Brief context about the recommender from the data (role, background). 1-2 sentences. highlight_person: "${inviterName || ''}"
+
+Message 2 — Shared work history:
+Look through the network for someone who worked at the SAME companies as this person (check career histories). "You're also connected to **[Name]** — you both spent time at [Company]." Only mention overlaps you can verify from the data. If no overlap exists, pick someone in a related industry. You MUST state the exact recommendation pathway using the names from the "Recommendation path" data — e.g. "They're in your network because **You** recommended **Spencer Imel**, who recommended **Kirk Tomlin**." Name every person in the chain. 1-2 sentences. highlight_person: that person's full name
+
+Message 3 — Interesting unknown:
+Someone from the broader network they may NOT know but who is interesting given their background. "You might not know **[Name]**, but..." with a brief reason why they're relevant. You MUST state the exact recommendation pathway using the names from the "Recommendation path" data — e.g. "They're connected to you because **Adam Nash** recommended **Spencer Imel**, who recommended them." Name every person in the chain. 1-2 sentences. highlight_person: that person's full name
+
+Rules:
+- Use FULL NAMES (first and last) in **bold** for every person mentioned
+- Each message: 1-2 sentences, warm and conversational
+- Only reference career overlaps you can verify from the data
+- All 3 messages must each mention a DIFFERENT person
+- NEVER say "extended network" or describe degrees — always spell out the specific chain of names from the Recommendation path data`
+
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+          })
+
+          // Build compact all_people for network bin (available immediately)
+          const allNetworkPeople = talent.map(t => {
+            const s = networkStructuredMap.get(t.id)
+            return {
+              id: t.id,
+              name: s?.display_name || t.display_name,
+              photo_url: s?.photo_url || null,
+              current_title: s?.current_title || null,
+              current_company: s?.current_company || null,
+              location: s?.location || null,
+              degree: t.degree,
+            }
+          })
+
+          // Send hardcoded intro + network bin data IMMEDIATELY (no waiting for Claude)
+          res.write(`data: ${JSON.stringify({
+            type: 'welcome_intro',
+            message: hardcodedMessage1,
+            all_people: allNetworkPeople,
+          })}\n\n`)
+
+          try {
+            const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify({
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 800,
+                stream: false,
+                system: [{ type: 'text', text: welcomePrompt }],
+                messages: [{ role: 'user', content: '[welcome]' }],
+              }),
+            })
+
+            if (!claudeRes.ok) {
+              const errText = await claudeRes.text()
+              console.error(`[NetworkBrain/welcome] Claude error: ${claudeRes.status} ${errText}`)
+              // Intro already sent — just end the stream, frontend will work with message 1
+              res.end()
+              return
+            }
+
+            const claudeData = await claudeRes.json()
+            const rawText = claudeData.content?.[0]?.text || ''
+
+            // Parse JSON array from Claude's response
+            let welcomeMessages
+            try {
+              const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+              welcomeMessages = JSON.parse(cleaned)
+              if (!Array.isArray(welcomeMessages)) throw new Error('Not an array')
+            } catch (parseErr) {
+              console.error('[NetworkBrain/welcome] JSON parse failed:', parseErr.message)
+              // Intro already sent — just end gracefully
+              res.end()
+              return
+            }
+
+            // Build full person objects for all mentioned people across all messages
+            const allMentionedNames = new Set()
+            for (const msg of welcomeMessages) {
+              if (msg.highlight_person) allMentionedNames.add(msg.highlight_person)
+              const boldNames = (msg.text || '').match(/\*\*([^*]+)\*\*/g)
+              if (boldNames) boldNames.forEach(n => allMentionedNames.add(n.replace(/\*\*/g, '')))
+            }
+            const allPeopleObjects = await buildMentionedPeopleFromNames([...allMentionedNames])
+            const peopleByName = new Map()
+            for (const p of allPeopleObjects) peopleByName.set(p.name.toLowerCase(), p)
+
+            // Attach people objects to each Claude-generated message
+            const claudeMessages = welcomeMessages.map(msg => {
+              const msgPeople = []
+              const boldNames = (msg.text || '').match(/\*\*([^*]+)\*\*/g)
+              if (boldNames) {
+                for (const raw of boldNames) {
+                  const name = raw.replace(/\*\*/g, '')
+                  const person = peopleByName.get(name.toLowerCase())
+                  if (person && !msgPeople.find(p => p.id === person.id)) msgPeople.push(person)
+                }
+              }
+              const highlightPerson = msg.highlight_person ? peopleByName.get(msg.highlight_person.toLowerCase()) || null : null
+              return {
+                text: msg.text || '',
+                highlight_person: highlightPerson,
+                people: msgPeople,
+              }
+            })
+
+            // Append hardcoded slash commands intro + CTA
+            claudeMessages.push({
+              text: `One more thing — see those commands below the input? Type **/** to explore shortcuts like **/ask** (reach out to someone through your network), **/vouch** (recommend your all-time best colleagues), and more.`,
+              highlight_person: null,
+              people: [],
+              action: 'highlight_slash',
+            })
+            claudeMessages.push({
+              text: `What's a problem you're working on where subject matter expertise would be helpful? I can help you figure out who in your network to talk to, or make a warm introduction.`,
+              highlight_person: null,
+              people: [],
+              action: 'clear_highlight',
+            })
+
+            // Send the remaining messages as a second event
+            res.write(`data: ${JSON.stringify({
+              type: 'welcome_followup',
+              messages: claudeMessages,
+            })}\n\n`)
+            res.end()
+          } catch (err) {
+            console.error('[NetworkBrain/welcome] Error:', err)
+            // Intro already sent — just end gracefully
+            res.end()
+          }
+          return
+        }
+
+        // ─── Ongoing onboarding conversation (streaming) ────────────────
+        const onboardingSystemPrompt = `${onboardingBaseContext}
+
+YOUR ROLE: You are a network concierge. You help this person find the right people in their network to talk to. You do NOT give advice, coach them, or solve their problems. Your job is "here's who can help" — not "here's what to do."
+
+CORE BEHAVIOR:
+1. RECOMMEND PEOPLE FAST. When the user shares what they're working on, your FIRST instinct should be to find someone in their network who's relevant. Don't do multiple rounds of questioning before mentioning a person — get to a name within your first or second response. The network is the product.
+2. ONE QUESTION MAX per response. Ask one focused question, then stop. Never stack 2-3 questions.
+3. KEEP IT SHORT. 2-3 sentences is the target. 4-5 sentences is the max, and only when introducing a person with context. No monologues.
+4. DON'T RECITE THEIR CAREER BACK TO THEM. They know where they've worked. Use their background to inform your thinking silently — to find relevant network matches, to understand context — but don't narrate it back.
+5. DON'T VALIDATE OR FLATTER. Skip "that makes a lot of sense" and "your background really sets you up well." Be direct and useful.
+6. NEVER GIVE CAREER ADVICE. Don't ask "what's driving this reflection?" or "what aspects feel most aligned?" That's career coaching. Instead: "**Kamie Kennedy** in your network went from VP Marketing to CEO at a smaller company — she'd have good perspective on that transition. Want me to help you reach out?"
+7. WHEN YOU RECOMMEND SOMEONE, explain in one sentence why they're relevant, citing specific evidence from their background. Then suggest a next step: "Want me to draft an intro?" or "You could /ask them directly."
+
+ABOUT VOUCHING (weave in naturally, don't lecture):
+- Everyone in this network is here because someone personally recommended them
+- The user can vouch for their top 4 colleagues per job function (type /vouch)
+- Each vouch invitation expands the network through trust
+- ${inviterName ? `${inviterName} vouched for them — that's how they got here` : 'Someone vouched for them to get here'}
+- Don't push vouching until the user has seen value from the network first. When the moment is right, a brief mention is enough: "By the way, typing /vouch lets you bring your own best people into this network."
+
+WHAT NOT TO DO:
+- Don't act like a therapist or career coach
+- Don't ask open-ended exploratory questions ("what's driving this?", "tell me more about what excites you")
+- Don't summarize or paraphrase what the user just said
+- Don't list multiple career history items back to them
+- Don't write paragraphs when a sentence will do
+- Don't ask the same question two different ways
+
+Always use people's FULL NAMES (first and last) in **bold** so the frontend can render them as interactive pills.`
+
+        // Stream the onboarding conversation
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        })
+
+        const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 500,
+            stream: true,
+            system: [{ type: 'text', text: onboardingSystemPrompt }],
+            messages: [
+              ...history
+                .filter(m => m.role === 'user' || m.role === 'assistant')
+                .map(m => ({ role: m.role, content: m.content }))
+                .slice(-10),
+              { role: 'user', content: question },
+            ],
+          }),
+        })
+
+        if (!claudeRes.ok) {
+          const errText = await claudeRes.text()
+          console.error(`[NetworkBrain/onboarding] Claude error: ${claudeRes.status} ${errText}`)
+          res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI service error' })}\n\n`)
+          res.end()
+          return
+        }
+
+        let fullAnswer = ''
+        const reader = claudeRes.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop()
+          for (const line of lines) {
+            if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
+            try {
+              const evt = JSON.parse(line.slice(6))
+              if (evt.type === 'content_block_delta' && evt.delta?.text) {
+                fullAnswer += evt.delta.text
+                res.write(`data: ${JSON.stringify({ type: 'token', text: evt.delta.text })}\n\n`)
+              }
+            } catch {}
+          }
+        }
+
+        // Match mentioned people from the answer against the network
+        const mentionedNames = talent
+          .map(t => t.display_name)
+          .filter(n => n && fullAnswer.toLowerCase().includes(n.toLowerCase()))
+        const mentionedPeople = await buildMentionedPeopleFromNames(mentionedNames)
+
+        res.write(`data: ${JSON.stringify({ type: 'done', answer: fullAnswer, people: mentionedPeople })}\n\n`)
+        res.end()
+        return
+      }
+
       if (talent.length === 0) {
         res.writeHead(200)
         res.end(JSON.stringify({
@@ -3548,7 +4163,7 @@ Rules:
           ORDER BY person_id, CASE source WHEN 'claude-compact' THEN 0 ELSE 1 END
         `, [personIds]),
         query(`
-          SELECT id, display_name, current_title, current_company, industry, linkedin_url, photo_url,
+          SELECT id, display_name, current_title, current_company, location, industry, linkedin_url, photo_url,
                  email, ask_receive_degree, ask_allow_career_overlap, gives, gives_free_text,
                  EXISTS(SELECT 1 FROM vouches WHERE voucher_id = people.id) AS has_vouched
           FROM people WHERE id = ANY($1)
@@ -3608,18 +4223,219 @@ Rules:
         })
       }
 
-      // For each network person, find orgs where they overlapped with user
-      const overlapMap = new Map() // person_id → [org names]
+      // For each network person, find orgs where they overlapped with user (with role details)
+      const overlapMap = new Map() // person_id → [org names] (for browse queries)
+      const overlapDetailMap = new Map() // person_id → [{ org, userTitle, personTitle, userYears, personYears }]
       for (const [personId, history] of networkHistoryMap) {
         const sharedOrgs = new Set()
+        const details = []
         for (const uh of userHistoryNormed) {
           for (const ph of history) {
             if (uh.norm && ph.norm && uh.norm === ph.norm && uh.startDate <= ph.endDate && ph.startDate <= uh.endDate) {
-              sharedOrgs.add(ph.organization)
+              if (!sharedOrgs.has(ph.organization)) {
+                sharedOrgs.add(ph.organization)
+                const fmtYear = (d) => d ? d.getFullYear() : '?'
+                const userYears = `${fmtYear(uh.startDate)}-${uh.is_current ? 'present' : fmtYear(uh.endDate)}`
+                const personYears = `${fmtYear(ph.startDate)}-${ph.is_current ? 'present' : fmtYear(ph.endDate)}`
+                details.push({
+                  org: ph.organization,
+                  userTitle: uh.title || 'Role',
+                  personTitle: ph.title || 'Role',
+                  userYears,
+                  personYears,
+                })
+              }
             }
           }
         }
-        if (sharedOrgs.size > 0) overlapMap.set(personId, [...sharedOrgs])
+        if (sharedOrgs.size > 0) {
+          overlapMap.set(personId, [...sharedOrgs])
+          overlapDetailMap.set(personId, details)
+        }
+      }
+
+      // ─── Helper: classify browse vs narrative intent via Haiku ─────
+      async function classifyBrainIntent(q, recentHistory) {
+        try {
+          const classifierPrompt = `Classify the user's question about their professional network.
+Output JSON only: {"intent":"browse"|"narrative","category":"name"|"function"|"company"|"career_history"|"location"|"industry"|"gives"|"pathway"|null,"term":string|null}
+
+Browse = simple lookup/filter by one dimension (a specific person, function, company, location, industry, or what people offer).
+Narrative = analysis, multi-criteria recommendations, advice about who to contact, follow-up conversation, or vague questions needing clarification.
+
+Categories:
+- name: looking up a specific person ("Who is Sarah Chen?", "Tell me about John")
+- function: filtering by job function ("Show me my engineers", "product people in my network")
+- company: filtering by current or past company ("Who do I know at Stripe?", "connections at Google")
+- career_history: shared work history ("Who else worked at Amazon?", "people I overlapped with at Uber")
+- location: filtering by location ("Who's in San Francisco?", "New York connections")
+- industry: filtering by industry ("fintech people", "healthcare connections")
+- gives: filtering by what people offer ("Who can help with fundraising?", "mentorship")
+- pathway: introduction paths ("Who can introduce me to X?", "path to reach Y")
+
+"term" = the extracted search term. null for narrative.`
+
+          const messages = [
+            ...(recentHistory || [])
+              .filter(m => m.role === 'user' || m.role === 'assistant')
+              .slice(-2),
+            { role: 'user', content: q }
+          ]
+
+          const classRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': ANTHROPIC_API_KEY,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-20250514',
+              max_tokens: 100,
+              system: classifierPrompt,
+              messages,
+            }),
+          })
+
+          const classData = await classRes.json()
+          const classText = (classData.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+          return JSON.parse(classText)
+        } catch (err) {
+          console.error(`[NetworkBrain] Intent classifier error:`, err.message)
+          return { intent: 'narrative', category: null, term: null }
+        }
+      }
+
+      // ─── Helper: execute structured DB query for browse intent ─────
+      function executeBrowseQuery(category, term) {
+        const termLower = (term || '').toLowerCase()
+        let filtered = []
+        let header = ''
+
+        switch (category) {
+          case 'company': {
+            const termNorm = normalizeOrgName(term || '')
+            // Match current company
+            filtered = talent.filter(t => {
+              const s = structuredMap.get(t.id)
+              if (!s) return false
+              const currentNorm = normalizeOrgName(s.current_company || '')
+              if (currentNorm && termNorm && currentNorm === termNorm) return true
+              if ((s.current_company || '').toLowerCase().includes(termLower)) return true
+              return false
+            })
+            // Also check past employment from networkHistoryMap
+            if (filtered.length === 0) {
+              for (const [personId, history] of networkHistoryMap) {
+                if (filtered.some(t => t.id === personId)) continue
+                const match = history.some(h => {
+                  if (h.norm && termNorm && h.norm === termNorm) return true
+                  return (h.organization || '').toLowerCase().includes(termLower)
+                })
+                if (match) {
+                  const t = talent.find(t => t.id === personId)
+                  if (t) filtered.push(t)
+                }
+              }
+              if (filtered.length > 0) {
+                header = `People in your network who have worked at ${term}:`
+              }
+            }
+            if (!header) header = `People in your network at ${term}:`
+            break
+          }
+
+          case 'function': {
+            const functionKeywords = {
+              engineering: ['engineer', 'developer', 'swe', 'cto', 'vp engineering', 'tech lead', 'software'],
+              product: ['product manager', 'product lead', 'pm', 'vp product', 'cpo', 'product director'],
+              design: ['designer', 'ux', 'ui', 'design lead', 'creative director', 'design director'],
+              marketing: ['marketing', 'cmo', 'growth', 'brand', 'content', 'demand gen'],
+              sales: ['sales', 'account executive', 'ae', 'vp sales', 'cro', 'business development', 'bdr'],
+              data: ['data scientist', 'data engineer', 'analytics', 'ml engineer', 'machine learning', 'data'],
+              finance: ['finance', 'cfo', 'controller', 'accounting', 'financial'],
+              ops: ['operations', 'coo', 'chief operating', 'ops'],
+              'people-hr': ['people', 'hr', 'talent', 'recruiting', 'chro', 'human resources'],
+              'customer-success': ['customer success', 'cs', 'account manager', 'csm'],
+            }
+            let matchedFunction = null
+            for (const [fn, keywords] of Object.entries(functionKeywords)) {
+              if (fn.includes(termLower) || termLower.includes(fn) ||
+                  keywords.some(k => termLower.includes(k) || k.includes(termLower))) {
+                matchedFunction = fn
+                filtered = talent.filter(t => {
+                  const title = (structuredMap.get(t.id)?.current_title || '').toLowerCase()
+                  return keywords.some(k => title.includes(k))
+                })
+                break
+              }
+            }
+            if (filtered.length === 0 && !matchedFunction) {
+              // Fallback: title contains the raw term
+              filtered = talent.filter(t => {
+                const title = (structuredMap.get(t.id)?.current_title || '').toLowerCase()
+                return title.includes(termLower)
+              })
+            }
+            header = matchedFunction
+              ? `Here are the ${matchedFunction} professionals in your network:`
+              : `People with "${term}" in their title:`
+            break
+          }
+
+          case 'career_history': {
+            const termNorm = normalizeOrgName(term || '')
+            filtered = talent.filter(t => {
+              const overlap = overlapMap.get(t.id) || []
+              return overlap.some(org => {
+                const orgNorm = normalizeOrgName(org)
+                return (orgNorm && termNorm && orgNorm === termNorm) || org.toLowerCase().includes(termLower)
+              })
+            })
+            header = `People you overlapped with at ${term}:`
+            break
+          }
+
+          case 'location': {
+            filtered = talent.filter(t => {
+              const loc = (structuredMap.get(t.id)?.location || '').toLowerCase()
+              return loc.includes(termLower)
+            })
+            header = `People in your network in ${term}:`
+            break
+          }
+
+          case 'industry': {
+            filtered = talent.filter(t => {
+              const ind = (structuredMap.get(t.id)?.industry || '').toLowerCase()
+              return ind.includes(termLower)
+            })
+            header = `People in ${term} in your network:`
+            break
+          }
+
+          case 'gives': {
+            filtered = talent.filter(t => {
+              const s = structuredMap.get(t.id)
+              if (!s) return false
+              const giveLabels = (s.gives || []).map(g => (GIVE_TYPE_LABELS[g] || g).toLowerCase())
+              const freeText = (s.gives_free_text || '').toLowerCase()
+              return giveLabels.some(g => g.includes(termLower) || termLower.includes(g)) || freeText.includes(termLower)
+            })
+            header = `People who can help with ${term}:`
+            break
+          }
+
+          default:
+            return null
+        }
+
+        if (filtered.length === 0) return null
+
+        // Sort by vouch_score descending (highest trust first)
+        filtered.sort((a, b) => b.vouch_score - a.vouch_score)
+
+        return { filtered, header }
       }
 
       // ─── Helper: build mentioned people with vouch paths ─────────
@@ -3681,6 +4497,15 @@ Rules:
               }))
             : null
 
+          // Build ai_summary_snippet from full summary (truncate to sentence boundary)
+          const fullSummary = summaryMap.get(t.id) || ''
+          let aiSnippet = null
+          if (fullSummary) {
+            const truncated = fullSummary.slice(0, 200)
+            const lastPeriod = truncated.lastIndexOf('.')
+            aiSnippet = lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated + '...'
+          }
+
           return {
             id: t.id,
             name: t.display_name,
@@ -3694,6 +4519,14 @@ Rules:
             career_overlap: overlapMap.has(t.id) ? overlapMap.get(t.id) : null,
             vouch_path: vouchPath,
             evidence: evidenceMap.get(t.id) || null,
+            ai_summary_snippet: aiSnippet,
+            // Rich data for person detail panel
+            ai_summary: fullSummary || null,
+            location: s?.location || null,
+            gives: (s?.gives || []).map(g => GIVE_TYPE_LABELS[g] || g),
+            gives_free_text: s?.gives_free_text || null,
+            career_overlap_detail: overlapDetailMap.get(t.id) || null,
+            recommendation_count: t.recommendation_count || 0,
           }
         })
       }
@@ -3760,133 +4593,97 @@ Rules:
         return
       }
 
-      // ─── Brain v2: semantic retrieval path ──────────────────────────
-      const brainVersion = body.version === 2 ? 2 : 1
+      // ─── Browse intent detection (Haiku classifier) ─────────────────
+      const classification = await classifyBrainIntent(question, history)
+      console.log(`[NetworkBrain] Intent: ${classification.intent} | ${classification.category || '-'}/${classification.term || '-'} | ${Date.now() - start}ms`)
 
-      if (brainVersion === 2) {
-        try {
-          // Semantic search: embed the question, find top matching people/chunks
-          const semanticResults = await semanticSearch(question, {
-            topK: 15,
-            networkPersonIds: personIds,
-            minSimilarity: 0.25,
-          })
-
-          if (semanticResults.length === 0) {
-            // Fall back to v1 if no embeddings match (e.g., embeddings not generated yet)
-            console.log(`[NetworkBrain v2] No semantic matches, falling back to v1`)
-          } else {
-            const matchedPersonIds = semanticResults.map(r => r.personId)
-
-            // Build focused context: only matched people, with their specific matching evidence
-            const v2Context = semanticResults.map(result => {
-              const t = talent.find(t => t.id === result.personId)
-              if (!t) return null
-              const s = structuredMap.get(t.id)
-              const summary = summaryMap.get(t.id) || ''
-              const parts = [`- ${t.display_name}`]
-              if (s?.current_title && s?.current_company) parts.push(`| ${s.current_title} at ${s.current_company}`)
-              else if (s?.current_company) parts.push(`| ${s.current_company}`)
-              if (s?.industry) parts.push(`| ${s.industry}`)
-              parts.push(`| Degree ${t.degree}, Score ${t.vouch_score}`)
-              parts.push(`| Relevance: ${(result.topSimilarity * 100).toFixed(0)}%`)
-              const overlap = overlapMap.get(t.id)
-              if (overlap) parts.push(`| ⚡ Worked with user at: ${overlap.join(', ')}`)
-              const gives = s?.gives || []
-              if (gives.length > 0) {
-                const giveLabels = gives.map(g => GIVE_TYPE_LABELS[g] || g).join(', ')
-                parts.push(`| Gives: ${giveLabels}`)
-              }
-              if (s?.gives_free_text) parts.push(`| Also: ${s.gives_free_text}`)
-              const note = notesMap.get(t.id)
-              if (note) parts.push(`| 📝 User's note: ${note}`)
-              if (summary) parts.push(`\n  Profile: ${summary}`)
-
-              // Add the specific matching evidence (expertise chunks / content)
-              const evidence = result.matchedChunks
-                .slice(0, 3)
-                .map(c => `    • [${c.sourceType}] ${c.text.slice(0, 200)}`)
-                .join('\n')
-              if (evidence) parts.push(`\n  Matching expertise/content:\n${evidence}`)
-
-              return parts.join(' ')
-            }).filter(Boolean).join('\n\n')
-
-            // Build v2 system prompt — focused, with evidence
-            const v2SystemPrompt = `You are a professional network advisor. The user has a trusted vouch-based professional network.
-
-About the user asking questions:
-${userContext}
-
-I've searched the user's network using semantic similarity to find the people most relevant to their question. Each person below includes their profile, connection details, and the SPECIFIC expertise or content that matched the question. Use this evidence to give precise, well-supported recommendations.
-
-People marked with ⚡ "Worked with user at: [company]" were at the same company during an overlapping time period. At a smaller company or startup, this likely means they worked together directly. At a large company (e.g. Amazon, Google), they may or may not have crossed paths — use language like "you overlapped at Amazon" rather than "you worked together."
-
-Answer the user's question by recommending specific people from the matches below. Always reference people by name and explain why they're relevant, citing the specific expertise or content that makes them a good match. You know the user's background, so tailor recommendations based on shared experience, complementary skills, or relevant connections. If none of the matches truly fit, say so honestly.
-
-Keep responses to 2-4 short paragraphs. Use bullet points when listing multiple people. Be direct and actionable.
-
-Some people have indicated specific ways they're willing to help (listed as "Gives"). Use this as a helpful signal when relevant. People marked with 📝 have a private note from the user — treat these as reliable first-person knowledge.
-
-Top ${semanticResults.length} matches for this question:
-
-${v2Context}`
-
-            // Call Claude with focused context
-            const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': ANTHROPIC_API_KEY,
-                'anthropic-version': '2023-06-01',
-              },
-              body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514',
-                max_tokens: 1000,
-                system: v2SystemPrompt,
-                messages: [
-                  ...history
-                    .filter(m => m.role === 'user' || m.role === 'assistant')
-                    .map(m => ({ role: m.role, content: m.content }))
-                    .slice(-10),
-                  { role: 'user', content: question },
-                ],
-              }),
-            })
-
-            const data = await claudeRes.json()
-            const answer = (data.content || [])
-              .filter(b => b.type === 'text')
-              .map(b => b.text)
-              .join('')
-
-            const elapsed = Date.now() - start
-            console.log(`[NetworkBrain v2] Response in ${elapsed}ms | ${answer.length} chars | ${semanticResults.length} semantic matches`)
-
-            const mentionedPeople = await buildMentionedPeople(answer, { semanticResults })
-
-            res.writeHead(200)
-            res.end(JSON.stringify({ answer, people: mentionedPeople, max_recipients: maxRecipients, version: 2 }))
-            return
-          }
-        } catch (v2Err) {
-          console.error(`[NetworkBrain v2] Error, falling back to v1:`, v2Err.message)
-          // Fall through to v1
+      if (classification.intent === 'browse' && classification.category
+          && classification.category !== 'name' && classification.category !== 'pathway') {
+        const browseResult = executeBrowseQuery(classification.category, classification.term)
+        if (browseResult) {
+          // Build mentioned people response from browse results
+          const browseAnswer = browseResult.header + ' ' + browseResult.filtered.map(t => t.display_name).join(', ')
+          const browsePeople = await buildMentionedPeople(browseAnswer)
+          console.log(`[NetworkBrain] Browse shortcut: ${classification.category}/${classification.term} → ${browsePeople.length} people in ${Date.now() - start}ms`)
+          res.writeHead(200)
+          res.end(JSON.stringify({
+            answer: browseResult.header,
+            people: browsePeople,
+            max_recipients: maxRecipients,
+            version: 2,
+            response_type: 'browse',
+          }))
+          return
         }
+        // Browse query matched no people — fall through to narrative
+        console.log(`[NetworkBrain] Browse query returned 0 results, falling through to narrative`)
       }
 
-      // ─── Brain v1: full network context ─────────────────────────────
-      // Build network context for Claude (includes gives + career overlap)
-      const networkContext = talent.map(t => {
+      // ─── Semantic retrieval path (narrative) ──────────────────────────
+      let semanticResults = await semanticSearch(question, {
+        topK: 15,
+        networkPersonIds: personIds,
+        minSimilarity: 0.25,
+      })
+
+      // If no matches at default threshold, try broader search
+      if (semanticResults.length === 0) {
+        console.log(`[NetworkBrain] No semantic matches at 0.25, trying broader search at 0.15`)
+        semanticResults = await semanticSearch(question, {
+          topK: 10,
+          networkPersonIds: personIds,
+          minSimilarity: 0.15,
+        })
+      }
+
+      // If still no matches, return helpful message (no Claude call)
+      if (semanticResults.length === 0) {
+        console.log(`[NetworkBrain] No semantic matches even at 0.15, returning fallback message in ${Date.now() - start}ms`)
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          answer: "I couldn't find specific matches in your network for that question. Try being more specific about the role, skill, or company you're looking for — or use /ask [name] if you know who you want to reach.",
+          people: [], max_recipients: maxRecipients, version: 2, response_type: 'narrative'
+        }))
+        return
+      }
+
+      const matchedPersonIds = semanticResults.map(r => r.personId)
+
+      // Pre-compute vouch paths for semantic matches (so Claude can reference recommendation pathways)
+      const vouchPathMap = await getVouchPaths(userId, matchedPersonIds, { directional: true })
+
+      // Build focused context: only matched people, with their specific matching evidence
+      const v2Context = semanticResults.map(result => {
+        const t = talent.find(t => t.id === result.personId)
+        if (!t) return null
         const s = structuredMap.get(t.id)
         const summary = summaryMap.get(t.id) || ''
         const parts = [`- ${t.display_name}`]
         if (s?.current_title && s?.current_company) parts.push(`| ${s.current_title} at ${s.current_company}`)
         else if (s?.current_company) parts.push(`| ${s.current_company}`)
         if (s?.industry) parts.push(`| ${s.industry}`)
-        parts.push(`| Degree ${t.degree}, Score ${t.vouch_score}`)
-        const overlap = overlapMap.get(t.id)
-        if (overlap) parts.push(`| ⚡ Worked with user at: ${overlap.join(', ')}`)
+        parts.push(`| Trust score: ${t.vouch_score}`)
+        parts.push(`| Relevance: ${(result.topSimilarity * 100).toFixed(0)}%`)
+
+        // Recommendation pathway (vouch path)
+        const path = vouchPathMap.get(t.id)
+        if (path && path.length > 2) {
+          // 2nd+ degree: show the intermediaries
+          const intermediaries = path.slice(1, -1).map(n => n.name).join(' → ')
+          parts.push(`| 🔗 Connected through: ${intermediaries}`)
+        } else if (path && path.length === 2) {
+          parts.push(`| 🔗 Someone you vouched for`)
+        }
+
+        // Career history overlap (with roles and dates)
+        const overlapDetails = overlapDetailMap.get(t.id)
+        if (overlapDetails && overlapDetails.length > 0) {
+          const overlapLines = overlapDetails.map(o =>
+            `⚡ Both at ${o.org}: user as ${o.userTitle} (${o.userYears}), them as ${o.personTitle} (${o.personYears})`
+          )
+          parts.push(`| ${overlapLines.join(' | ')}`)
+        }
+
         const gives = s?.gives || []
         if (gives.length > 0) {
           const giveLabels = gives.map(g => GIVE_TYPE_LABELS[g] || g).join(', ')
@@ -3896,10 +4693,70 @@ ${v2Context}`
         const note = notesMap.get(t.id)
         if (note) parts.push(`| 📝 User's note: ${note}`)
         if (summary) parts.push(`\n  Profile: ${summary}`)
-        return parts.join(' ')
-      }).join('\n')
 
-      // Call Claude (no web search — network data IS the context)
+        // Add the specific matching evidence (expertise chunks / content)
+        const evidence = result.matchedChunks
+          .slice(0, 3)
+          .map(c => `    • [${c.sourceType}] ${c.text.slice(0, 200)}`)
+          .join('\n')
+        if (evidence) parts.push(`\n  Matching expertise/content:\n${evidence}`)
+
+        return parts.join(' ')
+      }).filter(Boolean).join('\n\n')
+
+      // Build system prompt as array of content blocks for caching
+      // Block 1: Static instructions + user context (stable within conversation → cacheable)
+      // Block 2: Dynamic semantic results (changes per query → not cached)
+      const giveTypeList = Object.values(GIVE_TYPE_LABELS).join(', ')
+      const staticSystemBlock = `You are a network concierge — you help the user find the right person in their professional network to help with their need. You do NOT solve their problem yourself or give advice on the topic. Your role is "here's who can help" not "here's what to do." Exception: factual questions about the network itself ("who do I know at Stripe?") — answer those directly.
+
+About the user asking questions:
+${userContext}
+
+IMPORTANT BEHAVIORAL RULES:
+1. When the user's question is vague or could mean multiple things, ask a clarifying follow-up question BEFORE recommending people. Don't always recommend on the first message — understand the real need first. If the question is specific enough, recommend immediately.
+2. The user can type slash commands to take actions. The ones most relevant to your recommendations:
+  - /ask [name] — send a private message to someone in their network
+  - /group [name1, name2] — start a group thread (a shared conversation where all participants can see and reply to each other's messages)
+  Occasionally (about 1 in 4 responses), mention /ask or /group naturally when relevant. Don't mention them every time.
+  Other commands the user has access to (don't proactively suggest these, but if the user asks about them, explain accurately):
+  - /vouch — pick a job function and vouch for their top colleagues in it
+  - /status — check which of their vouchees have responded to invites
+  - /give — update what kinds of help they're willing to offer others
+  - /note [name] — add or edit a private note on someone in their network
+  - /compare [name1, name2] — compare two people side by side
+3. For browse/lookup queries ("who do I know at Stripe?", "show me my engineering network"), respond with ONLY a brief 1-sentence header. List the relevant names but keep it very short — the frontend will render the people visually.
+
+RESPONSE FORMAT:
+- Recommend specific people by name and explain why they're relevant, citing the specific expertise or content that makes them a good match.
+- You know the user's background, so tailor recommendations based on shared experience, complementary skills, or relevant connections.
+- If none of the matches truly fit, say so honestly.
+- Keep responses to 2-4 short paragraphs. Use bullet points when listing multiple people. Be direct and actionable.
+
+NETWORK CONTEXT NOTES:
+- I've searched the user's network using semantic similarity to find the people most relevant to their question. Each person below includes their profile, connection details, and the SPECIFIC expertise or content that matched the question. Use this evidence to give precise, well-supported recommendations.
+- People marked with 🔗 "Connected through: [Name]" show the recommendation pathway — the chain of trusted vouches connecting the user to that person. When relevant, mention the pathway naturally (e.g., "you're connected to Sarah through Mike"). For people connected through an intermediary, you can suggest reaching out through that person. When grouping people, use "people you vouched for" (not "direct connections") and "vouched for by others" (not "connected through others") — this reflects how the network actually works.
+- People marked with ⚡ show shared career history with the user — they were at the same company during overlapping time periods. The roles and dates are included so you can gauge how closely they likely worked together. At a smaller company or startup, overlapping means they likely worked together directly. At a large company (e.g. Amazon, Google), they may or may not have crossed paths — use language like "you overlapped at Amazon" rather than "you worked together." When relevant, mention shared career history naturally.
+- Some people have indicated specific ways they're willing to help (listed as "Gives"). Types of help people can offer: ${giveTypeList}. Use Gives as a helpful signal when relevant. People marked with 📝 have a private note from the user — treat these as reliable first-person knowledge.
+
+Available job functions in this network: Engineering, Product, Marketing, Sales, Design, Data, Finance, Operations, People/HR, Customer Success, Legal, Executive, Consulting, Other.`
+
+      // Scenario B: returning user who hasn't vouched yet — add a gentle nudge
+      const vouchNudge = !userHasVouched ? `\n\nIMPORTANT CONTEXT: This user hasn't vouched for anyone yet. Their network exists because others vouched for them. Don't lecture them about vouching or make it the focus — just be useful. But if a natural moment arises (they mention a great former colleague, or you've helped them and want to suggest next steps), a brief mention is welcome: "By the way, you can bring your own best people into this network — just type /vouch." Keep it to once per conversation at most.` : ''
+
+      const dynamicSystemBlock = `Top ${semanticResults.length} matches for this question:
+
+${v2Context}`
+
+      // ─── Stream narrative response via SSE ─────────────────────────
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no', // Prevent Railway/nginx buffering
+      })
+
+      // Call Claude with streaming + prompt caching enabled
       const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -3910,23 +4767,11 @@ ${v2Context}`
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
-          system: `You are a professional network advisor. The user has a trusted vouch-based professional network.
-
-About the user asking questions:
-${userContext}
-
-Below is data about every person in their network, including their role, company, industry, vouch score (higher = more trusted), degree of connection (1 = direct, 2 = one hop, 3 = two hops), and a brief professional summary where available.
-
-People marked with ⚡ "Worked with user at: [company]" were at the same company during an overlapping time period. At a smaller company or startup, this likely means they worked together directly. At a large company (e.g. Amazon, Google), they may or may not have crossed paths — use language like "you overlapped at Amazon" rather than "you worked together." When relevant, mention this shared history naturally. Career overlap is especially useful for questions about who the user might already know, who to reach out to, or who might be willing to help.
-
-Answer the user's question by recommending specific people from their network. Always reference people by name and explain why they're relevant. You know the user's background, so you can tailor recommendations based on shared experience, complementary skills, or relevant connections. If no one in the network matches, say so honestly. Keep responses to 2-4 short paragraphs. Use bullet points when listing multiple people. Be direct and actionable.
-
-Some people have indicated specific ways they're willing to help (listed as "Gives"). Use this as a helpful signal when relevant — for example, mention that someone offers reference checks or introductions if it's pertinent to the user's question. However, treat Gives as a soft signal, not a hard constraint. Feel free to suggest someone even if they haven't explicitly listed a matching Give.
-
-People marked with 📝 "User's note:" have a private note written by the user. These contain the user's personal observations, context, or reminders about that person (e.g. "met at SaaStr", "great at system design", "looking for a new role"). Treat notes as reliable first-person knowledge and use them to give more personalized, relevant recommendations.
-
-Network (${talent.length} people):
-${networkContext}`,
+          stream: true,
+          system: [
+            { type: 'text', text: staticSystemBlock + vouchNudge, cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: dynamicSystemBlock },
+          ],
           messages: [
             ...history
               .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -3937,22 +4782,271 @@ ${networkContext}`,
         }),
       })
 
-      const data = await claudeRes.json()
-      const answer = (data.content || [])
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('')
+      if (!claudeRes.ok) {
+        const errText = await claudeRes.text()
+        console.error(`[NetworkBrain] Claude API error: ${claudeRes.status} ${errText}`)
+        res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI service error' })}\n\n`)
+        res.end()
+        return
+      }
 
-      console.log(`[NetworkBrain] Response in ${Date.now() - start}ms | ${answer.length} chars`)
+      // Stream tokens from Claude to client
+      let fullAnswer = ''
+      let cacheCreated = 0
+      let cacheRead = 0
+      const reader = claudeRes.body.getReader()
+      const decoder = new TextDecoder()
+      let sseBuffer = ''
 
-      const mentionedPeople = await buildMentionedPeople(answer)
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      res.writeHead(200)
-      res.end(JSON.stringify({ answer, people: mentionedPeople, max_recipients: maxRecipients, version: 1 }))
+        sseBuffer += decoder.decode(value, { stream: true })
+        const lines = sseBuffer.split('\n')
+        sseBuffer = lines.pop() // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const payload = line.slice(6).trim()
+          if (payload === '[DONE]') continue
+
+          try {
+            const event = JSON.parse(payload)
+            if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta?.text) {
+              fullAnswer += event.delta.text
+              res.write(`data: ${JSON.stringify({ type: 'token', text: event.delta.text })}\n\n`)
+            }
+            // Capture cache usage from message_start and message_delta events
+            if (event.type === 'message_start' && event.message?.usage) {
+              cacheCreated = event.message.usage.cache_creation_input_tokens || 0
+              cacheRead = event.message.usage.cache_read_input_tokens || 0
+            }
+            if (event.type === 'message_delta' && event.usage) {
+              // message_delta may also have usage info
+              if (event.usage.cache_creation_input_tokens) cacheCreated = event.usage.cache_creation_input_tokens
+              if (event.usage.cache_read_input_tokens) cacheRead = event.usage.cache_read_input_tokens
+            }
+          } catch {}
+        }
+      }
+
+      const elapsed = Date.now() - start
+      console.log(`[NetworkBrain] Streamed response in ${elapsed}ms | ${fullAnswer.length} chars | ${semanticResults.length} semantic matches | Cache: ${cacheCreated} created, ${cacheRead} read`)
+
+      // After stream completes: build mentioned people and send final metadata event
+      const mentionedPeople = await buildMentionedPeople(fullAnswer, { semanticResults })
+
+      // Detect browse vs narrative response type
+      const namePattern = mentionedPeople.map(p => p.name).join('|')
+      const textWithoutNames = namePattern ? fullAnswer.replace(new RegExp(namePattern, 'gi'), '').trim() : fullAnswer.trim()
+      const responseType = mentionedPeople.length >= 3 && textWithoutNames.length < 300 ? 'browse' : 'narrative'
+
+      res.write(`data: ${JSON.stringify({ type: 'done', people: mentionedPeople, max_recipients: maxRecipients, version: 2, response_type: responseType })}\n\n`)
+      res.end()
     } catch (err) {
       console.error('[/api/network-brain error]', err)
-      res.writeHead(500)
-      res.end(JSON.stringify({ error: 'Internal server error' }))
+      if (!res.headersSent) {
+        res.writeHead(500)
+        res.end(JSON.stringify({ error: 'Internal server error' }))
+      } else {
+        // Headers already sent (SSE mode) — send error event and close
+        try {
+          res.write(`data: ${JSON.stringify({ type: 'error', message: 'Something went wrong' })}\n\n`)
+          res.end()
+        } catch {}
+      }
+    }
+    return
+  }
+
+  // ─── Network Brain: Compare two people ──────────────────────────
+  if (req.method === 'POST' && req.url === '/api/network-brain/compare') {
+    const start = Date.now()
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+
+      const body = await readBody(req)
+      const { person_ids, history } = body
+      if (!Array.isArray(person_ids) || person_ids.length !== 2) {
+        res.writeHead(400); res.end(JSON.stringify({ error: 'Exactly 2 person_ids required' })); return
+      }
+
+      const userId = session.id
+      const [id1, id2] = person_ids.map(Number)
+
+      // Fetch both people's data in parallel: enrichment, employment, structured fields, user's history
+      const [
+        person1Res, person2Res,
+        summary1Res, summary2Res,
+        history1Res, history2Res,
+        userHistoryRes,
+      ] = await Promise.all([
+        query('SELECT id, display_name, current_title, current_company, location, gives, gives_free_text FROM people WHERE id = $1', [id1]),
+        query('SELECT id, display_name, current_title, current_company, location, gives, gives_free_text FROM people WHERE id = $1', [id2]),
+        query("SELECT ai_summary FROM person_enrichment WHERE person_id = $1 AND source = 'claude'", [id1]),
+        query("SELECT ai_summary FROM person_enrichment WHERE person_id = $1 AND source = 'claude'", [id2]),
+        query('SELECT organization, title, start_date, end_date, is_current FROM employment_history WHERE person_id = $1 ORDER BY is_current DESC, start_date DESC NULLS LAST', [id1]),
+        query('SELECT organization, title, start_date, end_date, is_current FROM employment_history WHERE person_id = $1 ORDER BY is_current DESC, start_date DESC NULLS LAST', [id2]),
+        query('SELECT organization, title, start_date, end_date, is_current FROM employment_history WHERE person_id = $1 ORDER BY is_current DESC, start_date DESC NULLS LAST', [userId]),
+      ])
+
+      const p1 = person1Res.rows[0]
+      const p2 = person2Res.rows[0]
+      if (!p1 || !p2) { res.writeHead(404); res.end(JSON.stringify({ error: 'Person not found' })); return }
+
+      // Build career overlap with user for each person
+      const userHistoryNormed = (userHistoryRes.rows || []).map(r => ({
+        ...r, norm: normalizeOrgName(r.organization),
+        startDate: r.start_date ? new Date(r.start_date) : new Date('1970-01-01'),
+        endDate: (r.is_current || !r.end_date) ? new Date() : new Date(r.end_date),
+      }))
+
+      function computeOverlap(historyRows) {
+        const normed = historyRows.map(r => ({
+          ...r, norm: normalizeOrgName(r.organization),
+          startDate: r.start_date ? new Date(r.start_date) : new Date('1970-01-01'),
+          endDate: (r.is_current || !r.end_date) ? new Date() : new Date(r.end_date),
+        }))
+        const sharedOrgs = new Set()
+        const details = []
+        for (const uh of userHistoryNormed) {
+          for (const ph of normed) {
+            if (uh.norm && ph.norm && uh.norm === ph.norm && uh.startDate <= ph.endDate && ph.startDate <= uh.endDate) {
+              if (!sharedOrgs.has(ph.organization)) {
+                sharedOrgs.add(ph.organization)
+                const fmtYear = d => d ? d.getFullYear() : '?'
+                details.push({
+                  org: ph.organization,
+                  userTitle: uh.title || 'Role',
+                  personTitle: ph.title || 'Role',
+                  userYears: `${fmtYear(uh.startDate)}-${uh.is_current ? 'present' : fmtYear(uh.endDate)}`,
+                  personYears: `${fmtYear(ph.startDate)}-${ph.is_current ? 'present' : fmtYear(ph.endDate)}`,
+                })
+              }
+            }
+          }
+        }
+        return details
+      }
+
+      const overlap1 = computeOverlap(history1Res.rows || [])
+      const overlap2 = computeOverlap(history2Res.rows || [])
+
+      // Build context blocks for each person
+      function personBlock(p, summary, empHistory, overlap) {
+        const parts = [`Name: ${p.display_name}`]
+        if (p.current_title && p.current_company) parts.push(`Current: ${p.current_title} at ${p.current_company}`)
+        else if (p.current_title) parts.push(`Current: ${p.current_title}`)
+        if (p.location) parts.push(`Location: ${p.location}`)
+        if (summary) parts.push(`Profile: ${summary}`)
+        if (overlap.length > 0) {
+          parts.push(`Shared career history with user: ${overlap.map(o => `${o.org} (user: ${o.userTitle} ${o.userYears}, them: ${o.personTitle} ${o.personYears})`).join('; ')}`)
+        }
+        const gives = (p.gives || []).map(g => GIVE_TYPE_LABELS[g] || g)
+        if (gives.length > 0) parts.push(`Willing to help with: ${gives.join(', ')}`)
+        if (p.gives_free_text) parts.push(`Additional help: ${p.gives_free_text}`)
+        const recentRoles = empHistory.slice(0, 4).map(r => `${r.title || 'Role'} at ${r.organization}${r.is_current ? ' (current)' : ''}`).join('; ')
+        if (recentRoles) parts.push(`Recent career: ${recentRoles}`)
+        return parts.join('\n')
+      }
+
+      const block1 = personBlock(p1, summary1Res.rows[0]?.ai_summary, history1Res.rows, overlap1)
+      const block2 = personBlock(p2, summary2Res.rows[0]?.ai_summary, history2Res.rows, overlap2)
+
+      // Build user context
+      const userRes = await query('SELECT display_name, current_title, current_company FROM people WHERE id = $1', [userId])
+      const userProfile = userRes.rows[0]
+      let userContext = ''
+      if (userProfile) {
+        userContext = `The user asking: ${userProfile.display_name}`
+        if (userProfile.current_title && userProfile.current_company) userContext += `, ${userProfile.current_title} at ${userProfile.current_company}`
+      }
+
+      const systemPrompt = `You are helping a user compare two professionals in their network. ${userContext}
+
+Person 1:
+${block1}
+
+Person 2:
+${block2}
+
+Write a concise comparison (2-4 sentences). Focus on what makes each person distinctly relevant based on the conversation context. Reference specific details from their profiles. Be direct and helpful — the user is deciding who to reach out to. Don't use bullet points or headers — just flowing prose. Refer to each person by first name.`
+
+      // Stream response via SSE
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      })
+
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 400,
+          stream: true,
+          system: [{ type: 'text', text: systemPrompt }],
+          messages: [
+            ...(history || [])
+              .filter(m => m.role === 'user' || m.role === 'assistant')
+              .map(m => ({ role: m.role, content: m.content }))
+              .slice(-6),
+            { role: 'user', content: `Compare ${p1.display_name} and ${p2.display_name} for me.` },
+          ],
+        }),
+      })
+
+      if (!claudeRes.ok) {
+        const errText = await claudeRes.text()
+        console.error(`[Compare] Claude API error: ${claudeRes.status} ${errText}`)
+        res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI service error' })}\n\n`)
+        res.end()
+        return
+      }
+
+      let fullAnswer = ''
+      const reader = claudeRes.body.getReader()
+      const decoder = new TextDecoder()
+      let sseBuffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        sseBuffer += decoder.decode(value, { stream: true })
+        const lines = sseBuffer.split('\n')
+        sseBuffer = lines.pop()
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const payload = line.slice(6).trim()
+          if (payload === '[DONE]') continue
+          try {
+            const event = JSON.parse(payload)
+            if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta?.text) {
+              fullAnswer += event.delta.text
+              res.write(`data: ${JSON.stringify({ type: 'token', text: event.delta.text })}\n\n`)
+            }
+          } catch {}
+        }
+      }
+
+      console.log(`[Compare] ${p1.display_name} vs ${p2.display_name} in ${Date.now() - start}ms | ${fullAnswer.length} chars`)
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`)
+      res.end()
+    } catch (err) {
+      console.error('[/api/network-brain/compare error]', err)
+      if (!res.headersSent) {
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Internal server error' }))
+      } else {
+        try { res.write(`data: ${JSON.stringify({ type: 'error', message: 'Something went wrong' })}\n\n`); res.end() } catch {}
+      }
     }
     return
   }
@@ -4041,6 +5135,10 @@ ${networkContext}`,
       const orig = origRes.rows[0]
       const senderId = orig.sender_id
 
+      // Get current user's name for sign-off
+      const currentUserRes = await query('SELECT display_name FROM people WHERE id=$1', [session.id])
+      const currentUserName = currentUserRes.rows[0]?.display_name || 'You'
+
       // Create a quick_ask record for the reply
       const askRes = await query(
         `INSERT INTO quick_asks (sender_id, question) VALUES ($1, $2) RETURNING id`,
@@ -4050,14 +5148,18 @@ ${networkContext}`,
 
       // Compute vouch path
       const paths = await getVouchPaths(session.id, [senderId])
-      const vouchPath = paths.get(senderId) || [{ id: session.id, name: (await query('SELECT display_name FROM people WHERE id=$1', [session.id])).rows[0]?.display_name || 'You' }, { id: senderId, name: orig.sender_name }]
+      const vouchPath = paths.get(senderId) || [{ id: session.id, name: currentUserName }, { id: senderId, name: orig.sender_name }]
       const degree = vouchPath.length - 1
 
-      // Create draft row with blank subject/body
+      // Pre-fill with greeting and sign-off
+      const recipientFirst = orig.sender_name.split(' ')[0]
+      const replyDraftBody = `Hi ${recipientFirst},\n\n\n\nThanks,\n${currentUserName}`
+
+      // Create draft row with greeting/sign-off pre-filled
       const draftRes = await query(
         `INSERT INTO quick_ask_recipients (ask_id, recipient_id, vouch_path, draft_subject, draft_body, knows_recipient)
          VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
-        [askId, senderId, JSON.stringify(vouchPath), '', '']
+        [askId, senderId, JSON.stringify(vouchPath), '', replyDraftBody]
       )
 
       const senderTitle = [orig.sender_title, orig.sender_company].filter(Boolean).join(' at ')
@@ -4073,7 +5175,7 @@ ${networkContext}`,
           recipient_photo_url: orig.sender_photo || null,
           vouch_path: vouchPath,
           draft_subject: '',
-          draft_body: '',
+          draft_body: replyDraftBody,
           no_email: !orig.sender_email,
           degree,
         }],
@@ -4120,7 +5222,7 @@ ${networkContext}`,
       const session = await validateSession(req)
       if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
       const body = await readBody(req)
-      const { question, recipient_ids, recipient_context } = body
+      const { question, recipient_ids, recipient_context, intro_target } = body
 
       if (!question || !Array.isArray(recipient_ids) || recipient_ids.length === 0) {
         res.writeHead(400); res.end(JSON.stringify({ error: 'question and recipient_ids required' })); return
@@ -4254,6 +5356,20 @@ ${networkContext}`,
       const senderFirst = sender.display_name.split(' ')[0]
       const senderSummary = (sender.ai_summary || '').split('.').slice(0, 2).join('.') + '.'
 
+      // If this is an intro request, fetch the target person's background
+      let introTargetSummary = ''
+      if (intro_target?.id) {
+        const targetRes = await query(`
+          SELECT p.display_name, p.current_title, p.current_company, pe.ai_summary
+          FROM people p
+          LEFT JOIN person_enrichment pe ON pe.person_id = p.id AND pe.source = 'claude'
+          WHERE p.id = $1
+        `, [intro_target.id])
+        if (targetRes.rows[0]?.ai_summary) {
+          introTargetSummary = targetRes.rows[0].ai_summary.split('.').slice(0, 2).join('.') + '.'
+        }
+      }
+
       for (const recipient of recipientProfiles) {
         const vouchPath = paths.get(recipient.id) || [
           { id: sender.id, name: sender.display_name },
@@ -4315,7 +5431,7 @@ Guidelines:
 - State the sender's ACTUAL question — do not reinterpret, embellish, or add specifics the sender didn't ask about. If they asked "What was it like to work at X?", say exactly that. Do NOT invent sub-topics like "product strategy" or "team dynamics" that the sender never mentioned.
 - End with the ask itself or a simple next step. Keep it literal.
 - Tone: professional, direct, human. Like a real email from a busy professional. Not salesy, not overly warm, not corporate.
-- Do NOT include a greeting (e.g., "Hi [name]") or sign-off (e.g., "Best regards") — those are added separately.
+- CRITICAL: Do NOT include ANY greeting (e.g., "Hi [name]", "Hey [name]", "Hello") or sign-off (e.g., "Best regards", "Thanks") — those are added automatically. Start directly with the message body.
 - Do NOT use filler phrases like "I hope this finds you well" or "I'd love to connect."
 - Generate a short, specific subject line (max 60 chars) — not generic.
 
@@ -4332,6 +5448,9 @@ Recipient background: ${recipientSummary}
 Connection path (${degree === 1 ? '1st degree — direct vouch' : degree + 'nd/rd degree'}): ${chainText}
 ${relationshipNote}
 
+${intro_target ? `INTRODUCTION REQUEST: The sender actually wants to reach ${intro_target.name} (${intro_target.current_title || 'Professional'} at ${intro_target.current_company || 'N/A'}), but ${intro_target.name} isn't accepting direct messages. The sender is asking this recipient (${recipientFirst}) to make an introduction.
+${introTargetSummary ? `${intro_target.name}'s background: ${introTargetSummary}` : ''}
+The email should ask ${recipientFirst} if they'd be willing to introduce the sender to ${intro_target.name}. ONLY reference details about ${intro_target.name} that appear in the background above. Do NOT invent or assume any career history, companies, or experience not explicitly stated.` : ''}
 What ${senderFirst} wants to ask:
 "${question}"` }],
             }),
@@ -4349,6 +5468,9 @@ What ${senderFirst} wants to ask:
           draftSubject = `Quick question from ${senderFirst} via your network`
           draftBody = `I'm reaching out through our VouchFour network (connected via ${chainText}). ${question}`
         }
+
+        // Wrap with greeting and sign-off
+        draftBody = `Hi ${recipientFirst},\n\n${draftBody}\n\nThanks,\n${sender.display_name}`
 
         // Save the draft
         const knowsRecipient = degree === 1 || (ctx.knows_them === true)
@@ -5604,6 +6726,86 @@ What ${senderFirst} wants to discuss: "${question}"` }],
     return
   }
 
+  // ─── Notification counts ────────────────────────────────────────
+  if (req.method === 'GET' && req.url === '/api/notifications') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+
+      const result = await query(`
+        SELECT tp.thread_id,
+          (SELECT COUNT(*) FROM thread_participants WHERE thread_id = tp.thread_id)::int AS participant_count,
+          t.last_message_at, tp.last_read_at,
+          (SELECT author_id FROM thread_messages WHERE thread_id = tp.thread_id ORDER BY created_at DESC LIMIT 1) AS last_author_id
+        FROM thread_participants tp
+        JOIN threads t ON t.id = tp.thread_id
+        WHERE tp.person_id = $1 AND t.status = 'active'
+      `, [session.id])
+
+      let unread_asks = 0, unread_groups = 0
+      for (const r of result.rows) {
+        const hasNew = r.last_message_at && Number(r.last_author_id) !== session.id &&
+          (!r.last_read_at || new Date(r.last_message_at) > new Date(r.last_read_at))
+        if (hasNew) {
+          if (r.participant_count <= 2) unread_asks++
+          else unread_groups++
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ unread_asks, unread_groups, total: unread_asks + unread_groups }))
+    } catch (err) {
+      console.error('[/api/notifications error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── My Network (compact people list for Network Bin) ──────────
+  if (req.method === 'GET' && req.url === '/api/my-network') {
+    try {
+      const session = await validateSession(req)
+      if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
+
+      const talent = await getTalentRecommendations(session.id, null)
+      if (talent.length === 0) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ people: [] }))
+        return
+      }
+
+      const personIds = talent.map(t => t.id)
+      const peopleRes = await query(
+        `SELECT id, display_name, photo_url, current_title, current_company, location
+         FROM people WHERE id = ANY($1)`, [personIds]
+      )
+      const peopleMap = new Map()
+      for (const r of peopleRes.rows) peopleMap.set(r.id, r)
+
+      const people = talent.map(t => {
+        const p = peopleMap.get(t.id)
+        return {
+          id: t.id,
+          name: p?.display_name || t.display_name,
+          photo_url: p?.photo_url || null,
+          current_title: p?.current_title || null,
+          current_company: p?.current_company || null,
+          location: p?.location || null,
+          degree: t.degree,
+        }
+      })
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ people }))
+    } catch (err) {
+      console.error('[/api/my-network error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Network search (for thread participant picker) ─────────────
   if (req.method === 'GET' && req.url.startsWith('/api/network-search')) {
     try {
@@ -5914,6 +7116,26 @@ What ${senderFirst} wants to discuss: "${question}"` }],
     return
   }
 
+  // ─── Logout ──────────────────────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/api/auth/logout') {
+    try {
+      const token = getSessionToken(req)
+      if (token) {
+        await query('DELETE FROM sessions WHERE token = $1', [token])
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Set-Cookie': 'vf_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax',
+      })
+      res.end(JSON.stringify({ ok: true }))
+    } catch (err) {
+      console.error('[/api/auth/logout error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── Check existing session ───────────────────────────────────────
   if (req.method === 'GET' && req.url === '/api/auth/session') {
     try {
@@ -5956,6 +7178,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
           linkedin: person.linkedin_url,
           email: person.email,
           has_vouched: vouchCheck.rows[0].has_vouched,
+          welcome_seen: !!person.welcome_seen_at,
           current_title: person.current_title || null,
           current_company: person.current_company || null,
           photo_url: person.photo_url || null,

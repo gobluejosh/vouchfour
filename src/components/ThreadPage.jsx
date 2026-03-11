@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
+import SharedHeader from "./SharedHeader.jsx";
 
 const C = {
   ink: "#171717",
@@ -210,7 +211,7 @@ export default function ThreadPage() {
       }}>
         <div style={{
           width: "100%",
-          background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
+          background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)",
           minHeight: "100vh", padding: "80px 16px",
         }}>
           <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 40 }}>
@@ -237,7 +238,7 @@ export default function ThreadPage() {
       }}>
         <div style={{
           width: "100%",
-          background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
+          background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)",
           minHeight: "100vh", padding: "80px 16px",
         }}>
           <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 60, textAlign: "center" }}>
@@ -260,17 +261,15 @@ export default function ThreadPage() {
       display: "flex", flexDirection: "column", alignItems: "center",
       overflowX: "hidden",
     }}>
-      {/* Fixed header */}
+      <SharedHeader user={viewerId ? {} : null} />
+      {/* Thread sub-header: back + topic */}
       <div style={{
-        position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)",
-        zIndex: 100, width: "100%",
-        background: "#FFFFFF", padding: "10px 20px 10px",
+        position: "fixed", top: 49, left: "50%", transform: "translateX(-50%)",
+        zIndex: 99, width: "100%",
+        background: "#FFFFFF", padding: "6px 20px 8px",
         borderBottom: `1px solid ${C.border}`,
       }}>
-        <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
-          Vouch<span style={{ color: C.accent }}>Four</span>
-        </a>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
           <a
             href="#"
             onClick={e => { e.preventDefault(); window.history.back(); }}
@@ -299,7 +298,7 @@ export default function ThreadPage() {
       {/* Main content */}
       <div style={{
         width: "100%",
-        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)",
+        background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)",
         padding: "80px 16px 140px",
         minHeight: "100vh",
       }}>

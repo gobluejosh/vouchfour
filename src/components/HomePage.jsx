@@ -32,8 +32,9 @@ export default function HomePage() {
         .then(res => res.json())
         .then(data => {
           if (data.user) {
-            setUser(data.user);
-            window.history.replaceState({}, "", window.location.pathname);
+            // Logged-in users go to Brain
+            window.location.href = "/brain";
+            return;
           }
         })
         .catch(() => {})
@@ -45,7 +46,11 @@ export default function HomePage() {
           throw new Error("No session");
         })
         .then(data => {
-          setUser(data.user);
+          if (data.user) {
+            // Logged-in users go to Brain
+            window.location.href = "/brain";
+            return;
+          }
         })
         .catch(() => {})
         .finally(() => setSessionChecked(true));
@@ -99,7 +104,7 @@ export default function HomePage() {
 
       <div style={{
         width: "100%",
-        background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 40px",
+        background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)", padding: "0 16px 40px",
         borderRadius: 0, margin: "56px 0 0",
         minHeight: "calc(100vh - 56px)",
       }}>
@@ -195,9 +200,9 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Logged-in — redirect to talent network */}
-          {sessionChecked && user && slug && (() => {
-            window.location.href = `/talent/${slug}`;
+          {/* Logged-in — redirect to Brain (home) */}
+          {sessionChecked && user && (() => {
+            window.location.href = '/brain';
             return null;
           })()}
 

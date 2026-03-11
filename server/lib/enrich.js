@@ -328,6 +328,245 @@ export async function saveApolloData(personId, displayName, apolloData) {
   return true
 }
 
+// ── Summary Generation (callable independently) ────────────────────────
+// Generates full AI summary + compact summary from all available data.
+// Called by enrichPerson Step C, and also directly after expertise extraction
+// for the career-edit pipeline (so summary includes expertise chunks).
+export async function generateSummary(personId, { braveSnippets = [] } = {}) {
+  const start = Date.now()
+
+  // Load person basics
+  const personRes = await query(
+    'SELECT id, display_name, linkedin_url, current_title, current_company, location, industry, headline FROM people WHERE id = $1',
+    [personId]
+  )
+  const person = personRes.rows[0]
+  if (!person) throw new Error(`Person ${personId} not found`)
+
+  // Gather comprehensive data in parallel
+  const [dbHistoryRes, apolloEnrichRes, vouchRes, contentRes, expertiseRes, braveEnrichRes] = await Promise.all([
+    query(`SELECT organization, title, start_date, end_date, is_current, location, description
+           FROM employment_history WHERE person_id = $1
+           ORDER BY start_date DESC NULLS LAST`, [personId]),
+    query(`SELECT raw_payload FROM person_enrichment
+           WHERE person_id = $1 AND source = 'apollo'`, [personId]),
+    query(`SELECT jf.name as function_name, p.display_name as voucher_name, p.current_company as voucher_company
+           FROM vouches v
+           JOIN job_functions jf ON jf.id = v.job_function_id
+           JOIN people p ON p.id = v.voucher_id
+           WHERE v.vouchee_id = $1`, [personId]),
+    query(`SELECT content_type, title, content_summary, topics
+           FROM person_content WHERE person_id = $1
+           ORDER BY content_type, id`, [personId]),
+    query(`SELECT chunk_type, chunk_text, tags
+           FROM person_expertise WHERE person_id = $1
+           ORDER BY chunk_type, id`, [personId]),
+    // Load Brave snippets from DB if not passed in (standalone call vs enrichPerson)
+    braveSnippets.length === 0
+      ? query(`SELECT raw_payload FROM person_enrichment WHERE person_id = $1 AND source = 'brave'`, [personId])
+      : Promise.resolve({ rows: [] }),
+  ])
+
+  // If no braveSnippets passed in, reconstruct from DB
+  if (braveSnippets.length === 0 && braveEnrichRes.rows[0]?.raw_payload) {
+    const payload = typeof braveEnrichRes.rows[0].raw_payload === 'string'
+      ? JSON.parse(braveEnrichRes.rows[0].raw_payload) : braveEnrichRes.rows[0].raw_payload
+    const allResults = [...(payload.results1 || []), ...(payload.results2 || []), ...(payload.results3 || [])]
+    const seen = new Set()
+    for (const r of allResults) {
+      if (!r.url || seen.has(r.url)) continue
+      seen.add(r.url)
+      braveSnippets.push({ title: r.title || '', description: r.description || '', url: r.url })
+    }
+  }
+
+  // Build rich prompt
+  let promptParts = [`Build a professional profile summary for: ${person.display_name}`]
+  if (person.linkedin_url) promptParts.push(`LinkedIn: ${person.linkedin_url}`)
+  if (person.current_title && person.current_company) promptParts.push(`Current role: ${person.current_title} at ${person.current_company}`)
+  else if (person.current_company) promptParts.push(`Current company: ${person.current_company}`)
+  else if (person.current_title) promptParts.push(`Current title: ${person.current_title}`)
+
+  if (person.location) promptParts.push(`Location: ${person.location}`)
+  if (person.industry) promptParts.push(`Industry: ${person.industry}`)
+  if (person.headline) promptParts.push(`Headline: ${person.headline}`)
+
+  // Apollo org data
+  if (apolloEnrichRes.rows[0]?.raw_payload) {
+    const apolloData = typeof apolloEnrichRes.rows[0].raw_payload === 'string'
+      ? JSON.parse(apolloEnrichRes.rows[0].raw_payload) : apolloEnrichRes.rows[0].raw_payload
+    const org = apolloData.person?.organization || apolloData.organization
+    if (org) {
+      const orgParts = []
+      if (org.estimated_num_employees) orgParts.push(`~${org.estimated_num_employees} employees`)
+      if (org.total_funding_printed) orgParts.push(`$${org.total_funding_printed} funding`)
+      if (org.latest_funding_stage) orgParts.push(`stage: ${org.latest_funding_stage}`)
+      if (org.founded_year) orgParts.push(`founded ${org.founded_year}`)
+      if (orgParts.length > 0) promptParts.push(`Current company details: ${org.name || person.current_company} — ${orgParts.join(', ')}`)
+      if (org.short_description) promptParts.push(`Company description: ${org.short_description.slice(0, 300)}`)
+    }
+  }
+
+  // Employment history from DB
+  if (dbHistoryRes.rows.length > 0) {
+    const historyStr = dbHistoryRes.rows
+      .map(j => {
+        const loc = j.location ? ` (${j.location})` : ''
+        const desc = j.description ? ` — ${j.description}` : ''
+        return `- ${j.title || 'Unknown role'} at ${j.organization || 'Unknown'} (${j.start_date || '?'} – ${j.is_current ? 'Present' : j.end_date || '?'})${loc}${desc}`
+      })
+      .join('\n')
+    promptParts.push(`\nCareer history (${dbHistoryRes.rows.length} roles):\n${historyStr}`)
+  }
+
+  // Vouch context
+  if (vouchRes.rows.length > 0) {
+    const vouchStr = vouchRes.rows
+      .map(v => `- Vouched for in ${v.function_name} by ${v.voucher_name}${v.voucher_company ? ` (${v.voucher_company})` : ''}`)
+      .join('\n')
+    promptParts.push(`\nVouch context:\n${vouchStr}`)
+  }
+
+  // Discovered content
+  if (contentRes.rows.length > 0) {
+    const contentStr = contentRes.rows.slice(0, 10)
+      .map(c => {
+        const topics = c.topics?.length > 0 ? ` [topics: ${c.topics.join(', ')}]` : ''
+        const summary = c.content_summary ? ` — ${c.content_summary}` : ''
+        return `- [${c.content_type}] ${c.title}${summary}${topics}`
+      })
+      .join('\n')
+    promptParts.push(`\nDiscovered content (${contentRes.rows.length} items):\n${contentStr}`)
+  }
+
+  // Pre-extracted expertise chunks — richest career analysis
+  if (expertiseRes.rows.length > 0) {
+    const expertiseStr = expertiseRes.rows
+      .map(e => {
+        const tags = e.tags?.length > 0 ? ` [${e.tags.join(', ')}]` : ''
+        return `- [${e.chunk_type}] ${e.chunk_text}${tags}`
+      })
+      .join('\n')
+    promptParts.push(`\nExpertise analysis (${expertiseRes.rows.length} signals — use these to highlight what makes this person distinctive):\n${expertiseStr}`)
+  }
+
+  // Brave web snippets
+  if (braveSnippets.length > 0) {
+    const snippetStr = braveSnippets
+      .slice(0, 12)
+      .map(s => `- ${s.title}: ${s.description}`)
+      .join('\n')
+    promptParts.push(`\nRecent web mentions:\n${snippetStr}`)
+  }
+
+  const userPrompt = promptParts.join('\n')
+
+  // Retry loop for rate limits
+  const MAX_RETRIES = 3
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30000)
+
+    try {
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        signal: controller.signal,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          system: `Write a professional summary paragraph about this person.
+
+Include if available:
+- Current role and company (with company context like size/stage when notable)
+- Career trajectory and notable past roles — emphasize distinctive transitions and scaling moments
+- Public content they've created (blog posts, podcast appearances, talks, open-source contributions)
+- Areas of expertise and what they're known for (use vouch context as a signal)
+- Recent professional activity or news
+
+IMPORTANT RULES:
+- Output ONLY the summary paragraph. No preamble, reasoning, labels, or commentary.
+- Never start with "Based on the search results" or similar meta-commentary.
+- Never start with the person's name (e.g., "John Smith is..."). Start with the role or a distinctive career fact.
+- The structured data (career history, title, company) is authoritative. Web mentions may reference other people with the same name — only include web mentions that clearly match the person's known role, company, or industry.
+- Do not include LinkedIn connection counts or other social media metrics.
+- If data is limited, write a shorter summary (2-3 sentences) with what you have. Do not pad with hedging language like "it is difficult to determine" or "without more information."
+- 3-6 sentences. Be factual and direct.`,
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+      })
+
+      const data = await claudeRes.json()
+
+      if (data.type === 'error' && data.error?.type === 'rate_limit_error') {
+        const backoff = attempt * 15000
+        console.warn(`[Summary] Rate limited (attempt ${attempt}/${MAX_RETRIES}) | ${person.display_name} | retrying in ${backoff/1000}s`)
+        clearTimeout(timeout)
+        if (attempt < MAX_RETRIES) { await sleep(backoff); continue }
+        await query(`
+          INSERT INTO person_enrichment (person_id, source, raw_payload, enriched_at)
+          VALUES ($1, 'claude', $2, NOW())
+          ON CONFLICT (person_id, source) DO UPDATE SET raw_payload = EXCLUDED.raw_payload, enriched_at = NOW()
+        `, [personId, JSON.stringify(data)])
+        return 'rate_limited'
+      }
+
+      const aiSummary = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+
+      await query(`
+        INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+        VALUES ($1, 'claude', $2, $3, NOW())
+        ON CONFLICT (person_id, source) DO UPDATE
+        SET raw_payload = EXCLUDED.raw_payload, ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+      `, [personId, JSON.stringify(data), aiSummary || null])
+
+      console.log(`[Summary] ${person.display_name} | ${(aiSummary || '').length} chars | ${Date.now() - start}ms`)
+
+      // Generate compact summary for Network Brain context
+      if (aiSummary) {
+        try {
+          const compactRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': ANTHROPIC_API_KEY,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 128,
+              system: 'Compress this professional summary into 1-2 sentences (max 40 words). Include: current role + company, 1-2 key career highlights. Drop: education, LinkedIn metrics, generic descriptors. Output ONLY the compressed summary, nothing else.',
+              messages: [{ role: 'user', content: aiSummary }],
+            }),
+          })
+          const compactData = await compactRes.json()
+          const compactSummary = (compactData.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+          if (compactSummary) {
+            await query(`
+              INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
+              VALUES ($1, 'claude-compact', '{}', $2, NOW())
+              ON CONFLICT (person_id, source) DO UPDATE SET ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
+            `, [personId, compactSummary])
+            console.log(`[Summary] Compact ${person.display_name} | ${compactSummary.length} chars`)
+          }
+        } catch (compactErr) {
+          console.warn(`[Summary] Compact failed | ${person.display_name}:`, compactErr.message)
+        }
+      }
+
+      return aiSummary ? 'ok' : 'empty'
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+  return 'failed'
+}
+
+
 // ── Main enrichment pipeline ───────────────────────────────────────────
 export async function enrichPerson(personId) {
   const overallStart = Date.now()
@@ -518,147 +757,8 @@ export async function enrichPerson(personId) {
 
   // ── Step C: Claude synthesis ────────────────────────────────────────
   try {
-    const start = Date.now()
-
-    // Build rich prompt from Apollo + Brave data (no web search needed — we have the data)
-    let promptParts = [`Build a professional profile summary for: ${context.name}`]
-    if (context.linkedinUrl) promptParts.push(`LinkedIn: ${context.linkedinUrl}`)
-    if (context.title && context.company) promptParts.push(`Current role: ${context.title} at ${context.company}`)
-    else if (context.company) promptParts.push(`Current company: ${context.company}`)
-    else if (context.title) promptParts.push(`Current title: ${context.title}`)
-
-    // Add full employment history from Apollo (already saved to DB)
-    if (context.employmentHistory && context.employmentHistory.length > 0) {
-      const historyStr = context.employmentHistory
-        .map(j => `- ${j.title || 'Unknown role'} at ${j.organization_name || 'Unknown'} (${j.start_date || '?'} – ${j.current ? 'Present' : j.end_date || '?'})`)
-        .join('\n')
-      promptParts.push(`\nCareer history:\n${historyStr}`)
-    }
-
-    // Add Brave snippets as additional context
-    if (context.braveSnippets.length > 0) {
-      const snippetStr = context.braveSnippets
-        .slice(0, 12)
-        .map(s => `- ${s.title}: ${s.description}`)
-        .join('\n')
-      promptParts.push(`\nRecent web mentions:\n${snippetStr}`)
-    }
-
-    const userPrompt = promptParts.join('\n')
-
-    // Retry loop for rate limits (up to 3 attempts with exponential backoff)
-    const MAX_RETRIES = 3
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 30000)
-
-      try {
-        const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-          signal: controller.signal,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 1024,
-            system: `Write a professional summary paragraph about this person.
-
-Include if available:
-- Current role and company
-- Career trajectory and notable past roles
-- Public content they've created (blog posts, podcast appearances, talks, open-source contributions)
-- Areas of expertise and what they're known for
-- Recent professional activity or news
-
-IMPORTANT RULES:
-- Output ONLY the summary paragraph. No preamble, reasoning, labels, or commentary.
-- Never start with "Based on the search results" or similar meta-commentary.
-- The structured data (career history, title, company) is authoritative. Web mentions may reference other people with the same name — only include web mentions that clearly match the person's known role, company, or industry.
-- Do not include LinkedIn connection counts or other social media metrics.
-- If data is limited, write a shorter summary (2-3 sentences) with what you have. Do not pad with hedging language like "it is difficult to determine" or "without more information."
-- 3-6 sentences. Be factual and direct.`,
-            messages: [{ role: 'user', content: userPrompt }],
-          }),
-        })
-
-        const data = await claudeRes.json()
-
-        // Rate limit? Back off and retry
-        if (data.type === 'error' && data.error?.type === 'rate_limit_error') {
-          const backoff = attempt * 15000 // 15s, 30s, 45s
-          console.warn(`[Enrich] Claude rate limited (attempt ${attempt}/${MAX_RETRIES}) | ${person.display_name} | retrying in ${backoff/1000}s`)
-          clearTimeout(timeout)
-          if (attempt < MAX_RETRIES) {
-            await sleep(backoff)
-            continue
-          }
-          // Final attempt failed — save error and move on
-          await query(`
-            INSERT INTO person_enrichment (person_id, source, raw_payload, enriched_at)
-            VALUES ($1, 'claude', $2, NOW())
-            ON CONFLICT (person_id, source) DO UPDATE
-            SET raw_payload = EXCLUDED.raw_payload, enriched_at = NOW()
-          `, [personId, JSON.stringify(data)])
-          steps.claude = 'rate_limited'
-          break
-        }
-
-        const aiSummary = (data.content || [])
-          .filter(b => b.type === 'text')
-          .map(b => b.text)
-          .join('')
-
-        await query(`
-          INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
-          VALUES ($1, 'claude', $2, $3, NOW())
-          ON CONFLICT (person_id, source) DO UPDATE
-          SET raw_payload = EXCLUDED.raw_payload, ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
-        `, [personId, JSON.stringify(data), aiSummary || null])
-
-        steps.claude = aiSummary ? 'ok' : 'empty'
-        console.log(`[Enrich] Claude ${Date.now() - start}ms | ${person.display_name} | ${(aiSummary || '').length} chars`)
-
-        // Generate compact summary for Network Brain context
-        if (aiSummary) {
-          try {
-            const compactRes = await fetch('https://api.anthropic.com/v1/messages', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': ANTHROPIC_API_KEY,
-                'anthropic-version': '2023-06-01',
-              },
-              body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514',
-                max_tokens: 128,
-                system: 'Compress this professional summary into 1-2 sentences (max 40 words). Include: current role + company, 1-2 key career highlights. Drop: education, LinkedIn metrics, generic descriptors. Output ONLY the compressed summary, nothing else.',
-                messages: [{ role: 'user', content: aiSummary }],
-              }),
-            })
-            const compactData = await compactRes.json()
-            const compactSummary = (compactData.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
-            if (compactSummary) {
-              await query(`
-                INSERT INTO person_enrichment (person_id, source, raw_payload, ai_summary, enriched_at)
-                VALUES ($1, 'claude-compact', '{}', $2, NOW())
-                ON CONFLICT (person_id, source) DO UPDATE
-                SET ai_summary = EXCLUDED.ai_summary, enriched_at = NOW()
-              `, [personId, compactSummary])
-              console.log(`[Enrich] Compact ${person.display_name} | ${compactSummary.length} chars`)
-            }
-          } catch (compactErr) {
-            console.warn(`[Enrich] Compact summary failed | ${person.display_name}:`, compactErr.message)
-          }
-        }
-
-        break // Success — exit retry loop
-      } finally {
-        clearTimeout(timeout)
-      }
-    }
+    const result = await generateSummary(personId, { braveSnippets: context.braveSnippets })
+    steps.claude = result
   } catch (err) {
     if (err.name === 'AbortError') {
       console.warn(`[Enrich] Claude timed out after 45s | ${person.display_name}`)

@@ -125,7 +125,7 @@ export default function InvitePage() {
       </div>
 
       {/* Body */}
-      <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 40px", margin: "56px 0 0", minHeight: "calc(100vh - 56px)" }}>
+      <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)", padding: "0 16px 40px", margin: "56px 0 0", minHeight: "calc(100vh - 56px)" }}>
         <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 24, minHeight: "calc(100vh - 96px)", display: "flex", flexDirection: "column" }}>
 
           {state === "loading" && (

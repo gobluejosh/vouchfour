@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { capture, identify } from "../lib/posthog.js";
 import { gradientForName, initialsForName } from "../lib/avatar.js";
+import SharedHeader from "./SharedHeader.jsx";
 
 // ─── Email Finder via backend ────────────────────────────────────────────────
 // ─── LinkedIn Search via backend proxy → Claude API + web search ─────────────
@@ -766,12 +767,8 @@ export default function App() {
   if (tokenLoading) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
-        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
-          <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
-            Vouch<span style={{ color: C.accent }}>Four</span>
-          </a>
-        </div>
-        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <SharedHeader />
+        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0", minHeight: "calc(100vh - 52px)" }}>
           <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
             <div style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
@@ -802,12 +799,8 @@ export default function App() {
   if (token && tokenError) {
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
-        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
-          <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
-            Vouch<span style={{ color: C.accent }}>Four</span>
-          </a>
-        </div>
-        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <SharedHeader />
+        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0", minHeight: "calc(100vh - 52px)" }}>
           <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center", paddingTop: 40 }}>
             <div style={{ fontSize: 17, fontWeight: 600, color: C.ink }}>Invalid Invite</div>
             <div style={{ marginTop: 8, fontSize: 14, color: C.sub }}>{tokenError}</div>
@@ -840,12 +833,8 @@ export default function App() {
 
     return (
       <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
-        <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
-          <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
-            Vouch<span style={{ color: C.accent }}>Four</span>
-          </a>
-        </div>
-        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+        <SharedHeader />
+        <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0", minHeight: "calc(100vh - 52px)" }}>
 
           <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
             <div style={{ fontSize: 24, fontWeight: 700, color: C.ink, marginBottom: 12, lineHeight: 1.3 }}>
@@ -996,14 +985,14 @@ export default function App() {
               const slugMatch = li && li.match(/\/in\/([^/]+)/);
               const talentSlug = slugMatch ? slugMatch[1] : null;
               return talentSlug ? (
-                <a href={`/talent/${talentSlug}`} style={{
+                <a href="/brain" style={{
                   display: "block", textAlign: "center", padding: "12px 28px",
                   background: "rgba(255,255,255,0.5)", color: C.accent,
                   border: `1.5px solid ${C.accent}`, borderRadius: 10,
                   fontSize: 14, fontWeight: 600, textDecoration: "none",
                   fontFamily: FONT,
                 }}>
-                  View Your Network
+                  Go to the Brain
                 </a>
               ) : null;
             })()}
@@ -1017,15 +1006,10 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: "#000000", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", overflowX: "hidden" }}>
 
-      {/* Fixed logo bar */}
-      <div style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100, width: "100%", background: "#FFFFFF", padding: "12px 20px" }}>
-        <a href="/" style={{ fontSize: 28, fontWeight: 700, color: C.ink, letterSpacing: -0.5, textDecoration: "none" }}>
-          Vouch<span style={{ color: C.accent }}>Four</span>
-        </a>
-      </div>
+      <SharedHeader />
 
       {/* Phone-width container */}
-      <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #F0DDD6 30%, #DDD0F0 65%, #DDD0F0 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0" }}>
+      <div style={{ width: "100%", background: "linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 15%, #FAF9F6 100%)", padding: "0 16px 120px", borderRadius: 0, margin: "52px 0 0", minHeight: "calc(100vh - 52px)" }}>
 
        <div style={{ maxWidth: 480, margin: "0 auto", paddingTop: 16 }}>
         <div style={{ marginBottom: 20 }}>
