@@ -2115,36 +2115,31 @@ export default function NetworkBrainPage() {
     prevLoadingRef.current = loading;
   }, [messages, loading]);
 
-  // ── Mobile keyboard handler: keep content visible when keyboard opens ──
+  // ── Mobile keyboard handler: lift input bar above keyboard ──
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
+
   useEffect(() => {
     if (!isMobile || !window.visualViewport) return;
 
-    let prevHeight = window.visualViewport.height;
-
     function handleViewportResize() {
-      const currentHeight = window.visualViewport.height;
-      const heightDiff = prevHeight - currentHeight;
+      // Calculate how much the keyboard is covering
+      const offset = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+      setKeyboardOffset(Math.max(0, offset));
 
-      // Keyboard opened (viewport shrank by > 100px)
-      if (heightDiff > 100) {
-        // Scroll last message into visible area above keyboard
+      // Scroll last message into view when keyboard opens
+      if (offset > 100) {
         setTimeout(() => {
-          const lastMsg = lastBrainRef.current || bottomRef.current;
-          if (lastMsg) {
-            const rect = lastMsg.getBoundingClientRect();
-            const visibleBottom = window.visualViewport.height - 80; // 80px for input bar
-            if (rect.top > visibleBottom || rect.bottom > visibleBottom) {
-              window.scrollBy({ top: rect.top - visibleBottom + 60, behavior: "smooth" });
-            }
-          }
+          bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
         }, 50);
       }
-
-      prevHeight = currentHeight;
     }
 
     window.visualViewport.addEventListener("resize", handleViewportResize);
-    return () => window.visualViewport.removeEventListener("resize", handleViewportResize);
+    window.visualViewport.addEventListener("scroll", handleViewportResize);
+    return () => {
+      window.visualViewport.removeEventListener("resize", handleViewportResize);
+      window.visualViewport.removeEventListener("scroll", handleViewportResize);
+    };
   }, [isMobile]);
 
   async function askQuestion(question) {
@@ -4002,10 +3997,11 @@ export default function NetworkBrainPage() {
 
               {/* Fixed input bar */}
               <div style={{
-                position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
+                position: "fixed", bottom: isMobile ? keyboardOffset : 0, left: "50%", transform: "translateX(-50%)",
                 width: "100%",
                 background: "linear-gradient(0deg, #FAF9F6 0%, #FAF9F6 80%, transparent 100%)",
-                padding: "24px 16px 24px",
+                padding: isMobile ? "12px 16px 12px" : "24px 16px 24px",
+                transition: keyboardOffset > 0 ? "none" : "bottom 0.2s",
               }}>
                 <div style={{
                   maxWidth: isMobile ? 480 : 700, margin: "0 auto", position: "relative",
