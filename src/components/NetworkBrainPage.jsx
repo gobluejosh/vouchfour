@@ -2124,17 +2124,17 @@ export default function NetworkBrainPage() {
     function handleFocusIn(e) {
       if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") {
         setMobileKeyboardOpen(true);
-        // Scroll content into view after keyboard animation
+        // Scroll content into view after keyboard finishes animating
+        // (500ms delay to fire AFTER iOS auto-scroll-to-input completes)
         setTimeout(() => {
-          // Few messages? Keep first one visible. Many? Show the latest.
-          const msgCount = (messages?.length || 0) + (bioMessages?.length || 0);
-          if (msgCount <= 2) {
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          } else {
-            const target = lastBrainRef.current || bottomRef.current;
-            target?.scrollIntoView({ behavior: "smooth", block: "end" });
+          const target = lastBrainRef.current || bottomRef.current;
+          if (target) {
+            const msgCount = (messages?.length || 0) + (bioMessages?.length || 0);
+            // Few messages: put message at top of visible area
+            // Many messages: put latest at bottom of visible area
+            target.scrollIntoView({ behavior: "smooth", block: msgCount <= 2 ? "start" : "end" });
           }
-        }, 300);
+        }, 500);
       }
     }
 
