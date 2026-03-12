@@ -4012,7 +4012,7 @@ export default function NetworkBrainPage() {
                               const hasExisting = existingFirstNames.length > 0;
                               const link = msg.shareUrl;
                               const fnShort = vouchFunctionInfo?.name || "professionals";
-                              const voucherFirstName = user?.display_name?.split(" ")[0] || "";
+                              const voucherFirstName = user?.name?.split(" ")[0] || "";
                               const emailSubject = "Sharing an invite";
                               const emailBody = `Hi,\n\nI'm building out my professional network on a new site - VouchFour. It's invite-only and the premise is that you only get to invite your 4 all-time best colleagues in each job function. I recommended you as one of the top 4 ${fnShort} I've ever worked with. The link below will get you access to the site:\n\n${link}\n\nLet me know what you think,\n${voucherFirstName}`;
                               const smsMsg = `I'm sharing an invite link for VouchFour. It's a new professional network site where you only get to invite your all-time best colleagues. I recommended you.\n\n${link}`;
@@ -4057,12 +4057,14 @@ export default function NetworkBrainPage() {
                                            onClick={() => capture("brain_vouch_share_email")}>
                                           Email
                                         </a>
-                                        <a href={`https://mail.google.com/mail/?view=cm&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
-                                           target="_blank" rel="noopener noreferrer"
-                                           style={{ ...shareBtnBase, background: "linear-gradient(135deg, #E11D48, #F97316)" }}
-                                           onClick={() => capture("brain_vouch_share_gmail")}>
-                                          Gmail
-                                        </a>
+                                        {!isMobile && (
+                                          <a href={`https://mail.google.com/mail/?view=cm&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
+                                             target="_blank" rel="noopener noreferrer"
+                                             style={{ ...shareBtnBase, background: "linear-gradient(135deg, #E11D48, #F97316)" }}
+                                             onClick={() => capture("brain_vouch_share_gmail")}>
+                                            Gmail
+                                          </a>
+                                        )}
                                         <a href={`sms:?&body=${encodeURIComponent(smsMsg)}`}
                                            style={{ ...shareBtnBase, background: "linear-gradient(135deg, #10B981, #06B6D4)" }}
                                            onClick={() => capture("brain_vouch_share_sms")}>
