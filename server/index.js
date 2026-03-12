@@ -6398,7 +6398,7 @@ What ${senderFirst} wants to ask:
           // ── Create 2-person thread for this ask ──────────────────────
           const askSubject = draft.draft_subject || draft.question || 'Quick Ask'
           const threadRes = await query(
-            `INSERT INTO threads (creator_id, topic, initial_question, status) VALUES ($1, $2, $3, 'active') RETURNING id`,
+            `INSERT INTO threads (creator_id, topic, initial_question, status, last_message_at) VALUES ($1, $2, $3, 'active', NOW()) RETURNING id`,
             [session.id, askSubject, draft.question]
           )
           const threadId = threadRes.rows[0].id
@@ -6621,7 +6621,7 @@ What ${senderFirst} wants to ask:
 
       // Create thread + participants
       const threadRes = await query(
-        `INSERT INTO threads (creator_id, topic, initial_question) VALUES ($1, $2, $3) RETURNING id`,
+        `INSERT INTO threads (creator_id, topic, initial_question, last_message_at) VALUES ($1, $2, $3, NOW()) RETURNING id`,
         [session.id, topic.trim(), question]
       )
       const threadId = threadRes.rows[0].id
@@ -7201,6 +7201,9 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         [viewer.thread_id, viewer.person_id, replyBody.trim()]
       )
       const newMsg = msgRes.rows[0]
+
+      // Update thread's last_message_at
+      await query('UPDATE threads SET last_message_at = NOW() WHERE id = $1', [viewer.thread_id])
 
       // Set has_participated if first reply, and update last_read_at
       if (!viewer.has_participated) {

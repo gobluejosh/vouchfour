@@ -3795,7 +3795,7 @@ export default function NetworkBrainPage() {
         )}
         <button
           onClick={() => setNotifPanelOpen(true)}
-          style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 4 }}
+          style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 4, overflow: "visible" }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
@@ -3803,11 +3803,12 @@ export default function NetworkBrainPage() {
           </svg>
           {notifCounts.total > 0 && (
             <span style={{
-              position: "absolute", top: 0, right: 0,
-              background: C.accent, color: "#fff", fontSize: 10, fontWeight: 700,
-              width: 16, height: 16, borderRadius: "50%",
+              position: "absolute", top: -2, right: -2,
+              background: "#E11D48", color: "#fff", fontSize: 9, fontWeight: 700,
+              minWidth: 16, height: 16, borderRadius: "50%",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontFamily: FONT,
+              fontFamily: FONT, border: "2px solid #fff",
+              pointerEvents: "none",
             }}>
               {notifCounts.total > 9 ? "9+" : notifCounts.total}
             </span>
