@@ -1752,12 +1752,33 @@ export default function NetworkBrainPage() {
   const [bioLoading, setBioLoading] = useState(false);
   const [bioStatus, setBioStatus] = useState("none"); // none | active | paused | completed
 
+  // Vouch mode state (brain-integrated vouching) — reuses vouchLoading from above
+  const [vouchMode, setVouchMode] = useState(false);
+  const [vouchMessages, setVouchMessages] = useState([]);       // [{ role: 'user'|'brain', text, candidates?, confirmed?, summary? }]
+  const [vouchFunctionInfo, setVouchFunctionInfo] = useState(null); // { id, name, slug }
+  const [vouchExisting, setVouchExisting] = useState([]);        // prior vouches loaded on init
+  const [vouchSessionAdds, setVouchSessionAdds] = useState([]);  // vouches added this session
+  const [vouchFromBio, setVouchFromBio] = useState(false);       // return to bio on exit?
+  const [vouchShareToken, setVouchShareToken] = useState(null);
+  const [vouchPrefilledName, setVouchPrefilledName] = useState(null); // from bio suggestion
+  const [vouchFromBioPending, setVouchFromBioPending] = useState(null); // { name } — waiting for function picker selection from bio
+  const [vouchPendingUrl, setVouchPendingUrl] = useState(null);   // LinkedIn URL awaiting name confirmation
+  const [vouchMsgCopied, setVouchMsgCopied] = useState(false);
+  const [vouchLinkCopied, setVouchLinkCopied] = useState(false);
+
   // Scroll to bottom when bio messages change or bio mode is entered
   useEffect(() => {
     if (bioMode && bioMessages.length > 0) {
       setTimeout(() => scrollToLatest(), 50);
     }
   }, [bioMode, bioMessages]);
+
+  // Scroll to bottom when vouch messages change or vouch mode is entered
+  useEffect(() => {
+    if (vouchMode && vouchMessages.length > 0) {
+      setTimeout(() => scrollToLatest(), 50);
+    }
+  }, [vouchMode, vouchMessages]);
 
   // Fetch job functions when /vouch is activated
   useEffect(() => {
@@ -2358,6 +2379,12 @@ export default function NetworkBrainPage() {
 
   function handleSubmit(e) {
     e.preventDefault();
+    // If in vouch mode, route to vouch handler
+    if (vouchMode) {
+      handleVouchInput(input);
+      setInput("");
+      return;
+    }
     // If in bio mode, route to bio handler
     if (bioMode) {
       handleBioSubmit(input);
@@ -2456,26 +2483,42 @@ export default function NetworkBrainPage() {
     }
   }
 
+  // Normalize API results to use consistent field names (id, name) for the picker
+  function normalizeSearchResults(results) {
+    return (results || []).map(p => ({
+      ...p,
+      id: p.id || p.person_id,
+      name: p.name || p.display_name,
+    }));
+  }
+
   function fetchSlashResults(q, mode) {
     if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
     const isCompare = mode === "compare" || slashMode === "compare";
     if (!q) {
+      const recentPeople = latestBrainMsg?.people || [];
       if (isCompare) {
-        // Compare mode with no query: fetch full network alphabetically
-        setSlashSearchLoading(true);
-        (async () => {
-          try {
-            const res = await fetch("/api/network-search?mode=compare", { credentials: "include" });
-            if (res.ok) {
-              const data = await res.json();
-              setSlashResults(data.results || []);
-            }
-          } catch {}
+        if (recentPeople.length > 0) {
+          // Show recently mentioned people first when available
+          setSlashResults(recentPeople.slice(0, 10));
           setSlashSearchLoading(false);
-        })();
+        } else {
+          // No recent context — fetch full network alphabetically as fallback
+          setSlashSearchLoading(true);
+          (async () => {
+            try {
+              const res = await fetch("/api/network-search?mode=compare", { credentials: "include" });
+              if (res.ok) {
+                const data = await res.json();
+                setSlashResults(normalizeSearchResults(data.results));
+              }
+            } catch {}
+            setSlashSearchLoading(false);
+          })();
+        }
       } else {
         // Show recently mentioned people when no query
-        setSlashResults(latestBrainMsg?.people?.slice(0, 6) || []);
+        setSlashResults(recentPeople.slice(0, 10) || []);
         setSlashSearchLoading(false);
       }
       return;
@@ -2487,7 +2530,7 @@ export default function NetworkBrainPage() {
         const res = await fetch(`/api/network-search?q=${encodeURIComponent(q)}${modeParam}`, { credentials: "include" });
         if (res.ok) {
           const data = await res.json();
-          setSlashResults(data.results || []);
+          setSlashResults(normalizeSearchResults(data.results));
         }
       } catch {}
       setSlashSearchLoading(false);
@@ -3101,21 +3144,333 @@ export default function NetworkBrainPage() {
     } catch {}
   }
 
-  async function handleStartVouch(functionId) {
+  // ─── Vouch mode handlers (brain-integrated vouching) ─────────────
+  async function handleEnterVouchMode(functionId, opts = {}) {
     setVouchLoading(true);
+    setSlashMode(null);
+    setSlashQuery("");
+    setSlashResults([]);
+    setInput("");
+
     try {
-      const res = await fetch("/api/start-vouch", {
+      const res = await fetch("/api/brain-vouch/init", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobFunctionId: functionId }),
       });
-      const data = await res.json();
-      if (data.token) {
-        window.location.href = `/vouch?token=${data.token}&ready=1`;
+      if (!res.ok) {
+        setVouchLoading(false);
+        setMessages(prev => [...prev, { role: "brain", text: "Sorry, something went wrong starting the vouch flow. Please try again." }]);
+        return;
       }
-    } catch {}
+      const data = await res.json();
+
+      setVouchFunctionInfo({ id: data.functionId, name: data.functionName, slug: data.functionSlug });
+      setVouchExisting(data.existingVouches || []);
+      setVouchShareToken(data.shareToken);
+      setVouchSessionAdds([]);
+
+      if (opts.fromBio) {
+        setBioMode(false);
+        setVouchFromBio(true);
+      }
+
+      // Build initial messages
+      const slotsLeft = data.slotsTotal - data.slotsUsed;
+      const initMsgs = [];
+
+      if (data.existingVouches.length > 0) {
+        const names = data.existingVouches.map(v => v.name).join(", ");
+        initMsgs.push({
+          role: "brain",
+          text: slotsLeft > 0
+            ? `You're vouching in ${data.functionName} — picking the top 4 people you've ever worked with in this function to build out your network. You've already vouched for ${names}. Who else belongs on that list?`
+            : `You've already filled all 4 ${data.functionName} spots (${names}). Nice work!`,
+        });
+      } else {
+        initMsgs.push({
+          role: "brain",
+          text: `You're vouching in ${data.functionName} — picking the top 4 people you've ever worked with in this function to build out your network. Who's your first pick?`,
+        });
+      }
+
+      setVouchMessages(initMsgs);
+      setVouchMode(true);
+      setVouchLoading(false);
+
+      // If a prefilled name was provided (from bio suggestion), auto-search it
+      if (opts.prefilledName && slotsLeft > 0) {
+        setVouchPrefilledName(null);
+        setTimeout(() => handleVouchInput(opts.prefilledName), 200);
+      }
+    } catch (err) {
+      console.error("Vouch mode init error:", err);
+      setVouchLoading(false);
+      setMessages(prev => [...prev, { role: "brain", text: "Sorry, something went wrong starting the vouch flow. Please try again." }]);
+    }
+  }
+
+  async function handleVouchInput(text) {
+    const trimmed = (typeof text === "string" ? text : "").trim();
+    if (!trimmed || vouchLoading) return;
+
+    // Check for exit phrases
+    if (/^(done|that'?s it|finished|exit|i'?m done|no more|nope)$/i.test(trimmed)) {
+      handleVouchComplete();
+      return;
+    }
+
+    setVouchMessages(prev => [...prev, { role: "user", text: trimmed }]);
+
+    // If we're waiting for a name after a URL was pasted, this input IS the name
+    if (vouchPendingUrl) {
+      setVouchLoading(true);
+      const url = vouchPendingUrl;
+      setVouchPendingUrl(null);
+
+      try {
+        const res = await fetch("/api/brain-vouch/add", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobFunctionId: vouchFunctionInfo.id,
+            name: trimmed,
+            linkedinUrl: url,
+          }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          setVouchMessages(prev => [...prev, {
+            role: "brain",
+            text: data.error || "Something went wrong adding the vouch. Please try again.",
+          }]);
+          setVouchLoading(false);
+          return;
+        }
+
+        setVouchSessionAdds(prev => [...prev, data.person]);
+        setVouchShareToken(data.shareToken);
+        setVouchCounts(prev => ({ ...prev, [vouchFunctionInfo.slug]: data.slotsUsed }));
+
+        if (data.slotsUsed >= 4) {
+          const allAdds = [...vouchSessionAdds, data.person];
+          setVouchMessages(prev => [...prev, {
+            role: "brain",
+            text: `${data.person.name} has been vouched for! You've filled all 4 ${vouchFunctionInfo.name} spots.`,
+            confirmed: { name: data.person.name },
+          }]);
+          setTimeout(() => handleVouchComplete({ allAdds, slotsUsed: data.slotsUsed }), 300);
+        } else {
+          setVouchMessages(prev => [...prev, {
+            role: "brain",
+            text: `${data.person.name} has been vouched for in ${vouchFunctionInfo.name}. (${data.slotsUsed} of 4 spots filled)\n\nWho else would you like to vouch for? Or say "done" if you're finished.`,
+            confirmed: { name: data.person.name },
+          }]);
+        }
+      } catch (err) {
+        console.error("Vouch URL error:", err);
+        setVouchMessages(prev => [...prev, {
+          role: "brain",
+          text: "Something went wrong. Please try again.",
+        }]);
+      }
+      setVouchLoading(false);
+      return;
+    }
+
+    // Check if input is a LinkedIn URL — stash it and ask for the name
+    if (/linkedin\.com\/in\//i.test(trimmed)) {
+      setVouchPendingUrl(trimmed);
+      setVouchMessages(prev => [...prev, {
+        role: "brain",
+        text: "Got it — I'll use that LinkedIn profile. What name should I use for them?",
+      }]);
+      return;
+    }
+
+    setVouchLoading(true);
+
+    try {
+      const res = await fetch("/api/lookup-linkedin", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      const data = await res.json();
+
+      if (data.profiles && data.profiles.length > 0) {
+        setVouchMessages(prev => [...prev, {
+          role: "brain",
+          text: `I found ${data.profiles.length} LinkedIn profile${data.profiles.length > 1 ? "s" : ""}. Which one is right?`,
+          candidates: data.profiles,
+        }]);
+      } else {
+        setVouchMessages(prev => [...prev, {
+          role: "brain",
+          text: "I couldn't find a LinkedIn match. Try adding their company or title, or paste their LinkedIn profile URL.",
+        }]);
+      }
+    } catch (err) {
+      console.error("Vouch lookup error:", err);
+      setVouchMessages(prev => [...prev, {
+        role: "brain",
+        text: "Something went wrong with the search. Please try again.",
+      }]);
+    }
     setVouchLoading(false);
+  }
+
+  async function handleVouchConfirm(candidate) {
+    if (vouchLoading || !vouchFunctionInfo) return;
+    setVouchLoading(true);
+
+    // Replace candidates message with a "confirming" message
+    setVouchMessages(prev => {
+      // Remove the candidates from the last brain message so they can't be double-clicked
+      const updated = [...prev];
+      const lastBrainIdx = updated.findLastIndex(m => m.role === "brain" && m.candidates);
+      if (lastBrainIdx >= 0) {
+        updated[lastBrainIdx] = { ...updated[lastBrainIdx], candidates: null, text: `Adding ${candidate.label}...` };
+      }
+      return updated;
+    });
+
+    try {
+      const res = await fetch("/api/brain-vouch/add", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobFunctionId: vouchFunctionInfo.id,
+          name: candidate.label,
+          linkedinUrl: candidate.url,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setVouchMessages(prev => [...prev, {
+          role: "brain",
+          text: data.error || "Something went wrong adding the vouch. Please try again.",
+        }]);
+        setVouchLoading(false);
+        return;
+      }
+
+      setVouchSessionAdds(prev => [...prev, data.person]);
+      setVouchShareToken(data.shareToken);
+
+      // Update vouchCounts in the function picker state
+      setVouchCounts(prev => ({ ...prev, [vouchFunctionInfo.slug]: data.slotsUsed }));
+
+      if (data.slotsUsed >= 4) {
+        const allAdds = [...vouchSessionAdds, data.person];
+        setVouchMessages(prev => [...prev, {
+          role: "brain",
+          text: `${candidate.label} has been vouched for! You've filled all 4 ${vouchFunctionInfo.name} spots.`,
+          confirmed: { name: candidate.label },
+        }]);
+        setTimeout(() => handleVouchComplete({ allAdds, slotsUsed: data.slotsUsed }), 300);
+      } else {
+        setVouchMessages(prev => [...prev, {
+          role: "brain",
+          text: `${candidate.label} has been vouched for in ${vouchFunctionInfo.name}. (${data.slotsUsed} of 4 spots filled)\n\nWho else would you like to vouch for? Or say "done" if you're finished.`,
+          confirmed: { name: candidate.label },
+        }]);
+      }
+    } catch (err) {
+      console.error("Vouch confirm error:", err);
+      setVouchMessages(prev => [...prev, {
+        role: "brain",
+        text: "Something went wrong. Please try again.",
+      }]);
+    }
+    setVouchLoading(false);
+  }
+
+  function handleVouchNoneOfThese() {
+    setVouchMessages(prev => [...prev, {
+      role: "brain",
+      text: "No worries — try adding their company or title, or paste their LinkedIn profile URL.",
+    }]);
+  }
+
+  function handleVouchComplete(overrides = {}) {
+    // overrides allows passing fresh data when called from handleVouchConfirm
+    // (React state updates may not have flushed yet)
+    const allAdds = overrides.allAdds || vouchSessionAdds;
+    const addedNames = allAdds.map(p => p.name);
+    const newNames = allAdds.filter(p => p.isNewToSystem).map(p => p.name);
+    const existingNames = allAdds.filter(p => !p.isNewToSystem).map(p => p.name);
+    const totalInFunction = overrides.slotsUsed || (vouchCounts[vouchFunctionInfo?.slug] || 0);
+    const BASE_URL = window.location.origin;
+    const shareUrl = vouchShareToken ? `${BASE_URL}/invite/${vouchShareToken}` : null;
+
+    const summaryText = addedNames.length > 0
+      ? `You vouched for ${addedNames.join(", ")} in ${vouchFunctionInfo?.name || "this function"}. (${totalInFunction} of 4 spots filled)`
+      : `Vouch session complete. You have ${totalInFunction} vouch${totalInFunction !== 1 ? "es" : ""} in ${vouchFunctionInfo?.name || "this function"}.`;
+
+    setVouchMessages(prev => [...prev, {
+      role: "brain",
+      text: summaryText,
+      summary: true,
+      shareUrl,
+      addedNames,
+      newNames,
+      existingNames,
+    }]);
+
+    // If returning to bio, inject a compact summary into bio messages
+    if (vouchFromBio && addedNames.length > 0) {
+      setBioMessages(prev => [...prev, {
+        role: "bio",
+        text: `You vouched for ${addedNames.join(", ")} in ${vouchFunctionInfo?.name}. Nice!`,
+      }]);
+    }
+  }
+
+  function handleReturnFromVouch() {
+    setVouchMode(false);
+    if (vouchFromBio) {
+      setBioMode(true);
+      setVouchFromBio(false);
+    } else {
+      // Add a note to main conversation
+      const addedNames = vouchSessionAdds.map(p => p.name);
+      if (addedNames.length > 0) {
+        setMessages(prev => [...prev, {
+          role: "brain",
+          text: `You vouched for ${addedNames.join(", ")} in ${vouchFunctionInfo?.name}.`,
+          isWelcome: true,
+        }]);
+      }
+    }
+    // Reset vouch state
+    setVouchMessages([]);
+    setVouchFunctionInfo(null);
+    setVouchExisting([]);
+    setVouchSessionAdds([]);
+    setVouchShareToken(null);
+    setVouchPrefilledName(null);
+    setVouchPendingUrl(null);
+    setVouchFromBioPending(null);
+  }
+
+  function handleVouchExit() {
+    // Exit vouch mode without completing — vouches already submitted are saved
+    const addedCount = vouchSessionAdds.length;
+    if (addedCount > 0) {
+      const addedNames = vouchSessionAdds.map(p => p.name);
+      setVouchMessages(prev => [...prev, {
+        role: "brain",
+        text: `Vouch session ended. Your ${addedCount} vouch${addedCount > 1 ? "es" : ""} for ${addedNames.join(", ")} in ${vouchFunctionInfo?.name} ${addedCount > 1 ? "are" : "is"} saved.`,
+      }]);
+    }
+    handleReturnFromVouch();
   }
 
   async function resolveCompareNames(text) {
@@ -3509,8 +3864,282 @@ export default function NetworkBrainPage() {
               {/* Conversation area — single-column layout */}
               <div style={{ flex: 1, paddingTop: 16, paddingBottom: mobileKeyboardOpen ? 20 : 160, maxWidth: isMobile ? 480 : 700, margin: "0 auto", width: "100%" }}>
 
+                {/* Vouch mode */}
+                {vouchMode && (
+                  <>
+                    {/* Vouch header banner — sticky at top */}
+                    <div style={{
+                      position: "sticky", top: 52, zIndex: 50,
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "10px 16px", marginBottom: 16,
+                      background: "#FFF7ED", borderRadius: 12,
+                      border: "1px solid #FED7AA",
+                      boxShadow: "0 2px 8px rgba(234,88,12,0.08)",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 16 }}>🤝</span>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                          Vouching · {vouchFunctionInfo?.name || ""}
+                        </span>
+                        <span style={{ fontSize: 12, color: C.sub, fontFamily: FONT }}>
+                          {vouchCounts[vouchFunctionInfo?.slug] || 0}/4
+                        </span>
+                      </div>
+                      <button
+                        onClick={handleVouchExit}
+                        style={{
+                          padding: "5px 14px", fontSize: 12, fontWeight: 600,
+                          background: "#fff", color: C.sub, border: `1px solid ${C.border}`,
+                          borderRadius: 8, fontFamily: FONT, cursor: "pointer",
+                        }}
+                      >
+                        Exit
+                      </button>
+                    </div>
+
+                    {/* Existing vouches (shown at top) */}
+                    {vouchExisting.length > 0 && (
+                      <div style={{ marginBottom: 12, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {vouchExisting.map((v, i) => (
+                          <div key={i} style={{
+                            display: "inline-flex", alignItems: "center", gap: 6,
+                            padding: "5px 10px", background: C.successLight, border: `1px solid #BBF7D0`,
+                            borderRadius: 8, fontSize: 12, color: C.ink, fontFamily: FONT,
+                          }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.success} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                            {v.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Vouch messages */}
+                    {vouchMessages.map((msg, i) => (
+                      <div key={i} style={{ marginBottom: 16 }}>
+                        {msg.role === "user" ? (
+                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <div style={{
+                              background: C.userBubble, color: C.ink,
+                              border: `1px solid ${C.userBubbleBorder}`,
+                              padding: "10px 16px", borderRadius: "16px 16px 4px 16px",
+                              fontSize: 14, lineHeight: 1.5, fontFamily: FONT,
+                              maxWidth: "85%",
+                            }}>
+                              {msg.text}
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <div style={{
+                              background: "#fff", color: C.ink,
+                              border: `1px solid ${C.border}`,
+                              padding: "12px 16px", borderRadius: "16px 16px 16px 4px",
+                              fontSize: 14, lineHeight: 1.6, fontFamily: FONT,
+                              maxWidth: "85%",
+                            }}>
+                              {msg.text}
+                            </div>
+
+                            {/* Confirmed vouch indicator */}
+                            {msg.confirmed && (
+                              <div style={{
+                                marginTop: 8, display: "inline-flex", alignItems: "center", gap: 6,
+                                padding: "6px 12px", background: C.successLight, border: `1px solid #BBF7D0`,
+                                borderRadius: 8, fontSize: 13, color: C.success, fontWeight: 600, fontFamily: FONT,
+                              }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.success} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                                {msg.confirmed.name} vouched
+                              </div>
+                            )}
+
+                            {/* LinkedIn candidate cards */}
+                            {msg.candidates && msg.candidates.length > 0 && (
+                              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8, maxWidth: "85%" }}>
+                                {msg.candidates.map((c, ci) => (
+                                  <div
+                                    key={ci}
+                                    onClick={() => handleVouchConfirm(c)}
+                                    style={{
+                                      padding: "10px 14px", background: "#F9FAFB",
+                                      border: "1px solid #E5E7EB", borderRadius: 10,
+                                      cursor: vouchLoading ? "wait" : "pointer",
+                                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                                      gap: 10, transition: "background 0.1s",
+                                    }}
+                                    onMouseEnter={e => { if (!vouchLoading) e.currentTarget.style.background = "#F0F0EE"; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = "#F9FAFB"; }}
+                                  >
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontWeight: 600, fontSize: 14, color: C.ink, fontFamily: FONT }}>{c.label}</div>
+                                      {c.detail && <div style={{ fontSize: 12, color: C.sub, fontFamily: FONT, marginTop: 2 }}>{c.detail}</div>}
+                                    </div>
+                                    <a
+                                      href={c.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={e => e.stopPropagation()}
+                                      style={{ color: "#0077B5", fontSize: 12, fontWeight: 600, fontFamily: FONT, flexShrink: 0, textDecoration: "none" }}
+                                    >
+                                      LinkedIn ↗
+                                    </a>
+                                  </div>
+                                ))}
+                                <button
+                                  onClick={handleVouchNoneOfThese}
+                                  style={{
+                                    fontSize: 12, color: C.sub, background: "none", border: "none",
+                                    cursor: "pointer", textAlign: "left", padding: "4px 0",
+                                    fontFamily: FONT,
+                                  }}
+                                >
+                                  None of these
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Summary card */}
+                            {msg.summary && (() => {
+                              const formatNames = names => names.length <= 2 ? names.join(" and ") : names.slice(0, -1).join(", ") + ", and " + names[names.length - 1];
+                              const newFirstNames = (msg.newNames || []).map(n => n.split(" ")[0]);
+                              const existingFirstNames = (msg.existingNames || []).map(n => n.split(" ")[0]);
+                              const allExisting = (msg.existingNames || []).length >= (msg.addedNames || []).length && (msg.addedNames || []).length > 0;
+                              const hasNew = newFirstNames.length > 0;
+                              const hasExisting = existingFirstNames.length > 0;
+                              const link = msg.shareUrl;
+                              const fnShort = vouchFunctionInfo?.name || "professionals";
+                              const voucherFirstName = user?.display_name?.split(" ")[0] || "";
+                              const emailSubject = "Sharing an invite";
+                              const emailBody = `Hi,\n\nI'm building out my professional network on a new site - VouchFour. It's invite-only and the premise is that you only get to invite your 4 all-time best colleagues in each job function. I recommended you as one of the top 4 ${fnShort} I've ever worked with. The link below will get you access to the site:\n\n${link}\n\nLet me know what you think,\n${voucherFirstName}`;
+                              const smsMsg = `I'm sharing an invite link for VouchFour. It's a new professional network site where you only get to invite your all-time best colleagues. I recommended you.\n\n${link}`;
+                              const shareBtnBase = {
+                                flex: 1, padding: "10px 6px", borderRadius: 999,
+                                fontSize: 12, fontWeight: 700, fontFamily: FONT,
+                                cursor: "pointer", textAlign: "center",
+                                textDecoration: "none", display: "block", lineHeight: 1.3,
+                                border: "none", color: "#fff",
+                                textShadow: "0 1px 2px rgba(0,0,0,0.15)",
+                                boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+                              };
+                              return (
+                                <div style={{
+                                  marginTop: 12, padding: "14px 16px",
+                                  background: "#F0FDF4", border: "1px solid #86EFAC",
+                                  borderRadius: 12, maxWidth: "85%",
+                                }}>
+                                  <div style={{ fontSize: 14, fontWeight: 600, color: "#16A34A", fontFamily: FONT, marginBottom: 6 }}>
+                                    Vouches saved
+                                  </div>
+                                  {allExisting ? (
+                                    <div style={{ fontSize: 13, color: C.ink, fontFamily: FONT, lineHeight: 1.5 }}>
+                                      <strong>{formatNames(existingFirstNames)}</strong> {existingFirstNames.length === 1 ? "is" : "are"} already on VouchFour — no need to share an invite link. Your vouches have been recorded and your networks just got stronger.
+                                    </div>
+                                  ) : (
+                                    <>
+                                      {hasExisting && (
+                                        <div style={{ fontSize: 13, color: C.ink, fontFamily: FONT, lineHeight: 1.5, marginBottom: 4 }}>
+                                          <strong>{formatNames(existingFirstNames)}</strong> {existingFirstNames.length === 1 ? "is" : "are"} already on VouchFour, so they're all set.
+                                        </div>
+                                      )}
+                                      <div style={{ fontSize: 13, color: C.ink, fontFamily: FONT, lineHeight: 1.5, marginBottom: 12 }}>
+                                        {hasExisting
+                                          ? <>Just share your invite with <strong>{formatNames(newFirstNames)}</strong> via whatever method is easiest for you:</>
+                                          : <>Now send <strong>{formatNames(newFirstNames)}</strong> an invite to VouchFour via whatever method is easiest for you:</>
+                                        }
+                                      </div>
+                                      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                                        <a href={`mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
+                                           style={{ ...shareBtnBase, background: "linear-gradient(135deg, #3B82F6, #6366F1)" }}
+                                           onClick={() => capture("brain_vouch_share_email")}>
+                                          Email
+                                        </a>
+                                        <a href={`https://mail.google.com/mail/?view=cm&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
+                                           target="_blank" rel="noopener noreferrer"
+                                           style={{ ...shareBtnBase, background: "linear-gradient(135deg, #E11D48, #F97316)" }}
+                                           onClick={() => capture("brain_vouch_share_gmail")}>
+                                          Gmail
+                                        </a>
+                                        <a href={`sms:?&body=${encodeURIComponent(smsMsg)}`}
+                                           style={{ ...shareBtnBase, background: "linear-gradient(135deg, #10B981, #06B6D4)" }}
+                                           onClick={() => capture("brain_vouch_share_sms")}>
+                                          Text
+                                        </a>
+                                        <button
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(smsMsg);
+                                            capture("brain_vouch_share_copied");
+                                            setVouchMsgCopied(true);
+                                            setTimeout(() => setVouchMsgCopied(false), 2000);
+                                          }}
+                                          style={{ ...shareBtnBase, background: "linear-gradient(135deg, #8B5CF6, #EC4899)" }}
+                                        >
+                                          {vouchMsgCopied ? "Copied!" : "Copy msg"}
+                                        </button>
+                                      </div>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                        <input
+                                          readOnly
+                                          value={link}
+                                          style={{
+                                            flex: 1, padding: "8px 10px", fontSize: 13, fontFamily: FONT,
+                                            border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff",
+                                            color: C.ink, outline: "none", minWidth: 0,
+                                          }}
+                                          onClick={e => e.target.select()}
+                                        />
+                                        <button
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(link);
+                                            capture("brain_vouch_share_link_copied");
+                                            setVouchLinkCopied(true);
+                                            setTimeout(() => setVouchLinkCopied(false), 2000);
+                                          }}
+                                          style={{
+                                            padding: "8px 14px", fontSize: 12, fontWeight: 600,
+                                            background: vouchLinkCopied ? C.success : C.accent, color: "#fff", border: "none",
+                                            borderRadius: 8, fontFamily: FONT, cursor: "pointer",
+                                            flexShrink: 0, whiteSpace: "nowrap", transition: "background 0.15s",
+                                          }}
+                                        >
+                                          {vouchLinkCopied ? "Copied!" : "Copy link"}
+                                        </button>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {/* Vouch loading indicator */}
+                    {vouchLoading && (
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{
+                          background: "#fff", border: `1px solid ${C.border}`,
+                          padding: "12px 16px", borderRadius: "16px 16px 16px 4px",
+                          display: "inline-flex", gap: 4,
+                        }}>
+                          {[0, 1, 2].map(j => (
+                            <div key={j} style={{
+                              width: 6, height: 6, borderRadius: "50%",
+                              background: C.sub,
+                              animation: `typingDot 1.4s ease-in-out ${j * 0.2}s infinite`,
+                            }} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
                 {/* Bio interview mode */}
-                {bioMode && (
+                {bioMode && !vouchMode && (
                   <>
                     {/* Bio header banner — sticky at top */}
                     <div style={{
@@ -3567,7 +4196,7 @@ export default function NetworkBrainPage() {
                             {/* Vouch suggestion nudge */}
                             {msg.vouchSuggestion && (
                               <div
-                                onClick={() => { handleBioPause(); setTimeout(() => handleInputChange("/vouch"), 100); }}
+                                onClick={() => { setVouchFromBioPending({ name: msg.vouchSuggestion.name }); handleInputChange("/vouch"); }}
                                 style={{
                                   marginTop: 8, padding: "8px 14px",
                                   background: "#FFFBEB", border: "1px solid #FDE68A",
@@ -3634,7 +4263,7 @@ export default function NetworkBrainPage() {
                 )}
 
                 {/* Normal messages (hidden when in bio mode) */}
-                {!bioMode && messages.map((msg, i) => {
+                {!bioMode && !vouchMode && messages.map((msg, i) => {
                   const isLastBrain = msg.role === "brain" && i === messages.length - 1;
                   const isLastCompare = msg.role === "compare" && i === messages.length - 1;
                   return (
@@ -3869,7 +4498,7 @@ export default function NetworkBrainPage() {
 
 
                 {/* Loading indicator */}
-                {loading && !bioMode && (
+                {loading && !bioMode && !vouchMode && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
                     <div style={{
                       width: 8, height: 8, borderRadius: "50%",
@@ -4213,7 +4842,7 @@ export default function NetworkBrainPage() {
                         Vouch for your all-time best colleagues in:
                       </span>
                       <button
-                        onClick={() => { setSlashMode(null); setSlashQuery(""); }}
+                        onClick={() => { setSlashMode(null); setSlashQuery(""); setVouchFromBioPending(null); }}
                         style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 15, color: C.sub, lineHeight: 1 }}
                       >✕</button>
                     </div>
@@ -4228,7 +4857,16 @@ export default function NetworkBrainPage() {
                       return (
                         <div
                           key={fn.id}
-                          onClick={() => !vouchLoading && handleStartVouch(fn.id)}
+                          onClick={() => {
+                            if (vouchLoading) return;
+                            const opts = {};
+                            if (vouchFromBioPending) {
+                              opts.fromBio = true;
+                              opts.prefilledName = vouchFromBioPending.name;
+                              setVouchFromBioPending(null);
+                            }
+                            handleEnterVouchMode(fn.id, opts);
+                          }}
                           style={{
                             padding: "10px 16px",
                             cursor: vouchLoading ? "wait" : "pointer",
@@ -4268,13 +4906,15 @@ export default function NetworkBrainPage() {
                     background: "#fff", borderRadius: 12,
                     border: `1.5px solid ${C.border}`,
                     boxShadow: "0 4px 16px rgba(0,0,0,0.1)",
-                    maxHeight: 280, overflow: "auto",
+                    display: "flex", flexDirection: "column",
+                    maxHeight: 340,
                   }}>
                     {/* Selected people chips for /group and /compare */}
                     {(slashMode === "group" || slashMode === "compare") && slashSelectedPeople.length > 0 && (
                       <div style={{
                         display: "flex", flexWrap: "wrap", gap: 6,
                         padding: "10px 12px", borderBottom: `1px solid ${C.border}`,
+                        flexShrink: 0,
                       }}>
                         {slashSelectedPeople.map(p => (
                           <span
@@ -4296,57 +4936,60 @@ export default function NetworkBrainPage() {
                         ))}
                       </div>
                     )}
-                    {/* Header */}
-                    <div style={{
-                      padding: "8px 12px", fontSize: 11, fontWeight: 700,
-                      color: C.sub, textTransform: "uppercase", letterSpacing: 0.5,
-                      fontFamily: FONT,
-                    }}>
-                      {slashQuery ? "Search results" : "Recently mentioned"}
-                    </div>
-                    {/* Results */}
-                    {slashResults.map(p => {
-                      const isGroupSelected = slashSelectedPeople.some(sp => sp.id === p.id);
-                      const isCompareMaxed = slashMode === "compare" && slashSelectedPeople.length >= 2 && !isGroupSelected;
-                      return (
-                        <div
-                          key={p.id}
-                          onClick={() => !isCompareMaxed && handleSlashSelect(p)}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 10,
-                            padding: "8px 12px", cursor: isCompareMaxed ? "default" : "pointer",
-                            background: isGroupSelected ? C.accentLight : "transparent",
-                            opacity: isCompareMaxed ? 0.4 : 1,
-                            transition: "background 0.1s, opacity 0.15s",
-                          }}
-                          onMouseEnter={e => { if (!isGroupSelected && !isCompareMaxed) e.currentTarget.style.background = "#F9FAFB"; }}
-                          onMouseLeave={e => { if (!isGroupSelected && !isCompareMaxed) e.currentTarget.style.background = "transparent"; }}
-                        >
-                          <PhotoAvatar name={p.name || p.display_name} photoUrl={p.photo_url} size={28} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
-                              {p.name || p.display_name}
-                            </div>
-                            {(p.current_title || p.current_company) && (
-                              <div style={{
-                                fontSize: 11, color: C.sub, fontFamily: FONT,
-                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                              }}>
-                                {[p.current_title, p.current_company].filter(Boolean).join(" at ")}
+                    {/* Scrollable results area */}
+                    <div style={{ overflow: "auto", flex: 1, minHeight: 0 }}>
+                      {/* Header */}
+                      <div style={{
+                        padding: "8px 12px", fontSize: 11, fontWeight: 700,
+                        color: C.sub, textTransform: "uppercase", letterSpacing: 0.5,
+                        fontFamily: FONT,
+                      }}>
+                        {slashQuery ? "Search results" : (slashMode === "compare" || slashMode === "group") && latestBrainMsg?.people?.length > 0 ? "Recently mentioned" : "Your network"}
+                      </div>
+                      {/* Results */}
+                      {slashResults.map(p => {
+                        const isGroupSelected = slashSelectedPeople.some(sp => sp.id === p.id);
+                        const isCompareMaxed = slashMode === "compare" && slashSelectedPeople.length >= 2 && !isGroupSelected;
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => !isCompareMaxed && handleSlashSelect(p)}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 10,
+                              padding: "8px 12px", cursor: isCompareMaxed ? "default" : "pointer",
+                              background: isGroupSelected ? C.accentLight : "transparent",
+                              opacity: isCompareMaxed ? 0.4 : 1,
+                              transition: "background 0.1s, opacity 0.15s",
+                            }}
+                            onMouseEnter={e => { if (!isGroupSelected && !isCompareMaxed) e.currentTarget.style.background = "#F9FAFB"; }}
+                            onMouseLeave={e => { if (!isGroupSelected && !isCompareMaxed) e.currentTarget.style.background = "transparent"; }}
+                          >
+                            <PhotoAvatar name={p.name || p.display_name} photoUrl={p.photo_url} size={28} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, fontFamily: FONT }}>
+                                {p.name || p.display_name}
                               </div>
+                              {(p.current_title || p.current_company) && (
+                                <div style={{
+                                  fontSize: 11, color: C.sub, fontFamily: FONT,
+                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                }}>
+                                  {[p.current_title, p.current_company].filter(Boolean).join(" at ")}
+                                </div>
+                              )}
+                            </div>
+                            {(slashMode === "group" || slashMode === "compare") && isGroupSelected && (
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
                             )}
                           </div>
-                          {(slashMode === "group" || slashMode === "compare") && isGroupSelected && (
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {/* /group submit button */}
+                        );
+                      })}
+                    </div>
+                    {/* Sticky submit buttons — always visible outside scroll area */}
                     {slashMode === "group" && slashSelectedPeople.length >= 2 && (
-                      <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.border}` }}>
+                      <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
                         <button
                           onClick={() => triggerGroupThreadForPeople(slashSelectedPeople)}
                           style={{
@@ -4360,9 +5003,8 @@ export default function NetworkBrainPage() {
                         </button>
                       </div>
                     )}
-                    {/* /compare submit button */}
                     {slashMode === "compare" && slashSelectedPeople.length === 2 && (
-                      <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.border}` }}>
+                      <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
                         <button
                           onClick={() => handleCompare(slashSelectedPeople)}
                           style={{
@@ -4403,7 +5045,7 @@ export default function NetworkBrainPage() {
                     value={input}
                     onChange={e => {
                       const val = e.target.value;
-                      bioMode ? setInput(val) : handleInputChange(val);
+                      (bioMode || vouchMode) ? setInput(val) : handleInputChange(val);
                       // Auto-grow: reset to 1 row then expand to scrollHeight
                       e.target.style.height = "auto";
                       e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
@@ -4421,12 +5063,16 @@ export default function NetworkBrainPage() {
                         });
                       }
                     }}
-                    placeholder={bioMode
-                      ? "Share your experience..."
-                      : (hasInteracted || messages.length > 0
-                        ? (firstName ? `Ask about your network, ${firstName}...` : "Ask about your network...")
-                        : PLACEHOLDER_PROMPTS[placeholderIndex])}
-                    disabled={loading || welcomeRevealing || bioLoading}
+                    placeholder={vouchMode
+                      ? (vouchPendingUrl ? "Type their name..." : "Type a name...")
+                      : bioMode
+                        ? "Share your experience..."
+                        : (slashMode === "compare" || slashMode === "group")
+                          ? "Search your network..."
+                          : (hasInteracted || messages.length > 0
+                            ? (firstName ? `Ask about your network, ${firstName}...` : "Ask about your network...")
+                            : PLACEHOLDER_PROMPTS[placeholderIndex])}
+                    disabled={loading || welcomeRevealing || bioLoading || vouchLoading}
                     autoFocus
                     rows={1}
                     style={{
@@ -4449,13 +5095,13 @@ export default function NetworkBrainPage() {
                   />
                   <button
                     type="submit"
-                    disabled={!input.trim() || loading || welcomeRevealing || bioLoading}
+                    disabled={!input.trim() || loading || welcomeRevealing || bioLoading || vouchLoading}
                     style={{
                       width: 48, height: 48,
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      background: input.trim() && !loading && !bioLoading ? C.accent : "#D4CAFE",
+                      background: input.trim() && !loading && !bioLoading && !vouchLoading ? C.accent : "#D4CAFE",
                       color: "#fff", border: "none", borderRadius: 14,
-                      cursor: input.trim() && !loading && !bioLoading ? "pointer" : "not-allowed",
+                      cursor: input.trim() && !loading && !bioLoading && !vouchLoading ? "pointer" : "not-allowed",
                       flexShrink: 0, transition: "background 0.15s",
                       boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
                     }}
@@ -4464,7 +5110,7 @@ export default function NetworkBrainPage() {
                   </button>
                 </form>
                 {/* Slash command hints — clickable to open guide (hidden in bio mode + when keyboard open) */}
-                {bioMode || (isMobile && mobileKeyboardOpen) ? null : isMobile ? (
+                {bioMode || vouchMode || (isMobile && mobileKeyboardOpen) ? null : isMobile ? (
                   <div
                     onClick={() => setSlashGuideOpen(true)}
                     style={{

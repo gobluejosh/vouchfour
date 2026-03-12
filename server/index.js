@@ -578,6 +578,208 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  // ─── Brain vouch: init (returns existing vouches + function info) ────
+  if (req.method === 'POST' && req.url === '/api/brain-vouch/init') {
+    try {
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        return
+      }
+      const body = await readBody(req)
+      const { jobFunctionId } = body
+
+      const jfRes = await query('SELECT id, name, slug FROM job_functions WHERE id = $1', [jobFunctionId])
+      if (jfRes.rows.length === 0) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Invalid job function' }))
+        return
+      }
+      const jf = jfRes.rows[0]
+
+      // Get existing vouches in this function
+      const existingRes = await query(`
+        SELECT p.id, p.display_name, p.linkedin_url, p.current_title, p.current_company
+        FROM vouches v JOIN people p ON p.id = v.vouchee_id
+        WHERE v.voucher_id = $1 AND v.job_function_id = $2
+        ORDER BY v.created_at DESC
+      `, [session.id, jf.id])
+
+      // Get/create share token
+      const stRes = await query('SELECT share_token FROM people WHERE id = $1', [session.id])
+      let shareToken = stRes.rows[0]?.share_token
+      if (!shareToken) {
+        shareToken = crypto.randomBytes(4).toString('hex')
+        await query('UPDATE people SET share_token = $1 WHERE id = $2', [shareToken, session.id])
+      }
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        functionId: jf.id,
+        functionName: jf.name,
+        functionSlug: jf.slug,
+        existingVouches: existingRes.rows.map(r => ({
+          id: r.id,
+          name: r.display_name,
+          linkedinUrl: r.linkedin_url,
+          title: r.current_title,
+          company: r.current_company,
+        })),
+        slotsUsed: existingRes.rows.length,
+        slotsTotal: 4,
+        shareToken,
+      }))
+    } catch (err) {
+      console.error('[/api/brain-vouch/init error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
+  // ─── Brain vouch: add a single vouch ────
+  if (req.method === 'POST' && req.url === '/api/brain-vouch/add') {
+    try {
+      const session = await validateSession(req)
+      if (!session) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ error: 'Authentication required' }))
+        return
+      }
+      const body = await readBody(req)
+      const { jobFunctionId, name, linkedinUrl } = body
+
+      if (!name?.trim() || !linkedinUrl?.trim()) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'name and linkedinUrl are required' }))
+        return
+      }
+
+      const normalizedUrl = normalizeLinkedInUrl(linkedinUrl)
+      if (!normalizedUrl) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Invalid LinkedIn URL' }))
+        return
+      }
+
+      // Validate job function
+      const jfRes = await query('SELECT id, name, slug FROM job_functions WHERE id = $1', [jobFunctionId])
+      if (jfRes.rows.length === 0) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'Invalid job function' }))
+        return
+      }
+
+      // Check slot availability
+      const countRes = await query(
+        'SELECT COUNT(*)::int AS cnt FROM vouches WHERE voucher_id = $1 AND job_function_id = $2',
+        [session.id, jobFunctionId]
+      )
+      if (countRes.rows[0].cnt >= 4) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: 'All 4 vouch slots are filled for this function' }))
+        return
+      }
+
+      // Check if this exact person is already vouched in this function
+      const existingPersonRes = await query('SELECT id FROM people WHERE linkedin_url = $1', [normalizedUrl])
+      if (existingPersonRes.rows.length > 0) {
+        const existingVouchRes = await query(
+          'SELECT 1 FROM vouches WHERE voucher_id = $1 AND vouchee_id = $2 AND job_function_id = $3',
+          [session.id, existingPersonRes.rows[0].id, jobFunctionId]
+        )
+        if (existingVouchRes.rows.length > 0) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'You have already vouched for this person in this function' }))
+          return
+        }
+      }
+
+      // Upsert person
+      const talentRes = await query(`
+        INSERT INTO people (linkedin_url, display_name)
+        VALUES ($1, $2)
+        ON CONFLICT (linkedin_url) DO UPDATE SET
+          display_name = CASE WHEN people.self_provided THEN people.display_name
+                              ELSE COALESCE(NULLIF(EXCLUDED.display_name, ''), people.display_name) END,
+          updated_at = NOW()
+        RETURNING id, (xmax = 0) AS is_new
+      `, [normalizedUrl, name.trim()])
+      const talentId = talentRes.rows[0].id
+      const isNew = talentRes.rows[0].is_new
+
+      // Create submission record
+      const subRes = await query(`
+        INSERT INTO submissions (submitter_id, form_type, submitted_at, raw_payload, job_function_id)
+        VALUES ($1, 'vouch', NOW(), $2, $3)
+        RETURNING id
+      `, [session.id, JSON.stringify(body), jobFunctionId])
+
+      // Insert vouch
+      await query(`
+        INSERT INTO vouches (voucher_id, vouchee_id, job_function_id, submission_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (voucher_id, vouchee_id, job_function_id)
+        DO UPDATE SET submission_id = EXCLUDED.submission_id, created_at = NOW()
+      `, [session.id, talentId, jobFunctionId, subRes.rows[0].id])
+
+      // Create vouch_invite for the new vouchee if not already exists
+      const existingInviteRes = await query(
+        `SELECT 1 FROM vouch_invites WHERE inviter_id = $1 AND invitee_id = $2 AND job_function_id = $3 LIMIT 1`,
+        [session.id, talentId, jobFunctionId]
+      )
+      if (existingInviteRes.rows.length === 0) {
+        const inviteToken = crypto.randomUUID()
+        await query(
+          `INSERT INTO vouch_invites (token, inviter_id, invitee_id, job_function_id) VALUES ($1, $2, $3, $4)`,
+          [inviteToken, session.id, talentId, jobFunctionId]
+        )
+      }
+
+      // Recount slots
+      const newCountRes = await query(
+        'SELECT COUNT(*)::int AS cnt FROM vouches WHERE voucher_id = $1 AND job_function_id = $2',
+        [session.id, jobFunctionId]
+      )
+
+      // Get/create share token
+      const stRes = await query('SELECT share_token FROM people WHERE id = $1', [session.id])
+      let shareToken = stRes.rows[0]?.share_token
+      if (!shareToken) {
+        shareToken = crypto.randomBytes(4).toString('hex')
+        await query('UPDATE people SET share_token = $1 WHERE id = $2', [shareToken, session.id])
+      }
+
+      console.log(`[BrainVouch] ${session.display_name} vouched for ${name.trim()} in ${jfRes.rows[0].name} (${newCountRes.rows[0].cnt}/4)`)
+
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        success: true,
+        person: { id: talentId, name: name.trim(), linkedinUrl: normalizedUrl, isNewToSystem: isNew },
+        slotsUsed: newCountRes.rows[0].cnt,
+        shareToken,
+      }))
+
+      // Fire-and-forget: enrich new person
+      if (isNew) {
+        ;(async () => {
+          await new Promise(r => setTimeout(r, 2000))
+          try {
+            await fullEnrichPipeline(talentId)
+          } catch (err) {
+            console.error(`[BrainVouch] Enrichment failed for ${talentId}:`, err.message)
+          }
+        })()
+      }
+    } catch (err) {
+      console.error('[/api/brain-vouch/add error]', err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: 'Internal server error' }))
+    }
+    return
+  }
+
   // ─── User's vouched functions (lightweight, for StartVouchPage) ────
   if (req.method === 'GET' && req.url === '/api/my-vouch-functions') {
     try {
@@ -4835,6 +5037,7 @@ IMPORTANT BEHAVIORAL RULES:
 2. The user can type slash commands to take actions. The ones most relevant to your recommendations:
   - /ask [name] — send a private message to someone in their network
   - /group [name1, name2] — start a group thread (a shared conversation where all participants can see and reply to each other's messages)
+  IMPORTANT: You cannot execute these commands yourself. When suggesting them, tell the user to type the command — e.g., "Type /group and select Patrick, Scott, and Tommy to start a thread." Never say "I'll start a group" or "Let me set that up" — you can only suggest, the user must act.
   Occasionally (about 1 in 4 responses), mention /ask or /group naturally when relevant. Don't mention them every time.
   Other commands the user has access to (don't proactively suggest these, but if the user asks about them, explain accurately):
   - /vouch — pick a job function and vouch for their top colleagues in it
