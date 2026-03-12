@@ -885,6 +885,13 @@ export default function App() {
               })()}
             </div>
 
+            {/* Remaining slots reminder */}
+            {submittedContacts.length < 4 && (
+              <div style={{ fontSize: 13, color: C.sub, fontFamily: FONT, marginBottom: 16, lineHeight: 1.5 }}>
+                You used {submittedContacts.length} of your 4 {invitee?.jobFunction?.name || "function"} spots — you can come back and add more anytime.
+              </div>
+            )}
+
             {/* Keep building your network */}
             <div style={{
               background: "#fff", borderRadius: 14, border: `1.5px solid ${C.border}`,
