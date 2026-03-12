@@ -2374,6 +2374,20 @@ export default function NetworkBrainPage() {
       handleCompare(slashSelectedPeople);
       return;
     }
+    // If in /compare mode without 2 picks, try to parse names from input
+    if (slashMode === "compare" && slashSelectedPeople.length < 2) {
+      const compareText = input.replace(/^\/compare\s*/i, "").trim();
+      if (compareText) {
+        resolveCompareNames(compareText);
+        return;
+      }
+      // No text either — just clear
+      setSlashMode(null);
+      setSlashQuery("");
+      setSlashResults([]);
+      setSlashSelectedPeople([]);
+      return;
+    }
     // If in slash mode but no action, clear and submit normally
     if (slashMode) {
       setSlashMode(null);
@@ -2420,7 +2434,7 @@ export default function NetworkBrainPage() {
       setSlashMode("compare");
       const q = compareMatch[1].trim();
       setSlashQuery(q);
-      fetchSlashResults(q);
+      fetchSlashResults(q, "compare");
     } else if (/^\/bio\b/i.test(val)) {
       handleStartBio();
       return;
@@ -2437,18 +2451,35 @@ export default function NetworkBrainPage() {
     }
   }
 
-  function fetchSlashResults(q) {
+  function fetchSlashResults(q, mode) {
     if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
+    const isCompare = mode === "compare" || slashMode === "compare";
     if (!q) {
-      // Show recently mentioned people when no query
-      setSlashResults(latestBrainMsg?.people?.slice(0, 6) || []);
-      setSlashSearchLoading(false);
+      if (isCompare) {
+        // Compare mode with no query: fetch full network alphabetically
+        setSlashSearchLoading(true);
+        (async () => {
+          try {
+            const res = await fetch("/api/network-search?mode=compare", { credentials: "include" });
+            if (res.ok) {
+              const data = await res.json();
+              setSlashResults(data.results || []);
+            }
+          } catch {}
+          setSlashSearchLoading(false);
+        })();
+      } else {
+        // Show recently mentioned people when no query
+        setSlashResults(latestBrainMsg?.people?.slice(0, 6) || []);
+        setSlashSearchLoading(false);
+      }
       return;
     }
     setSlashSearchLoading(true);
     slashDebounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/network-search?q=${encodeURIComponent(q)}`, { credentials: "include" });
+        const modeParam = isCompare ? "&mode=compare" : "";
+        const res = await fetch(`/api/network-search?q=${encodeURIComponent(q)}${modeParam}`, { credentials: "include" });
         if (res.ok) {
           const data = await res.json();
           setSlashResults(data.results || []);
@@ -2480,7 +2511,7 @@ export default function NetworkBrainPage() {
       });
       setInput("/compare ");
       setSlashQuery("");
-      fetchSlashResults("");
+      fetchSlashResults("", "compare");
     } else if (slashMode === "note") {
       setSlashMode(null);
       setSlashQuery("");
@@ -3080,6 +3111,95 @@ export default function NetworkBrainPage() {
       }
     } catch {}
     setVouchLoading(false);
+  }
+
+  async function resolveCompareNames(text) {
+    // Parse two names from natural language input
+    // Supports: "Name1, Name2", "Name1 and Name2", "Name1 vs Name2", "Name1 vs. Name2"
+    let names = [];
+    if (text.includes(",")) {
+      names = text.split(",").map(s => s.trim()).filter(Boolean);
+    } else if (/\band\b/i.test(text)) {
+      names = text.split(/\band\b/i).map(s => s.trim()).filter(Boolean);
+    } else if (/\bvs\.?\b/i.test(text)) {
+      names = text.split(/\bvs\.?\b/i).map(s => s.trim()).filter(Boolean);
+    }
+
+    if (names.length !== 2) {
+      // Can't parse two names — show error in chat
+      setSlashMode(null);
+      setSlashQuery("");
+      setSlashResults([]);
+      setSlashSelectedPeople([]);
+      setInput("");
+      setMessages(prev => [...prev, {
+        role: "brain",
+        text: `To compare two people, separate their names with a comma — for example, "/compare ${names[0] || "Jane Doe"}, ${names[1] || "John Smith"}". Or just type /compare and pick from the list.`,
+      }]);
+      return;
+    }
+
+    // Resolve each name against the network
+    setSlashMode(null);
+    setSlashQuery("");
+    setSlashResults([]);
+    setSlashSelectedPeople([]);
+    setInput("");
+
+    try {
+      const [res1, res2] = await Promise.all([
+        fetch(`/api/network-search?q=${encodeURIComponent(names[0])}&mode=compare`, { credentials: "include" }),
+        fetch(`/api/network-search?q=${encodeURIComponent(names[1])}&mode=compare`, { credentials: "include" }),
+      ]);
+      const [data1, data2] = await Promise.all([res1.json(), res2.json()]);
+      const results1 = data1.results || [];
+      const results2 = data2.results || [];
+
+      if (results1.length === 0 && results2.length === 0) {
+        setMessages(prev => [...prev, {
+          role: "brain",
+          text: `I couldn't find "${names[0]}" or "${names[1]}" in your network. Try typing /compare and picking from the list.`,
+        }]);
+        return;
+      }
+      if (results1.length === 0) {
+        setMessages(prev => [...prev, {
+          role: "brain",
+          text: `I couldn't find "${names[0]}" in your network. Try typing /compare and picking from the list.`,
+        }]);
+        return;
+      }
+      if (results2.length === 0) {
+        setMessages(prev => [...prev, {
+          role: "brain",
+          text: `I couldn't find "${names[1]}" in your network. Try typing /compare and picking from the list.`,
+        }]);
+        return;
+      }
+
+      // Use best match for each (first result)
+      const person1 = results1[0];
+      const person2 = results2[0];
+
+      // Make sure they're not the same person
+      if (person1.person_id === person2.person_id) {
+        setMessages(prev => [...prev, {
+          role: "brain",
+          text: `"${names[0]}" and "${names[1]}" both matched ${person1.display_name}. Try more specific names, or type /compare and pick from the list.`,
+        }]);
+        return;
+      }
+
+      // Normalize to the shape handleCompare expects
+      const p1 = { id: person1.person_id, name: person1.display_name, photo_url: person1.photo_url, current_title: person1.current_title, current_company: person1.current_company, degree: person1.degree };
+      const p2 = { id: person2.person_id, name: person2.display_name, photo_url: person2.photo_url, current_title: person2.current_title, current_company: person2.current_company, degree: person2.degree };
+      handleCompare([p1, p2]);
+    } catch {
+      setMessages(prev => [...prev, {
+        role: "brain",
+        text: "Something went wrong looking up those names. Try typing /compare and picking from the list.",
+      }]);
+    }
   }
 
   async function handleCompare(people) {

@@ -7384,6 +7384,28 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
       const params = new URL(req.url, `http://${req.headers.host}`).searchParams
       const q = (params.get('q') || '').trim()
+      const mode = params.get('mode') || '' // 'compare' skips email/ask filters
+      const isCompare = mode === 'compare'
+
+      // For compare mode with no query, return full network alphabetically
+      if (!q && isCompare) {
+        const network = await getTalentRecommendations(session.id, null)
+        const results = network
+          .filter(p => p.id !== session.id)
+          .sort((a, b) => a.display_name.localeCompare(b.display_name))
+          .map(p => ({
+            person_id: p.id,
+            display_name: p.display_name,
+            photo_url: p.photo_url,
+            current_title: p.current_title,
+            current_company: p.current_company,
+            degree: p.degree,
+          }))
+        res.writeHead(200)
+        res.end(JSON.stringify({ results }))
+        return
+      }
+
       if (!q || q.length < 2) {
         res.writeHead(200); res.end(JSON.stringify({ results: [] })); return
       }
@@ -7391,20 +7413,23 @@ What ${senderFirst} wants to discuss: "${question}"` }],
       // Get the user's full vouch network with degrees
       const network = await getTalentRecommendations(session.id, null)
 
-      // Filter by name match + ask permission
+      // Filter by name match (+ ask permission unless in compare mode)
       const searchLower = q.toLowerCase()
       const results = []
       for (const person of network) {
         if (person.id === session.id) continue // exclude self
         if (!person.display_name.toLowerCase().includes(searchLower)) continue
-        if (!person.email) continue // must have email to be contacted
 
-        // Check ask permission
-        const hasVouched = (await query('SELECT 1 FROM vouches WHERE voucher_id = $1 LIMIT 1', [person.id])).rows.length > 0
-        const askPrefRes = await query('SELECT ask_receive_degree FROM people WHERE id = $1', [person.id])
-        const askPref = askPrefRes.rows[0]?.ask_receive_degree
-        const maxDeg = askDegreeLimit(askPref, hasVouched)
-        if (person.degree > maxDeg) continue // not allowed to ask
+        if (!isCompare) {
+          if (!person.email) continue // must have email to be contacted
+
+          // Check ask permission
+          const hasVouched = (await query('SELECT 1 FROM vouches WHERE voucher_id = $1 LIMIT 1', [person.id])).rows.length > 0
+          const askPrefRes = await query('SELECT ask_receive_degree FROM people WHERE id = $1', [person.id])
+          const askPref = askPrefRes.rows[0]?.ask_receive_degree
+          const maxDeg = askDegreeLimit(askPref, hasVouched)
+          if (person.degree > maxDeg) continue // not allowed to ask
+        }
 
         results.push({
           person_id: person.id,
