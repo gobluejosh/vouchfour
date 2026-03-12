@@ -2381,11 +2381,16 @@ export default function NetworkBrainPage() {
         resolveCompareNames(compareText);
         return;
       }
-      // No text either — just clear
+      // No text and no picks — guide the user
       setSlashMode(null);
       setSlashQuery("");
       setSlashResults([]);
       setSlashSelectedPeople([]);
+      setInput("");
+      setMessages(prev => [...prev, {
+        role: "brain",
+        text: "To compare two people, pick them from the list or type their names — for example, \"/compare Jane Doe, John Smith\".",
+      }]);
       return;
     }
     // If in slash mode but no action, clear and submit normally
