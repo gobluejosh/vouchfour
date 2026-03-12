@@ -16,6 +16,7 @@ const C = {
   userBubbleBorder: "#E2DDD6",
   bg: "#FAF9F6",
   success: "#16A34A",
+  warn: "#D97706",
   successLight: "#F0FDF4",
   chipBg: "#F0EDFF",
   chipBorder: "#D4CAFE",

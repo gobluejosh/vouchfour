@@ -2806,46 +2806,6 @@ export default function PersonPage() {
                     </div>
                   )}
 
-                  {/* Post-Quick-Ask vouch nudge */}
-                  {askJustCompleted && !hasVouched && (
-                    <div style={{
-                      background: "linear-gradient(135deg, #FEF3C7 0%, #ECFDF5 100%)",
-                      border: `1.5px solid #FDE68A`, borderRadius: 12,
-                      padding: "16px 18px", marginBottom: 16,
-                    }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 4 }}>
-                        {(() => {
-                          const invName = sessionStorage.getItem("vouchfour_inviterName");
-                          const first = invName?.split(" ")[0];
-                          return first
-                            ? `Remember how it felt when ${first} recommended you? You can do that for someone.`
-                            : "Someone believed in you enough to recommend you. You can do that for someone too.";
-                        })()}
-                      </div>
-                      <a
-                        href={(() => {
-                          const t = sessionStorage.getItem("vouchfour_vouchToken");
-                          return t ? `/vouch?token=${t}` : "/start-vouch";
-                        })()}
-                        style={{
-                          display: "inline-block", padding: "10px 20px", marginTop: 6,
-                          background: C.accent, color: "#fff", borderRadius: 8,
-                          fontSize: 13, fontWeight: 600, textDecoration: "none", fontFamily: FONT,
-                        }}
-                      >
-                        Vouch for your top 4 →
-                      </a>
-                      <button
-                        onClick={() => setAskJustCompleted(false)}
-                        style={{
-                          background: "none", border: "none", cursor: "pointer",
-                          fontSize: 12, color: C.sub, fontFamily: FONT, marginLeft: 12,
-                        }}
-                      >
-                        Dismiss
-                      </button>
-                    </div>
-                  )}
 
                   {/* Profile edit form */}
                   {editingProfile && (
@@ -3209,47 +3169,6 @@ export default function PersonPage() {
                           onCancel={handleAskCancel}
                           replyContext={replyContext}
                         />
-                      </div>
-                    )}
-
-                    {/* Post-Quick-Ask vouch nudge */}
-                    {askJustCompleted && !hasVouched && (
-                      <div style={{
-                        background: "linear-gradient(135deg, #FEF3C7 0%, #ECFDF5 100%)",
-                        border: `1.5px solid #FDE68A`, borderRadius: 12,
-                        padding: "16px 18px", marginBottom: 16,
-                      }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: FONT, marginBottom: 4 }}>
-                          {(() => {
-                            const invName = sessionStorage.getItem("vouchfour_inviterName");
-                            const first = invName?.split(" ")[0];
-                            return first
-                              ? `Remember how it felt when ${first} recommended you? You can do that for someone.`
-                              : "Someone believed in you enough to recommend you. You can do that for someone too.";
-                          })()}
-                        </div>
-                        <a
-                          href={(() => {
-                            const t = sessionStorage.getItem("vouchfour_vouchToken");
-                            return t ? `/vouch?token=${t}` : "/start-vouch";
-                          })()}
-                          style={{
-                            display: "inline-block", padding: "10px 20px", marginTop: 6,
-                            background: C.accent, color: "#fff", borderRadius: 8,
-                            fontSize: 13, fontWeight: 600, textDecoration: "none", fontFamily: FONT,
-                          }}
-                        >
-                          Vouch for your top 4 →
-                        </a>
-                        <button
-                          onClick={() => setAskJustCompleted(false)}
-                          style={{
-                            background: "none", border: "none", cursor: "pointer",
-                            fontSize: 12, color: C.sub, fontFamily: FONT, marginLeft: 12,
-                          }}
-                        >
-                          Dismiss
-                        </button>
                       </div>
                     )}
 
