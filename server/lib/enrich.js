@@ -391,11 +391,13 @@ export async function generateSummary(personId, { braveSnippets = [] } = {}) {
   if (person.industry) promptParts.push(`Industry: ${person.industry}`)
   if (person.headline) promptParts.push(`Headline: ${person.headline}`)
 
-  // Apollo org data
+  // Apollo org data (only if the cached Apollo person matches — guards against stale test data)
   if (apolloEnrichRes.rows[0]?.raw_payload) {
     const apolloData = typeof apolloEnrichRes.rows[0].raw_payload === 'string'
       ? JSON.parse(apolloEnrichRes.rows[0].raw_payload) : apolloEnrichRes.rows[0].raw_payload
-    const org = apolloData.person?.organization || apolloData.organization
+    const apolloPersonName = apolloData.person?.name
+    const apolloNameOk = !apolloPersonName || namesMatch(person.display_name, apolloPersonName)
+    const org = apolloNameOk ? (apolloData.person?.organization || apolloData.organization) : null
     if (org) {
       const orgParts = []
       if (org.estimated_num_employees) orgParts.push(`~${org.estimated_num_employees} employees`)
@@ -611,9 +613,18 @@ export async function enrichPerson(personId) {
     let apolloData = null
 
     if (cached.rows.length > 0) {
-      console.log(`[Enrich] Apollo ${Date.now() - start}ms | ${person.display_name} | cached`)
-      apolloData = cached.rows[0].raw_payload
-      steps.apollo = 'cached'
+      const cachedPayload = typeof cached.rows[0].raw_payload === 'string'
+        ? JSON.parse(cached.rows[0].raw_payload) : cached.rows[0].raw_payload
+      // Validate cached Apollo data still matches this person (guards against stale test data)
+      if (cachedPayload?.person?.name && !namesMatch(person.display_name, cachedPayload.person.name)) {
+        console.log(`[Enrich] Apollo cache name mismatch: stored="${person.display_name}" vs cached="${cachedPayload.person.name}", deleting stale record`)
+        await query('DELETE FROM person_enrichment WHERE person_id = $1 AND source = $2', [personId, 'apollo'])
+        steps.apollo = 'name_mismatch'
+      } else {
+        console.log(`[Enrich] Apollo ${Date.now() - start}ms | ${person.display_name} | cached`)
+        apolloData = cachedPayload
+        steps.apollo = 'cached'
+      }
     } else if (APOLLO_API_KEY && person.linkedin_url) {
       const normalizedUrl = normalizeLinkedInUrl(person.linkedin_url)
       const reqBody = { linkedin_url: normalizedUrl || person.linkedin_url, reveal_personal_emails: true }
