@@ -1735,6 +1735,13 @@ export default function NetworkBrainPage() {
   const [slashHighlighted, setSlashHighlighted] = useState(false);
   const revealTimersRef = useRef([]);
 
+  // Onboarding v2 state — fully conversational (no special UI cards)
+  const [onboardingStep, setOnboardingStep] = useState(null); // null | 1 | 2 | 3
+  const [onboardingHistory, setOnboardingHistory] = useState([]);
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const [onboardingGivesLabels, setOnboardingGivesLabels] = useState([]); // labels from mirror step
+  const [starterPrompts, setStarterPrompts] = useState([]);
+
   // Slash command state
   const [slashMode, setSlashMode] = useState(null); // 'ask' | 'group' | null
   const [slashQuery, setSlashQuery] = useState("");
@@ -1903,6 +1910,324 @@ export default function NetworkBrainPage() {
     return null;
   }
 
+  // ── Onboarding v2: Guided Discovery ──────────────────────────────────
+
+  // Strip [[COMPLETE]], [[GIVES:...]], [[STARTERS:...]] markers from streaming text
+  function cleanStreamingText(text) {
+    return text
+      .replace(/\s*\[\[COMPLETE\]\]\s*$/, "")
+      .replace(/\s*\[\[GIVES:[^\]]*\]\]\s*$/, "")
+      .replace(/\s*\[\[STARTERS:[^\]]*\]\]\s*$/, "")
+      // Strip partial markers mid-stream (e.g., "[[COMPLE" or "[[GIVES:label1|lab")
+      .replace(/\s*\[\[[^\]]*$/, "")
+      .trimEnd();
+  }
+
+  // Helper: read SSE stream from onboarding endpoint, call onToken/onDone/onError
+  async function readOnboardingSSE(res, { onToken, onDone, onError }) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuffer = "";
+    let fullText = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      sseBuffer += decoder.decode(value, { stream: true });
+      const chunks = sseBuffer.split("\n\n");
+      sseBuffer = chunks.pop();
+      for (const chunk of chunks) {
+        if (!chunk.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(chunk.slice(6));
+          if (event.type === "token") {
+            fullText += event.text;
+            onToken(cleanStreamingText(fullText));
+          } else if (event.type === "done") {
+            onDone(event);
+          } else if (event.type === "error") {
+            onError(new Error(event.message || "AI service error"));
+          }
+        } catch (parseErr) {
+          if (parseErr.message && !parseErr.message.includes("Unexpected end of JSON")) throw parseErr;
+        }
+      }
+    }
+  }
+
+  async function startOnboardingV2(name) {
+    setOnboardingStep(1);
+    setOnboardingLoading(true);
+    capture("onboarding_v2_started");
+    // Show intro immediately, then shimmer while waiting for Claude's first question
+    const introMsg = {
+      role: "brain", isWelcome: true,
+      text: `Hey ${name}! I'm your Network Brain. VouchFour is built on a simple idea: your professional network is full of people whose experience and skills could be incredibly helpful to you — and vice versa — but most of us don't know where best to turn when we need support.\n\nThat's where I come in. I know a lot about your background and about the people already in your network, and I'm great at helping you find exactly the right people to talk to. To get us started today, I'd love to learn a bit more about your recent motivations and insights.`,
+    };
+    setMessages([
+      introMsg,
+      { role: "brain", text: "", people: [], streaming: true },
+    ]);
+    setLoading(false);
+    try {
+      const res = await fetch("/api/onboarding-v2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ message: "[start]", history: [] }),
+      });
+      if (!res.ok) throw new Error("Onboarding fetch failed");
+
+      await readOnboardingSSE(res, {
+        onToken(streamText) {
+          setMessages([
+            introMsg,
+            { role: "brain", text: streamText, people: [], streaming: true },
+          ]);
+        },
+        onDone(event) {
+          setMessages([
+            introMsg,
+            { role: "brain", text: event.full_text, people: [] },
+          ]);
+          setOnboardingHistory([{ role: "assistant", content: event.full_text }]);
+        },
+        onError(err) { throw err; },
+      });
+    } catch {
+      setMessages([{
+        role: "brain", isWelcome: true,
+        text: `Hey ${name}, welcome! I'm your Network Brain — a thinking partner who knows your professional world. What are you working on these days?`,
+      }]);
+      setOnboardingStep(null);
+    } finally {
+      setOnboardingLoading(false);
+    }
+  }
+
+  async function handleOnboardingSubmit(userMessage) {
+    if (!userMessage.trim() || onboardingLoading) return;
+    const q = userMessage.trim();
+    setInput("");
+    setOnboardingLoading(true);
+
+    const newHistory = [...onboardingHistory, { role: "user", content: q }];
+    setOnboardingHistory(newHistory);
+    setMessages(prev => [
+      ...prev,
+      { role: "user", text: q },
+      { role: "brain", text: "", people: [], streaming: true },
+    ]);
+
+    try {
+      const res = await fetch("/api/onboarding-v2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ message: q, history: newHistory }),
+      });
+      if (!res.ok) throw new Error("Onboarding fetch failed");
+
+      // Read orientation SSE stream
+      let orientationComplete = false;
+      let orientationText = "";
+
+      await readOnboardingSSE(res, {
+        onToken(streamText) {
+          setMessages(prev => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last?.streaming) {
+              updated[updated.length - 1] = { ...last, text: streamText };
+            }
+            return updated;
+          });
+        },
+        onDone(event) {
+          orientationComplete = event.orientation_complete;
+          orientationText = event.full_text;
+        },
+        onError(err) { throw err; },
+      });
+
+      const updatedHistory = [...newHistory, { role: "assistant", content: orientationText }];
+      setOnboardingHistory(updatedHistory);
+
+      if (orientationComplete) {
+        // Finalize orientation wrap-up, then stream mirror below it
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.streaming) {
+            updated[updated.length - 1] = { ...last, text: orientationText, streaming: false };
+          }
+          return [...updated, { role: "brain", text: "", people: [], streaming: true }];
+        });
+
+        // Fetch mirror as SSE stream
+        const mirrorRes = await fetch("/api/onboarding-v2", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ message: "[mirror]", history: updatedHistory }),
+        });
+        if (!mirrorRes.ok) throw new Error("Mirror fetch failed");
+
+        await readOnboardingSSE(mirrorRes, {
+          onToken(streamText) {
+            setMessages(prev => {
+              const updated = [...prev];
+              const last = updated[updated.length - 1];
+              if (last?.streaming) {
+                updated[updated.length - 1] = { ...last, text: streamText };
+              }
+              return updated;
+            });
+          },
+          onDone(event) {
+            setOnboardingGivesLabels(event.gives_labels || []);
+            setOnboardingHistory(prev => [...prev, { role: "assistant", content: event.full_text }]);
+            setMessages(prev => {
+              const updated = [...prev];
+              const last = updated[updated.length - 1];
+              if (last?.streaming) {
+                updated[updated.length - 1] = { ...last, text: event.full_text, streaming: false };
+              }
+              return updated;
+            });
+            setOnboardingStep(2);
+            capture("onboarding_v2_mirror_shown", { gives_count: (event.gives_labels || []).length });
+          },
+          onError(err) { throw err; },
+        });
+      } else {
+        // Still in orientation — finalize the streamed reply
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.streaming) {
+            updated[updated.length - 1] = { ...last, text: orientationText, streaming: false };
+          }
+          return updated;
+        });
+      }
+    } catch {
+      setMessages(prev => prev.filter(m => !m.streaming).concat([
+        { role: "brain", text: "Something went wrong — try again.", people: [] },
+      ]));
+    } finally {
+      setOnboardingLoading(false);
+      setTimeout(() => scrollToLatest(), 50);
+    }
+  }
+
+  async function handleGivesResponse(userMessage) {
+    if (!userMessage.trim() || onboardingLoading) return;
+    const q = userMessage.trim();
+    setInput("");
+    setOnboardingLoading(true);
+
+    setMessages(prev => [
+      ...prev,
+      { role: "user", text: q },
+      { role: "brain", text: "", people: [], streaming: true },
+    ]);
+
+    try {
+      const res = await fetch("/api/onboarding-v2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          message: "[confirm-gives]",
+          history: onboardingHistory,
+          user_response: q,
+          gives_labels: onboardingGivesLabels,
+        }),
+      });
+      if (!res.ok) throw new Error("ConfirmGives fetch failed");
+
+      await readOnboardingSSE(res, {
+        onToken(streamText) {
+          setMessages(prev => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last?.streaming) {
+              updated[updated.length - 1] = { ...last, text: streamText };
+            }
+            return updated;
+          });
+        },
+        onDone(event) {
+          setMessages(prev => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last?.streaming) {
+              updated[updated.length - 1] = { ...last, text: event.full_text, streaming: false };
+            }
+            return updated;
+          });
+          setStarterPrompts(event.starters || []);
+          setOnboardingStep(3);
+        },
+        onError(err) { throw err; },
+      });
+    } catch {
+      setMessages(prev => prev.filter(m => !m.streaming).concat([
+        { role: "brain", text: "Great — I've saved your expertise areas! Now let me show you what your network brings. To get us started, here are some of the kinds of questions you might ask me:", people: [] },
+      ]));
+      setStarterPrompts([
+        { prompt: "Who in my network has been through a similar career transition and could share what they learned?" },
+        { prompt: "Who should I be talking to that I might not know about yet?" },
+      ]);
+      setOnboardingStep(3);
+    } finally {
+      setOnboardingLoading(false);
+      setTimeout(() => scrollToLatest(), 50);
+    }
+  }
+
+  async function handleStarterClick(prompt) {
+    // Mark onboarding complete (fire-and-forget)
+    capture("onboarding_v2_completed", { starter_prompt: prompt });
+    fetch("/api/onboarding-v2", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ message: "[complete]" }),
+    }).catch(() => {});
+
+    // Clear onboarding state
+    setOnboardingStep(null);
+    setOnboardingHistory([]);
+    setOnboardingGivesLabels([]);
+    setStarterPrompts([]);
+
+    // Clear welcome messages and submit as normal Brain query
+    setMessages(prev => prev.filter(m => !m.isWelcome));
+    askQuestion(prompt);
+  }
+
+  function handleSkipOnboarding() {
+    // Mark complete and transition to normal Brain
+    capture("onboarding_v2_skipped", { step: onboardingStep });
+    fetch("/api/onboarding-v2", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ message: "[complete]" }),
+    }).catch(() => {});
+    setOnboardingStep(null);
+    setOnboardingHistory([]);
+    setOnboardingGivesLabels([]);
+    setStarterPrompts([]);
+    const name = user?.name?.split(" ")[0] || "there";
+    setMessages([{
+      role: "brain", isWelcome: true,
+      text: `Hey ${name}, welcome! What can I help with today?`,
+    }]);
+  }
+
   // Welcome message — context-aware greeting on fresh page load
   const welcomeInsertedRef = useRef(false);
   useEffect(() => {
@@ -1916,7 +2241,7 @@ export default function NetworkBrainPage() {
     const name = user.name?.split(" ")[0] || "there";
 
     if (!user.has_vouched && !user.welcome_seen) {
-      // Scenario A: first visit, no vouch — full sequenced welcome tour
+      // Scenario A: first visit — welcome tour (session 1, shows what Brain can do)
       (async () => {
         try {
           // Show shimmer while waiting for Claude
@@ -2066,6 +2391,9 @@ export default function NetworkBrainPage() {
           }]);
         }
       })();
+    } else if (!user.onboarding_v2_completed) {
+      // Scenario D: guided discovery (session 2+, learns about the user)
+      startOnboardingV2(name);
     } else if (!user.has_vouched && user.welcome_seen) {
       // Scenario B: returning, no vouch — same welcome as C (normal Brain handles vouch nudge)
       (async () => {
@@ -2391,6 +2719,19 @@ export default function NetworkBrainPage() {
 
   function handleSubmit(e) {
     e.preventDefault();
+    // If in onboarding v2, route to appropriate handler
+    if (onboardingStep === 1) {
+      handleOnboardingSubmit(input);
+      return;
+    }
+    if (onboardingStep === 2) {
+      handleGivesResponse(input);
+      return;
+    }
+    if (onboardingStep === 3) {
+      handleStarterClick(input);
+      return;
+    }
     // If in vouch mode, route to vouch handler
     if (vouchMode) {
       handleVouchInput(input);
@@ -2608,13 +2949,12 @@ export default function NetworkBrainPage() {
     setInput("");
 
     // Get the last substantive user question for context (skip slash commands)
-    const lastUserMsg = [...messages].reverse().find(m => m.role === "user" && !m.text.startsWith("/"));
+    const lastUserMsg = [...messages].reverse().find(m => m.role === "user" && !m.text?.startsWith("/"));
     // Also include the last brain response for richer context
-    const lastBrainMsg2 = [...messages].reverse().find(m => m.role === "brain");
-    const conversationContext = lastBrainMsg2?.text
-      ? `${lastUserMsg?.text || ""}\n\nBrain's response: ${lastBrainMsg2.text.slice(0, 500)}`
+    const lastBrainMsg2 = [...messages].reverse().find(m => m.role === "brain" && typeof m.text === "string" && m.text.length > 0);
+    const question = lastBrainMsg2?.text
+      ? `${lastUserMsg?.text || ""}\n\nBrain's response: ${String(lastBrainMsg2.text).slice(0, 500)}`
       : (lastUserMsg?.text || "");
-    const question = conversationContext;
 
     // Set up ask mode and trigger draft
     setSelectedPeople(new Set([person.id]));
@@ -2623,8 +2963,8 @@ export default function NetworkBrainPage() {
     setAskError(null);
 
     try {
-      // Check if 2nd+ degree — need context
-      if (person.degree >= 2 && !person.career_overlap?.length) {
+      // Check if 2nd+ degree — need context (skip if triggered from Brain recommendation)
+      if (person.degree >= 2 && !person.career_overlap?.length && !person.fromBrainRecommendation) {
         // Fetch intermediary info
         let intermediaries = {};
         try {
@@ -4518,14 +4858,14 @@ export default function NetworkBrainPage() {
 
 
                 {/* Loading indicator */}
-                {loading && !bioMode && !vouchMode && (
+                {(loading || onboardingLoading) && !bioMode && !vouchMode && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
                     <div style={{
                       width: 8, height: 8, borderRadius: "50%",
                       background: C.accent, animation: "pulse 1.2s infinite",
                     }} />
                     <span style={{ fontSize: 13, color: C.sub, fontFamily: FONT, fontStyle: "italic" }}>
-                      Searching your network...
+                      {onboardingLoading ? "Thinking..." : "Searching your network..."}
                     </span>
                     <style>{`@keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }`}</style>
                   </div>
@@ -4541,6 +4881,30 @@ export default function NetworkBrainPage() {
                       }} />
                     ))}
                     <style>{`@keyframes typingDot { 0%, 60%, 100% { opacity: 0.2; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-4px); } }`}</style>
+                  </div>
+                )}
+
+                {/* ── Onboarding v2: Step 3 — Starter Prompts (clickable) ── */}
+                {onboardingStep === 3 && starterPrompts.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                    {starterPrompts.map((s, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleStarterClick(s.prompt)}
+                        style={{
+                          padding: "12px 16px", borderRadius: 12,
+                          fontSize: 13, fontFamily: FONT, fontWeight: 500,
+                          background: "#fff", color: C.ink,
+                          border: `1.5px solid ${C.chipBorder}`,
+                          cursor: "pointer", transition: "all 0.15s",
+                          textAlign: "left", lineHeight: 1.5,
+                        }}
+                        onMouseEnter={e => { e.target.style.background = C.accentLight; e.target.style.borderColor = C.accent; }}
+                        onMouseLeave={e => { e.target.style.background = "#fff"; e.target.style.borderColor = C.chipBorder; }}
+                      >
+                        {s.prompt}
+                      </button>
+                    ))}
                   </div>
                 )}
 
@@ -4815,7 +5179,7 @@ export default function NetworkBrainPage() {
                             </button>
                           ) : (
                             <button
-                              onClick={handleDraftMessages}
+                              onClick={() => handleDraftMessages()}
                               style={{
                                 padding: "8px 16px", background: C.accent,
                                 color: "#fff", border: "none", borderRadius: 8,
@@ -5057,7 +5421,8 @@ export default function NetworkBrainPage() {
                 <form
                   onSubmit={handleSubmit}
                   style={{
-                    display: "flex", gap: 8, alignItems: "flex-end",
+                    display: "flex",
+                    gap: 8, alignItems: "flex-end",
                   }}
                 >
                   <textarea
@@ -5065,7 +5430,7 @@ export default function NetworkBrainPage() {
                     value={input}
                     onChange={e => {
                       const val = e.target.value;
-                      (bioMode || vouchMode) ? setInput(val) : handleInputChange(val);
+                      (bioMode || vouchMode || onboardingStep) ? setInput(val) : handleInputChange(val);
                       // Auto-grow: reset to 1 row then expand to scrollHeight
                       e.target.style.height = "auto";
                       e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
@@ -5087,12 +5452,18 @@ export default function NetworkBrainPage() {
                       ? (vouchPendingUrl ? "Type their name..." : "Type a name...")
                       : bioMode
                         ? "Share your experience..."
-                        : (slashMode === "compare" || slashMode === "group")
-                          ? "Search your network..."
-                          : (hasInteracted || messages.length > 0
-                            ? (firstName ? `Ask about your network, ${firstName}...` : "Ask about your network...")
-                            : PLACEHOLDER_PROMPTS[placeholderIndex])}
-                    disabled={loading || welcomeRevealing || bioLoading || vouchLoading}
+                        : onboardingStep === 1
+                          ? "Share your thoughts..."
+                          : onboardingStep === 2
+                            ? "Tell me what you think..."
+                          : onboardingStep === 3
+                            ? "Or ask your own question..."
+                          : (slashMode === "compare" || slashMode === "group")
+                            ? "Search your network..."
+                            : (hasInteracted || messages.length > 0
+                              ? (firstName ? `Ask about your network, ${firstName}...` : "Ask about your network...")
+                              : PLACEHOLDER_PROMPTS[placeholderIndex])}
+                    disabled={loading || welcomeRevealing || bioLoading || vouchLoading || onboardingLoading}
                     autoFocus
                     rows={1}
                     style={{
@@ -5130,7 +5501,7 @@ export default function NetworkBrainPage() {
                   </button>
                 </form>
                 {/* Slash command hints — clickable to open guide (hidden in bio mode + when keyboard open) */}
-                {bioMode || vouchMode || (isMobile && mobileKeyboardOpen) ? null : isMobile ? (
+                {bioMode || vouchMode || onboardingStep || (isMobile && mobileKeyboardOpen) ? null : isMobile ? (
                   <div
                     onClick={() => setSlashGuideOpen(true)}
                     style={{
