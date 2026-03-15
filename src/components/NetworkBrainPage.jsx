@@ -1652,6 +1652,7 @@ export default function NetworkBrainPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [activePerson, setActivePerson] = useState(null); // person object for detail panel
+  const activePersonIdRef = useRef(null); // guards against stale fetchFullPerson overwrites
   const bottomRef = useRef(null);
   const lastBrainRef = useRef(null);
   const inputRef = useRef(null);
@@ -2008,8 +2009,14 @@ export default function NetworkBrainPage() {
                         if (idx === 0 && !isMobile) {
                           setNetworkBinOpen(false);
                         } else if ((idx === 1 || idx === 2) && msg.highlight_person && !isMobile) {
-                          fetchFullPerson(msg.highlight_person.id, msg.highlight_person).then(p => setActivePerson(p));
+                          const hpId = msg.highlight_person.id;
+                          activePersonIdRef.current = hpId;
+                          setActivePerson(msg.highlight_person);
+                          fetchFullPerson(hpId, msg.highlight_person).then(p => {
+                            if (activePersonIdRef.current === hpId) setActivePerson(p);
+                          });
                         } else if (idx === 3) {
+                          activePersonIdRef.current = null;
                           setActivePerson(null);
                           setSlashHighlighted(true);
                           setTimeout(() => scrollToLatest(), 50);
@@ -2041,7 +2048,11 @@ export default function NetworkBrainPage() {
                     streaming: false, isWelcome: true,
                   }]);
                   if (!isMobile && event.people?.length > 0) {
-                    setTimeout(() => setActivePerson(event.people[0]), 600);
+                    const firstP = event.people[0];
+                    setTimeout(() => {
+                      activePersonIdRef.current = firstP.id;
+                      setActivePerson(firstP);
+                    }, 600);
                   }
                 }
               } catch {}
@@ -2996,11 +3007,16 @@ export default function NetworkBrainPage() {
 
   // Open/close person detail panel
   function handleOpenPerson(person) {
+    const pid = person?.id || null;
+    activePersonIdRef.current = pid;
     setActivePerson(person);
     // Fetch full data (career overlap, gives, etc.) in background
-    if (person?.id) fetchFullPerson(person.id, person).then(full => setActivePerson(full));
+    if (pid) fetchFullPerson(pid, person).then(full => {
+      if (activePersonIdRef.current === pid) setActivePerson(full);
+    });
   }
   function handleClosePerson() {
+    activePersonIdRef.current = null;
     setActivePerson(null);
   }
 
@@ -5243,8 +5259,7 @@ export default function NetworkBrainPage() {
           onClose={() => setNetworkBinOpen(false)}
           onSelectPerson={p => {
             setNetworkBinOpen(false);
-            setActivePerson(p);
-            if (p?.id) fetchFullPerson(p.id, p).then(full => setActivePerson(full));
+            handleOpenPerson(p);
           }}
           onVouch={() => {
             setNetworkBinOpen(false);
