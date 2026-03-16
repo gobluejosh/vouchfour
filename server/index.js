@@ -8496,28 +8496,59 @@ What ${senderFirst} wants to discuss: "${question}"` }],
   }
 
   // ─── OAuth: Protected Resource Metadata ───────────────────────────────
-  if (req.method === 'GET' && req.url === '/.well-known/oauth-protected-resource') {
+  // Claude tries path-appended form first (/.well-known/oauth-protected-resource/mcp), then root
+  if (req.method === 'GET' && (req.url === '/.well-known/oauth-protected-resource' || req.url === '/.well-known/oauth-protected-resource/mcp')) {
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
       resource: BASE_URL,
       authorization_servers: [BASE_URL],
+      bearer_methods_supported: ['header'],
       scopes_supported: ['network:read'],
     }))
     return
   }
 
   // ─── OAuth: Authorization Server Metadata ─────────────────────────────
-  if (req.method === 'GET' && req.url === '/.well-known/oauth-authorization-server') {
+  if (req.method === 'GET' && (req.url === '/.well-known/oauth-authorization-server' || req.url === '/.well-known/oauth-authorization-server/mcp')) {
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
       issuer: BASE_URL,
       authorization_endpoint: `${BASE_URL}/oauth/authorize`,
       token_endpoint: `${BASE_URL}/oauth/token`,
+      registration_endpoint: `${BASE_URL}/oauth/register`,
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code'],
+      token_endpoint_auth_methods_supported: ['none'],
       code_challenge_methods_supported: ['S256'],
       scopes_supported: ['network:read'],
     }))
+    return
+  }
+
+  // ─── OAuth: Dynamic Client Registration (RFC 7591) ───────────────────
+  if (req.method === 'POST' && req.url === '/oauth/register') {
+    try {
+      const body = await readBody(req)
+      const clientId = crypto.randomUUID()
+      const clientName = body.client_name || 'Unknown MCP Client'
+      const redirectUris = body.redirect_uris || []
+
+      console.log(`[OAuth DCR] Registered client "${clientName}" → ${clientId} (redirects: ${redirectUris.join(', ')})`)
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        client_id: clientId,
+        client_name: clientName,
+        redirect_uris: redirectUris,
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+      }))
+    } catch (err) {
+      console.error('[OAuth DCR error]', err)
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'server_error' }))
+    }
     return
   }
 
@@ -8730,6 +8761,34 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
   // ─── MCP Endpoint ─────────────────────────────────────────────────────
   if (req.url === '/mcp' || req.url.startsWith('/mcp?')) {
+    // HEAD — liveness check (Claude sends this first, unauthenticated)
+    if (req.method === 'HEAD') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end()
+      return
+    }
+
+    // GET — not supported for this endpoint (no SSE stream)
+    if (req.method === 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'POST' })
+      res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }))
+      return
+    }
+
+    // DELETE — session termination (just acknowledge)
+    if (req.method === 'DELETE') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: true }))
+      return
+    }
+
+    // POST — the actual MCP JSON-RPC handler
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'POST' })
+      res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }))
+      return
+    }
+
     // Validate OAuth token
     const oauthUser = await validateOAuthToken(req)
     if (!oauthUser) {
@@ -8750,7 +8809,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
 
     const userId = oauthUser.id
 
-    if (req.method === 'POST') {
+    {
       const body = await readBody(req)
 
       // Handle JSON-RPC requests manually (simpler than wiring SDK transport into raw http handler)
@@ -8768,7 +8827,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
         res.end(JSON.stringify({
           jsonrpc: '2.0',
           result: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: '2025-03-26',
             capabilities: { tools: {} },
             serverInfo: { name: 'VouchFour', version: '1.0.0' },
           },
@@ -9017,10 +9076,6 @@ What ${senderFirst} wants to discuss: "${question}"` }],
       return
     }
 
-    // Non-POST to /mcp
-    res.writeHead(405, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }))
-    return
   }
 
   // Not an API route — try serving static files (production)
