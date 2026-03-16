@@ -8930,15 +8930,24 @@ What ${senderFirst} wants to discuss: "${question}"` }],
             }
 
             // Enrich with recommendation path info
-            const vouchLabel = d => d === 1 ? 'directly recommended by you' : d === 2 ? 'recommended through 1 person' : d === 3 ? 'recommended through 2 people' : 'in your network'
             const talentMap = new Map(talent.map(t => [t.id, t]))
+            const resultIds = results.map(r => r.personId)
+            const pathMap = await getVouchPaths(userId, resultIds)
+            const pathLabel = (personId) => {
+              const path = pathMap.get(personId)
+              if (!path || path.length < 2) return 'in your network'
+              // path = [you, intermediary1, ..., person] — skip first (you) and last (them)
+              const intermediaries = path.slice(1, -1).map(n => n.name)
+              if (intermediaries.length === 0) return 'directly recommended by you'
+              return `recommended through ${intermediaries.join(' → ')}`
+            }
             const people = results.map(r => {
               const t = talentMap.get(r.personId)
               return {
                 name: r.displayName,
                 title: r.title || null,
                 company: r.company || null,
-                relationship: vouchLabel(t?.degree),
+                relationship: pathLabel(r.personId),
                 relevance_score: Math.round(r.topSimilarity * 100),
                 matched_expertise: r.matchedChunks.slice(0, 3).map(c => c.text.slice(0, 200)),
                 vouchfour_url: `${BASE_URL}/person/${r.personId}`,
@@ -9017,16 +9026,21 @@ What ${senderFirst} wants to discuss: "${question}"` }],
                 [matchIds]
               )
               const detailMap = new Map(detailResult.rows.map(r => [r.id, r]))
-              const talentMap = new Map(matches.map(t => [t.id, t]))
-              const vouchLabel = deg => deg === 1 ? 'directly recommended by you' : deg === 2 ? 'recommended through 1 person' : deg === 3 ? 'recommended through 2 people' : 'in your network'
+              const pathMap = await getVouchPaths(userId, matchIds)
+              const pathLabel = (personId) => {
+                const path = pathMap.get(personId)
+                if (!path || path.length < 2) return 'in your network'
+                const intermediaries = path.slice(1, -1).map(n => n.name)
+                if (intermediaries.length === 0) return 'directly recommended by you'
+                return `recommended through ${intermediaries.join(' → ')}`
+              }
               people = matchIds.map(id => {
                 const d = detailMap.get(id)
-                const t = talentMap.get(id)
                 return {
                   name: d?.display_name || null,
                   title: d?.current_title || null,
                   company: d?.current_company || null,
-                  relationship: vouchLabel(t?.degree),
+                  relationship: pathLabel(id),
                   vouchfour_url: `${BASE_URL}/person/${id}`,
                 }
               }).filter(p => p.name)
