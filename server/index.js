@@ -1,6 +1,7 @@
 import './lib/env.js'
 import http from 'node:http'
 import crypto from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -234,8 +235,17 @@ function readBody(req) {
     const chunks = []
     req.on('data', c => chunks.push(c))
     req.on('end', () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString())) }
-      catch { resolve({}) }
+      const raw = Buffer.concat(chunks).toString()
+      const contentType = req.headers['content-type'] || ''
+      if (contentType.includes('application/x-www-form-urlencoded')) {
+        const params = new URLSearchParams(raw)
+        const obj = {}
+        for (const [k, v] of params) obj[k] = v
+        resolve(obj)
+      } else {
+        try { resolve(JSON.parse(raw)) }
+        catch { resolve({}) }
+      }
     })
     req.on('error', reject)
   })
@@ -277,6 +287,40 @@ async function validateSession(req) {
   )
   return result.rows[0] || null
 }
+
+// ─── OAuth token validation ─────────────────────────────────────────────
+async function validateOAuthToken(req) {
+  const authHeader = req.headers.authorization
+  if (!authHeader?.startsWith('Bearer ')) return null
+  const token = authHeader.slice(7)
+  const result = await query(
+    `SELECT ot.person_id, p.id, p.display_name, p.linkedin_url, p.email,
+            p.current_title, p.current_company
+     FROM oauth_tokens ot JOIN people p ON p.id = ot.person_id
+     WHERE ot.token = $1 AND ot.expires_at > NOW() AND ot.revoked_at IS NULL`,
+    [token]
+  )
+  return result.rows[0] || null
+}
+
+// ─── MCP rate limiting ──────────────────────────────────────────────────
+const mcpUserCounts = new Map() // userId -> { count, resetAt }
+const MCP_RATE_LIMIT_WINDOW = 60 * 60 * 1000 // 1 hour
+const MCP_RATE_LIMIT_MAX = 100
+
+function isMcpRateLimited(userId) {
+  const now = Date.now()
+  let entry = mcpUserCounts.get(userId)
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + MCP_RATE_LIMIT_WINDOW }
+    mcpUserCounts.set(userId, entry)
+  }
+  entry.count++
+  return entry.count > MCP_RATE_LIMIT_MAX
+}
+
+// ─── MCP request context ────────────────────────────────────────────────
+const mcpRequestContext = new AsyncLocalStorage()
 
 // ─── Unsubscribe token helpers ─────────────────────────────────────────────
 const UNSUB_SECRET = ADMIN_SECRET || 'vouchfour-unsub-key'
@@ -8436,6 +8480,546 @@ What ${senderFirst} wants to discuss: "${question}"` }],
       res.writeHead(500)
       res.end(JSON.stringify({ error: 'Internal server error' }))
     }
+    return
+  }
+
+  // ─── CORS for OAuth + MCP routes ──────────────────────────────────────
+  if (req.url.startsWith('/mcp') || req.url.startsWith('/.well-known/') || req.url.startsWith('/oauth/')) {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-session-id')
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+  }
+
+  // ─── OAuth: Protected Resource Metadata ───────────────────────────────
+  if (req.method === 'GET' && req.url === '/.well-known/oauth-protected-resource') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      resource: BASE_URL,
+      authorization_servers: [BASE_URL],
+      scopes_supported: ['network:read'],
+    }))
+    return
+  }
+
+  // ─── OAuth: Authorization Server Metadata ─────────────────────────────
+  if (req.method === 'GET' && req.url === '/.well-known/oauth-authorization-server') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      issuer: BASE_URL,
+      authorization_endpoint: `${BASE_URL}/oauth/authorize`,
+      token_endpoint: `${BASE_URL}/oauth/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      code_challenge_methods_supported: ['S256'],
+      scopes_supported: ['network:read'],
+    }))
+    return
+  }
+
+  // ─── OAuth: Authorize Endpoint ────────────────────────────────────────
+  if (req.url.startsWith('/oauth/authorize')) {
+    const urlObj = new URL(req.url, BASE_URL)
+    const clientId = urlObj.searchParams.get('client_id') || ''
+    const redirectUri = urlObj.searchParams.get('redirect_uri') || ''
+    const codeChallenge = urlObj.searchParams.get('code_challenge') || ''
+    const codeChallengeMethod = urlObj.searchParams.get('code_challenge_method') || ''
+    const state = urlObj.searchParams.get('state') || ''
+    const scope = urlObj.searchParams.get('scope') || 'network:read'
+
+    if (req.method === 'GET') {
+      // Validate required params
+      if (!clientId || !redirectUri || !codeChallenge || codeChallengeMethod !== 'S256') {
+        res.writeHead(400, { 'Content-Type': 'text/html' })
+        res.end('<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Invalid Request</h2><p>Missing or invalid OAuth parameters.</p></body></html>')
+        return
+      }
+
+      // Check if user is logged in
+      const session = await validateSession(req)
+
+      if (!session) {
+        // Show login form
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>VouchFour — Sign In</title></head>
+<body style="font-family:'Inter',sans-serif;background:#FAF9F6;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
+<div style="background:#fff;border-radius:16px;padding:32px;max-width:400px;width:90%;box-shadow:0 4px 16px rgba(0,0,0,0.08)">
+  <h2 style="margin:0 0 8px;color:#1E1B18;font-size:20px">Sign in to VouchFour</h2>
+  <p style="color:#78716C;font-size:14px;margin:0 0 20px">To authorize access to your network, sign in first.</p>
+  <form method="POST" action="/oauth/authorize?${urlObj.searchParams.toString()}">
+    <input type="hidden" name="action" value="login">
+    <input name="identifier" type="text" placeholder="Your LinkedIn profile URL" required
+      style="width:100%;padding:10px 12px;font-size:16px;border:1.5px solid #E7E5E2;border-radius:8px;box-sizing:border-box;font-family:inherit;margin-bottom:12px">
+    <button type="submit" style="width:100%;padding:10px;background:#6D5BD0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">
+      Send login link
+    </button>
+  </form>
+  <p id="msg" style="display:none;color:#16A34A;font-size:13px;margin-top:12px;text-align:center"></p>
+</div></body></html>`)
+        return
+      }
+
+      // User is logged in — show consent page
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      res.end(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>VouchFour — Authorize</title></head>
+<body style="font-family:'Inter',sans-serif;background:#FAF9F6;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
+<div style="background:#fff;border-radius:16px;padding:32px;max-width:400px;width:90%;box-shadow:0 4px 16px rgba(0,0,0,0.08)">
+  <h2 style="margin:0 0 8px;color:#1E1B18;font-size:20px">Authorize Network Access</h2>
+  <p style="color:#78716C;font-size:14px;margin:0 0 20px">
+    An application wants to search your VouchFour network. This will allow it to see <strong>names, titles, and companies</strong> of people in your network when you ask questions.
+  </p>
+  <p style="color:#78716C;font-size:13px;margin:0 0 20px">Signed in as <strong style="color:#1E1B18">${session.display_name}</strong></p>
+  <form method="POST" action="/oauth/authorize?${urlObj.searchParams.toString()}">
+    <input type="hidden" name="action" value="approve">
+    <div style="display:flex;gap:8px">
+      <a href="${redirectUri}?error=access_denied&state=${encodeURIComponent(state)}"
+        style="flex:1;padding:10px;background:#F5F5F4;color:#78716C;border:1px solid #E7E5E2;border-radius:8px;font-size:14px;font-weight:600;text-align:center;text-decoration:none;font-family:inherit">
+        Deny
+      </a>
+      <button type="submit" style="flex:1;padding:10px;background:#6D5BD0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">
+        Authorize
+      </button>
+    </div>
+  </form>
+</div></body></html>`)
+      return
+    }
+
+    if (req.method === 'POST') {
+      const body = await readBody(req)
+      const action = body.action
+
+      if (action === 'login') {
+        // Handle login — send magic link, then tell user to check email
+        const identifier = (body.identifier || '').trim()
+        if (identifier) {
+          let person = null
+          if (identifier.includes('linkedin.com')) {
+            const normalized = normalizeLinkedInUrl(identifier)
+            if (normalized) {
+              const result = await query('SELECT id, display_name, email, linkedin_url FROM people WHERE linkedin_url = $1', [normalized])
+              person = result.rows[0] || null
+            }
+          } else {
+            const result = await query('SELECT id, display_name, email, linkedin_url FROM people WHERE LOWER(email) = LOWER($1)', [identifier])
+            person = result.rows[0] || null
+          }
+          if (person && person.email) {
+            const loginToken = crypto.randomUUID()
+            await query(`INSERT INTO login_tokens (token, person_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '7 days')`, [loginToken, person.id])
+            const slug = person.linkedin_url?.split('/in/')?.[1] || ''
+            await sendLoginLinkEmail(person, slug, loginToken)
+            console.log(`[OAuth] Login link sent to ${person.display_name}`)
+          }
+        }
+        // Always show success (don't reveal existence)
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>VouchFour — Check Email</title></head>
+<body style="font-family:'Inter',sans-serif;background:#FAF9F6;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
+<div style="background:#fff;border-radius:16px;padding:32px;max-width:400px;width:90%;box-shadow:0 4px 16px rgba(0,0,0,0.08);text-align:center">
+  <h2 style="margin:0 0 8px;color:#1E1B18;font-size:20px">Check your email</h2>
+  <p style="color:#78716C;font-size:14px;margin:0 0 16px">If we found your account, you'll receive a login link. Click it, then return here to authorize.</p>
+  <a href="/oauth/authorize?${urlObj.searchParams.toString()}" style="color:#6D5BD0;font-size:14px;font-weight:600;text-decoration:none">← Back to authorize</a>
+</div></body></html>`)
+        return
+      }
+
+      if (action === 'approve') {
+        const session = await validateSession(req)
+        if (!session) {
+          res.writeHead(302, { Location: `/oauth/authorize?${urlObj.searchParams.toString()}` })
+          res.end()
+          return
+        }
+
+        // Generate authorization code
+        const code = crypto.randomUUID()
+        await query(
+          `INSERT INTO oauth_codes (code, person_id, client_id, redirect_uri, code_challenge, scope, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '10 minutes')`,
+          [code, session.id, clientId, redirectUri, codeChallenge, scope]
+        )
+
+        console.log(`[OAuth] Authorization code issued for ${session.display_name}`)
+        const redirectUrl = new URL(redirectUri)
+        redirectUrl.searchParams.set('code', code)
+        if (state) redirectUrl.searchParams.set('state', state)
+        res.writeHead(302, { Location: redirectUrl.toString() })
+        res.end()
+        return
+      }
+    }
+    return
+  }
+
+  // ─── OAuth: Token Endpoint ────────────────────────────────────────────
+  if (req.method === 'POST' && req.url === '/oauth/token') {
+    try {
+      const body = await readBody(req)
+      const { grant_type, code, redirect_uri, client_id, code_verifier } = body
+
+      if (grant_type !== 'authorization_code' || !code || !redirect_uri || !client_id || !code_verifier) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'invalid_request', error_description: 'Missing required parameters' }))
+        return
+      }
+
+      // Look up the authorization code
+      const codeResult = await query(
+        `SELECT id, person_id, client_id, redirect_uri, code_challenge, scope
+         FROM oauth_codes
+         WHERE code = $1 AND expires_at > NOW() AND used_at IS NULL`,
+        [code]
+      )
+      const codeRow = codeResult.rows[0]
+
+      if (!codeRow) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'Invalid or expired authorization code' }))
+        return
+      }
+
+      // Validate redirect_uri and client_id match
+      if (codeRow.redirect_uri !== redirect_uri || codeRow.client_id !== client_id) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'Parameter mismatch' }))
+        return
+      }
+
+      // Validate PKCE: SHA256(code_verifier) must equal stored code_challenge
+      const expectedChallenge = crypto.createHash('sha256').update(code_verifier).digest('base64url')
+      if (expectedChallenge !== codeRow.code_challenge) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'PKCE verification failed' }))
+        return
+      }
+
+      // Mark code as used
+      await query('UPDATE oauth_codes SET used_at = NOW() WHERE id = $1', [codeRow.id])
+
+      // Issue access token
+      const accessToken = crypto.randomUUID()
+      const expiresIn = 30 * 24 * 60 * 60 // 30 days in seconds
+      await query(
+        `INSERT INTO oauth_tokens (token, person_id, client_id, scope, expires_at)
+         VALUES ($1, $2, $3, $4, NOW() + INTERVAL '30 days')`,
+        [accessToken, codeRow.person_id, client_id, codeRow.scope]
+      )
+
+      const personResult = await query('SELECT display_name FROM people WHERE id = $1', [codeRow.person_id])
+      console.log(`[OAuth] Access token issued for ${personResult.rows[0]?.display_name || codeRow.person_id}`)
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: expiresIn,
+        scope: codeRow.scope,
+      }))
+    } catch (err) {
+      console.error('[OAuth token error]', err)
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'server_error' }))
+    }
+    return
+  }
+
+  // ─── MCP Endpoint ─────────────────────────────────────────────────────
+  if (req.url === '/mcp' || req.url.startsWith('/mcp?')) {
+    // Validate OAuth token
+    const oauthUser = await validateOAuthToken(req)
+    if (!oauthUser) {
+      res.writeHead(401, {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': `Bearer resource_metadata="${BASE_URL}/.well-known/oauth-protected-resource", scope="network:read"`,
+      })
+      res.end(JSON.stringify({ error: 'Unauthorized' }))
+      return
+    }
+
+    // Rate limit per user
+    if (isMcpRateLimited(oauthUser.id)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Rate limit exceeded. Max 100 queries per hour.' }))
+      return
+    }
+
+    const userId = oauthUser.id
+
+    if (req.method === 'POST') {
+      const body = await readBody(req)
+
+      // Handle JSON-RPC requests manually (simpler than wiring SDK transport into raw http handler)
+      if (!body?.jsonrpc || body.jsonrpc !== '2.0') {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32600, message: 'Invalid JSON-RPC request' }, id: body?.id || null }))
+        return
+      }
+
+      const { method, params, id } = body
+
+      // ── initialize ──
+      if (method === 'initialize') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          result: {
+            protocolVersion: '2024-11-05',
+            capabilities: { tools: {} },
+            serverInfo: { name: 'VouchFour', version: '1.0.0' },
+          },
+          id,
+        }))
+        return
+      }
+
+      // ── notifications/initialized ──
+      if (method === 'notifications/initialized') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ jsonrpc: '2.0', result: {}, id }))
+        return
+      }
+
+      // ── tools/list ──
+      if (method === 'tools/list') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          result: {
+            tools: [
+              {
+                name: 'ask_my_network',
+                description: 'Search your VouchFour professional network by expertise, experience, or situation. Use this when looking for people who can help with something specific. Examples: "who has experience scaling engineering teams?", "anyone who\'s navigated a founder exit?", "who knows about marketplace dynamics?"',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    question: { type: 'string', description: 'What you are looking for in your network — a skill, role, company, industry, or specific expertise.' },
+                  },
+                  required: ['question'],
+                },
+              },
+              {
+                name: 'lookup_network',
+                description: 'Look up specific people in your VouchFour network by name, company, or job function. Use this for direct lookups, not exploratory questions. Examples: "who do I know at Stripe?", "tell me about Sarah Chen", "show me my engineering contacts"',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string', description: 'Person name to search for (partial match)' },
+                    company: { type: 'string', description: 'Company name to filter by (partial match)' },
+                    function: { type: 'string', description: 'Job function to filter by (e.g., engineering, product, marketing)' },
+                  },
+                },
+              },
+            ],
+          },
+          id,
+        }))
+        return
+      }
+
+      // ── tools/call ──
+      if (method === 'tools/call') {
+        const toolName = params?.name
+        const args = params?.arguments || {}
+
+        try {
+          // ── ask_my_network ──
+          if (toolName === 'ask_my_network') {
+            const question = args.question
+            if (!question?.trim()) {
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({
+                jsonrpc: '2.0',
+                result: { content: [{ type: 'text', text: 'Please provide a question to search your network.' }], isError: true },
+                id,
+              }))
+              return
+            }
+
+            const start = Date.now()
+            const talent = await getTalentRecommendations(userId, null)
+            const personIds = talent.map(t => t.id)
+
+            if (personIds.length === 0) {
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({
+                jsonrpc: '2.0',
+                result: { content: [{ type: 'text', text: 'Your VouchFour network is empty. Visit vouchfour.us to vouch for colleagues and build your network.' }] },
+                id,
+              }))
+              return
+            }
+
+            // Semantic search against user's network
+            let results = await semanticSearch(question, { topK: 10, networkPersonIds: personIds, minSimilarity: 0.25 })
+            if (results.length === 0) {
+              results = await semanticSearch(question, { topK: 5, networkPersonIds: personIds, minSimilarity: 0.15 })
+            }
+
+            if (results.length === 0) {
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({
+                jsonrpc: '2.0',
+                result: { content: [{ type: 'text', text: `No matches found in your VouchFour network for "${question}". Try broader terms or a different angle.` }] },
+                id,
+              }))
+              return
+            }
+
+            // Enrich with degree info
+            const talentMap = new Map(talent.map(t => [t.id, t]))
+            const people = results.map(r => {
+              const t = talentMap.get(r.personId)
+              return {
+                name: r.displayName,
+                title: r.title || null,
+                company: r.company || null,
+                connection_degree: t?.degree || null,
+                relevance_score: Math.round(r.topSimilarity * 100),
+                matched_expertise: r.matchedChunks.slice(0, 3).map(c => c.text.slice(0, 200)),
+                vouchfour_url: `${BASE_URL}/person/${r.personId}`,
+              }
+            })
+
+            console.log(`[MCP] ask_my_network for person ${userId} "${question.slice(0, 50)}" → ${people.length} results in ${Date.now() - start}ms`)
+
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              jsonrpc: '2.0',
+              result: {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({ question, network_size: personIds.length, results: people }, null, 2),
+                }],
+              },
+              id,
+            }))
+            return
+          }
+
+          // ── lookup_network ──
+          if (toolName === 'lookup_network') {
+            const { name: nameQuery, company: companyQuery, function: funcQuery } = args
+
+            if (!nameQuery && !companyQuery && !funcQuery) {
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({
+                jsonrpc: '2.0',
+                result: { content: [{ type: 'text', text: 'Please provide at least one of: name, company, or function to look up.' }], isError: true },
+                id,
+              }))
+              return
+            }
+
+            const start = Date.now()
+
+            // Resolve function to ID if provided
+            let jobFunctionId = null
+            if (funcQuery) {
+              const funcResult = await query('SELECT id FROM job_functions WHERE LOWER(name) LIKE LOWER($1) OR LOWER(slug) LIKE LOWER($1)', [`%${funcQuery}%`])
+              jobFunctionId = funcResult.rows[0]?.id || null
+            }
+
+            const talent = await getTalentRecommendations(userId, jobFunctionId)
+            let matches = talent
+
+            // Filter by name
+            if (nameQuery) {
+              const lower = nameQuery.toLowerCase()
+              matches = matches.filter(t => t.display_name.toLowerCase().includes(lower))
+            }
+
+            // Filter by company — need to load structured data
+            if (companyQuery) {
+              const ids = matches.map(t => t.id)
+              if (ids.length > 0) {
+                const companyResult = await query(
+                  'SELECT id, current_company FROM people WHERE id = ANY($1) AND LOWER(current_company) LIKE LOWER($2)',
+                  [ids, `%${companyQuery}%`]
+                )
+                const companyIds = new Set(companyResult.rows.map(r => r.id))
+                matches = matches.filter(t => companyIds.has(t.id))
+              } else {
+                matches = []
+              }
+            }
+
+            // Load structured fields for matches
+            const matchIds = matches.slice(0, 20).map(t => t.id)
+            let people = []
+            if (matchIds.length > 0) {
+              const detailResult = await query(
+                'SELECT id, display_name, current_title, current_company FROM people WHERE id = ANY($1)',
+                [matchIds]
+              )
+              const detailMap = new Map(detailResult.rows.map(r => [r.id, r]))
+              const talentMap = new Map(matches.map(t => [t.id, t]))
+              people = matchIds.map(id => {
+                const d = detailMap.get(id)
+                const t = talentMap.get(id)
+                return {
+                  name: d?.display_name || null,
+                  title: d?.current_title || null,
+                  company: d?.current_company || null,
+                  connection_degree: t?.degree || null,
+                  vouchfour_url: `${BASE_URL}/person/${id}`,
+                }
+              }).filter(p => p.name)
+            }
+
+            console.log(`[MCP] lookup_network for person ${userId} (name=${nameQuery}, company=${companyQuery}, func=${funcQuery}) → ${people.length} results in ${Date.now() - start}ms`)
+
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              jsonrpc: '2.0',
+              result: {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({ filters: { name: nameQuery || null, company: companyQuery || null, function: funcQuery || null }, total_matches: matches.length, results: people }, null, 2),
+                }],
+              },
+              id,
+            }))
+            return
+          }
+
+          // Unknown tool
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32601, message: `Unknown tool: ${toolName}` },
+            id,
+          }))
+
+        } catch (err) {
+          console.error(`[MCP] Tool ${toolName} error:`, err)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            result: { content: [{ type: 'text', text: 'An error occurred while searching your network. Please try again.' }], isError: true },
+            id,
+          }))
+        }
+        return
+      }
+
+      // Unknown method
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32601, message: `Method not found: ${method}` },
+        id: id || null,
+      }))
+      return
+    }
+
+    // Non-POST to /mcp
+    res.writeHead(405, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }))
     return
   }
 
