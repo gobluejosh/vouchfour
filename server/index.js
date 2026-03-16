@@ -8759,6 +8759,54 @@ What ${senderFirst} wants to discuss: "${question}"` }],
     return
   }
 
+  // ─── MCP: Career overlap helper ──────────────────────────────────────
+  // Given a userId and array of personIds, returns Map<personId, [{org, your_role, their_role, your_years, their_years}]>
+  async function mcpCareerOverlaps(userId, personIds) {
+    if (personIds.length === 0) return new Map()
+    const [userHistRes, networkHistRes] = await Promise.all([
+      query('SELECT organization, title, start_date, end_date, is_current FROM employment_history WHERE person_id = $1', [userId]),
+      query('SELECT person_id, organization, title, start_date, end_date, is_current FROM employment_history WHERE person_id = ANY($1)', [personIds]),
+    ])
+    const userHist = (userHistRes.rows || []).map(r => ({
+      ...r, norm: normalizeOrgName(r.organization),
+      s: r.start_date ? new Date(r.start_date) : new Date('1970-01-01'),
+      e: (r.is_current || !r.end_date) ? new Date() : new Date(r.end_date),
+    }))
+    const netMap = new Map()
+    for (const row of (networkHistRes.rows || [])) {
+      if (!netMap.has(row.person_id)) netMap.set(row.person_id, [])
+      netMap.get(row.person_id).push({
+        ...row, norm: normalizeOrgName(row.organization),
+        s: row.start_date ? new Date(row.start_date) : new Date('1970-01-01'),
+        e: (row.is_current || !row.end_date) ? new Date() : new Date(row.end_date),
+      })
+    }
+    const result = new Map()
+    const fmtYr = d => d ? d.getFullYear() : '?'
+    for (const pid of personIds) {
+      const hist = netMap.get(pid)
+      if (!hist) continue
+      const seen = new Set()
+      const overlaps = []
+      for (const uh of userHist) {
+        for (const ph of hist) {
+          if (uh.norm && ph.norm && uh.norm === ph.norm && uh.s <= ph.e && ph.s <= uh.e && !seen.has(ph.organization)) {
+            seen.add(ph.organization)
+            overlaps.push({
+              organization: ph.organization,
+              your_role: uh.title || null,
+              their_role: ph.title || null,
+              your_years: `${fmtYr(uh.s)}-${uh.is_current ? 'present' : fmtYr(uh.e)}`,
+              their_years: `${fmtYr(ph.s)}-${ph.is_current ? 'present' : fmtYr(ph.e)}`,
+            })
+          }
+        }
+      }
+      if (overlaps.length > 0) result.set(pid, overlaps)
+    }
+    return result
+  }
+
   // ─── MCP Endpoint ─────────────────────────────────────────────────────
   if (req.url === '/mcp' || req.url.startsWith('/mcp?')) {
     // HEAD — liveness check (Claude sends this first, unauthenticated)
@@ -8929,25 +8977,29 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               return
             }
 
-            // Enrich with recommendation path info
+            // Enrich with recommendation paths + career overlaps
             const talentMap = new Map(talent.map(t => [t.id, t]))
             const resultIds = results.map(r => r.personId)
-            const pathMap = await getVouchPaths(userId, resultIds)
+            const [pathMap, overlapMap] = await Promise.all([
+              getVouchPaths(userId, resultIds),
+              mcpCareerOverlaps(userId, resultIds),
+            ])
             const pathLabel = (personId) => {
               const path = pathMap.get(personId)
               if (!path || path.length < 2) return 'in your network'
-              // path = [you, intermediary1, ..., person] — skip first (you) and last (them)
               const intermediaries = path.slice(1, -1).map(n => n.name)
               if (intermediaries.length === 0) return 'directly recommended by you'
               return `recommended through ${intermediaries.join(' → ')}`
             }
             const people = results.map(r => {
               const t = talentMap.get(r.personId)
+              const overlap = overlapMap.get(r.personId) || null
               return {
                 name: r.displayName,
                 title: r.title || null,
                 company: r.company || null,
                 relationship: pathLabel(r.personId),
+                shared_career_history: overlap,
                 relevance_score: Math.round(r.topSimilarity * 100),
                 matched_expertise: r.matchedChunks.slice(0, 3).map(c => c.text.slice(0, 200)),
                 vouchfour_url: `${BASE_URL}/person/${r.personId}`,
@@ -9026,7 +9078,10 @@ What ${senderFirst} wants to discuss: "${question}"` }],
                 [matchIds]
               )
               const detailMap = new Map(detailResult.rows.map(r => [r.id, r]))
-              const pathMap = await getVouchPaths(userId, matchIds)
+              const [pathMap, overlapMap] = await Promise.all([
+                getVouchPaths(userId, matchIds),
+                mcpCareerOverlaps(userId, matchIds),
+              ])
               const pathLabel = (personId) => {
                 const path = pathMap.get(personId)
                 if (!path || path.length < 2) return 'in your network'
@@ -9036,11 +9091,13 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               }
               people = matchIds.map(id => {
                 const d = detailMap.get(id)
+                const overlap = overlapMap.get(id) || null
                 return {
                   name: d?.display_name || null,
                   title: d?.current_title || null,
                   company: d?.current_company || null,
                   relationship: pathLabel(id),
+                  shared_career_history: overlap,
                   vouchfour_url: `${BASE_URL}/person/${id}`,
                 }
               }).filter(p => p.name)
