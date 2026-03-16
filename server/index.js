@@ -8929,7 +8929,8 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               return
             }
 
-            // Enrich with degree info
+            // Enrich with recommendation path info
+            const vouchLabel = d => d === 1 ? 'directly recommended by you' : d === 2 ? 'recommended through 1 person' : d === 3 ? 'recommended through 2 people' : 'in your network'
             const talentMap = new Map(talent.map(t => [t.id, t]))
             const people = results.map(r => {
               const t = talentMap.get(r.personId)
@@ -8937,7 +8938,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
                 name: r.displayName,
                 title: r.title || null,
                 company: r.company || null,
-                connection_degree: t?.degree || null,
+                relationship: vouchLabel(t?.degree),
                 relevance_score: Math.round(r.topSimilarity * 100),
                 matched_expertise: r.matchedChunks.slice(0, 3).map(c => c.text.slice(0, 200)),
                 vouchfour_url: `${BASE_URL}/person/${r.personId}`,
@@ -9017,6 +9018,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               )
               const detailMap = new Map(detailResult.rows.map(r => [r.id, r]))
               const talentMap = new Map(matches.map(t => [t.id, t]))
+              const vouchLabel = deg => deg === 1 ? 'directly recommended by you' : deg === 2 ? 'recommended through 1 person' : deg === 3 ? 'recommended through 2 people' : 'in your network'
               people = matchIds.map(id => {
                 const d = detailMap.get(id)
                 const t = talentMap.get(id)
@@ -9024,7 +9026,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
                   name: d?.display_name || null,
                   title: d?.current_title || null,
                   company: d?.current_company || null,
-                  connection_degree: t?.degree || null,
+                  relationship: vouchLabel(t?.degree),
                   vouchfour_url: `${BASE_URL}/person/${id}`,
                 }
               }).filter(p => p.name)
