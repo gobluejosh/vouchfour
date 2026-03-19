@@ -5672,68 +5672,57 @@ facts should contain concise professional facts gleaned from the user's response
   }
 
   // ─── Onboarding v2: Guided Discovery Flow (fully conversational) ──────
-  if (req.method === 'POST' && req.url === '/api/onboarding-v2') {
+  // ─── Onboarding starters: one-shot personalized starter prompts ────
+  if (req.method === 'POST' && req.url === '/api/onboarding-starters') {
     const start = Date.now()
     try {
       const session = await validateSession(req)
       if (!session) { res.writeHead(401); res.end(JSON.stringify({ error: 'Not authenticated' })); return }
       const userId = session.person_id
-      const userName = session.display_name || 'there'
 
-      const body = await readBody(req)
-      const message = body.message?.trim()
-      if (!message) { res.writeHead(400); res.end(JSON.stringify({ error: 'Message required' })); return }
-
-      // ── Completion signal ──
-      if (message === '[complete]') {
-        await query('UPDATE people SET onboarding_v2_at = NOW() WHERE id = $1', [userId])
-        console.log(`[OnboardingV2] Completed for person ${userId} in ${Date.now() - start}ms`)
-        res.writeHead(200); res.end(JSON.stringify({ done: true })); return
-      }
-
-      // ── Load user context ──
-      const [profileRes, summaryRes, historyRes, inviterRes, networkCountRes] = await Promise.all([
+      const [profileRes, summaryRes, historyRes] = await Promise.all([
         query('SELECT id, display_name, current_title, current_company, location, industry, headline FROM people WHERE id = $1', [userId]),
         query(`SELECT ai_summary FROM person_enrichment WHERE person_id = $1 AND source = 'claude' LIMIT 1`, [userId]),
-        query('SELECT organization, title, is_current, start_date, end_date, location, description FROM employment_history WHERE person_id = $1 ORDER BY start_date DESC NULLS LAST', [userId]),
-        query(`SELECT p.display_name FROM vouches v JOIN people p ON p.id = v.voucher_id WHERE v.vouchee_id = $1 ORDER BY v.created_at DESC LIMIT 1`, [userId]),
-        query(`SELECT COUNT(*) AS cnt FROM (SELECT DISTINCT vouchee_id FROM vouches WHERE voucher_id = $1) x`, [userId]),
+        query('SELECT organization, title, is_current, start_date, end_date FROM employment_history WHERE person_id = $1 ORDER BY start_date DESC NULLS LAST', [userId]),
       ])
 
       const profile = profileRes.rows[0]
       const aiSummary = summaryRes.rows[0]?.ai_summary || ''
       const careerHistory = historyRes.rows || []
-      const inviterName = inviterRes.rows[0]?.display_name || null
 
-      // Build profile context
-      const profileParts = [`Name: ${profile?.display_name || userName}`]
+      const profileParts = [`Name: ${profile?.display_name || 'User'}`]
       if (profile?.current_title && profile?.current_company) profileParts.push(`Current role: ${profile.current_title} at ${profile.current_company}`)
       else if (profile?.current_title) profileParts.push(`Current title: ${profile.current_title}`)
       if (profile?.location) profileParts.push(`Location: ${profile.location}`)
       if (profile?.industry) profileParts.push(`Industry: ${profile.industry}`)
       if (profile?.headline) profileParts.push(`Headline: ${profile.headline}`)
-      if (inviterName) profileParts.push(`Invited/recommended by: ${inviterName}`)
       const profileContext = profileParts.join('\n')
 
-      // Build career timeline (current-first)
       const careerTimeline = careerHistory.length > 0
         ? careerHistory.map(r => {
             const s = r.start_date ? new Date(r.start_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '?'
             const e = r.is_current ? 'Present' : (r.end_date ? new Date(r.end_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '?')
-            const loc = r.location ? ` (${r.location})` : ''
-            const desc = r.description ? ` — ${r.description}` : ''
-            return `- ${r.title || 'Role'} at ${r.organization || 'Unknown'} (${s} – ${e})${loc}${desc}`
+            return `- ${r.title || 'Role'} at ${r.organization || 'Unknown'} (${s} – ${e})`
           }).join('\n')
         : 'No career history on file.'
 
-      const history = Array.isArray(body.history) ? body.history : []
-      const exchangeCount = history.filter(t => t.role === 'user').length
+      // Network summary
+      const talent = await getTalentRecommendations(userId, null)
+      const sampleIds = talent.slice(0, 30).map(t => t.id)
+      let networkSummary = `Network size: ${talent.length} people`
+      if (sampleIds.length > 0) {
+        const sampleRes = await query('SELECT current_title, current_company, industry FROM people WHERE id = ANY($1)', [sampleIds])
+        const industries = new Set()
+        const companies = new Set()
+        for (const r of sampleRes.rows) {
+          if (r.industry) industries.add(r.industry)
+          if (r.current_company) companies.add(r.current_company)
+        }
+        if (industries.size > 0) networkSummary += `\nIndustries represented: ${[...industries].slice(0, 8).join(', ')}`
+        if (companies.size > 0) networkSummary += `\nSample companies: ${[...companies].slice(0, 10).join(', ')}`
+      }
 
-      // ── Mirror synthesis (triggered after orientation completes) — SSE streamed ──
-      if (message === '[mirror]') {
-        const fullConversation = history.map(t => `${t.role}: ${t.content}`).join('\n')
-
-        const mirrorPrompt = `Based on the conversation below and this person's career data, synthesize what they uniquely bring to a professional network. Write this as a CONVERSATIONAL message — you are the Brain talking to this person directly.
+      const starterPrompt = `Generate 3-4 personalized starter questions for a new VouchFour user to ask their Network Brain.
 
 ABOUT THIS PERSON:
 ${profileContext}
@@ -5743,360 +5732,58 @@ ${careerTimeline}
 
 AI SUMMARY:
 ${aiSummary || 'None available.'}
-
-CONVERSATION (their own words about what they do and know):
-${fullConversation}
-
-Write a warm, conversational message that:
-1. Opens by briefly acknowledging what they just shared in their most recent answer (1 sentence — warm, specific, not generic)
-2. Transitions into a "here's what I'm taking away" mirror (2-3 sentences synthesizing what they uniquely bring, referencing specific things they said)
-3. Then says something like "Based on all of this, here are some ways I think you could help others in your network:"
-4. Lists 3-6 specific expertise areas as a simple bulleted list using • bullets. Each should be SPECIFIC to their experience (e.g., "Navigating M&A integration", "Scaling product teams from 10 to 50"), NOT generic categories like "advice" or "mentoring".
-5. Ends by asking them to confirm: "Do these feel right? Feel free to tell me if you'd add, remove, or change any of them."
-6. After your message, on a new line, output EXACTLY: [[GIVES:label1|label2|label3]] with the short labels matching your bullets, separated by pipes. This line will be stripped and not shown to the user.
-
-RESPONSE FORMAT: Plain conversational text, with the [[GIVES:...]] tag on the last line.`
-
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'X-Accel-Buffering': 'no',
-        })
-
-        const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 800,
-            stream: true,
-            system: mirrorPrompt,
-            messages: [{ role: 'user', content: 'Synthesize what this person brings and suggest personalized gives.' }],
-          }),
-        })
-
-        if (!claudeRes.ok) {
-          const err = await claudeRes.text()
-          console.error('[OnboardingV2] Mirror Claude error:', err)
-          res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI service error' })}\n\n`)
-          res.end()
-          return
-        }
-
-        let fullText = ''
-        const reader = claudeRes.body.getReader()
-        const decoder = new TextDecoder()
-        let sseBuffer = ''
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          sseBuffer += decoder.decode(value, { stream: true })
-          const lines = sseBuffer.split('\n')
-          sseBuffer = lines.pop()
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            const payload = line.slice(6).trim()
-            if (payload === '[DONE]') continue
-            try {
-              const event = JSON.parse(payload)
-              if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta?.text) {
-                fullText += event.delta.text
-                res.write(`data: ${JSON.stringify({ type: 'token', text: event.delta.text })}\n\n`)
-              }
-            } catch {}
-          }
-        }
-
-        // Extract gives labels from [[GIVES:...]] tag
-        const givesMatch = fullText.match(/\[\[GIVES:(.*?)\]\]/)
-        const givesLabels = givesMatch ? givesMatch[1].split('|').map(s => s.trim()).filter(Boolean) : []
-        const cleanText = fullText.replace(/\s*\[\[GIVES:.*?\]\]\s*$/, '').trim()
-
-        console.log(`[OnboardingV2] Mirror for person ${userId} in ${Date.now() - start}ms (${givesLabels.length} gives)`)
-        res.write(`data: ${JSON.stringify({ type: 'done', step: 2, gives_labels: givesLabels, full_text: cleanText })}\n\n`)
-        res.end()
-        return
-      }
-
-      // ── Confirm gives + generate starters — SSE streamed ──
-      if (message === '[confirm-gives]') {
-        const userResponse = body.user_response || ''
-        const originalGives = Array.isArray(body.gives_labels) ? body.gives_labels : []
-
-        // First, use a quick non-streamed call to determine final gives
-        const givesPrompt = `The user was shown these suggested expertise areas ("gives"):
-${originalGives.map(g => `- ${g}`).join('\n')}
-
-The user responded: "${userResponse}"
-
-Return the FINAL list. Use EXACT label text — do NOT rephrase. If user said "looks good"/"yes", keep all unchanged. If they asked to change items, apply ONLY those changes.
-
-RESPONSE FORMAT (JSON only, no markdown fences):
-{ "final_gives": ["label1", "label2", ...] }`
-
-        const givesRes = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-          body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 200, system: givesPrompt, messages: [{ role: 'user', content: 'Finalize gives.' }] }),
-        })
-
-        let finalGives = originalGives
-        if (givesRes.ok) {
-          const gd = await givesRes.json()
-          const gt = gd.content?.[0]?.text || ''
-          try {
-            const gp = JSON.parse(gt.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim())
-            finalGives = gp.final_gives || originalGives
-          } catch {}
-        }
-
-        // Save finalized gives (replace, not append)
-        if (finalGives.length > 0) {
-          const givesText = finalGives.join('; ')
-          await query('UPDATE people SET gives_free_text = $1 WHERE id = $2', [givesText, userId])
-        }
-
-        // Load network summary for starter generation
-        const talent = await getTalentRecommendations(userId, null)
-        const networkSize = talent.length
-        const sampleIds = talent.slice(0, 30).map(t => t.id)
-        let networkSummary = `Network size: ${networkSize} people`
-        if (sampleIds.length > 0) {
-          const sampleRes = await query(
-            'SELECT current_title, current_company, industry FROM people WHERE id = ANY($1)',
-            [sampleIds]
-          )
-          const industries = new Set()
-          const companies = new Set()
-          for (const r of sampleRes.rows) {
-            if (r.industry) industries.add(r.industry)
-            if (r.current_company) companies.add(r.current_company)
-          }
-          if (industries.size > 0) networkSummary += `\nIndustries represented: ${[...industries].slice(0, 8).join(', ')}`
-          if (companies.size > 0) networkSummary += `\nSample companies: ${[...companies].slice(0, 10).join(', ')}`
-        }
-
-        // Now stream the confirmation + starters
-        const confirmPrompt = `The user just confirmed their expertise areas for their professional network. Their final gives: ${finalGives.join(', ')}.
-
-Write a brief warm confirmation (1-2 sentences) that acknowledges any changes they made, then transitions to starter questions. End with something like "Now, how can I help you today? To get us started, here are some of the kinds of questions you might ask me:"
-
-After your confirmation text, on a new line, output starter questions in this format:
-[[STARTERS:Full natural question 1|Full natural question 2|Full natural question 3]]
-
-The starters should be personalized based on this person's profile and network.
-
-ABOUT THIS PERSON:
-${profileContext}
-
-CAREER HISTORY:
-${careerTimeline}
 
 NETWORK:
 ${networkSummary}
 
-CONVERSATION CONTEXT:
-${history.map(t => `${t.role}: ${t.content}`).join('\n')}
-
-CRITICAL for starters:
-- Ground each starter in what the person TOLD YOU during the conversation — their current priorities, challenges, and motivations. These should feel like questions THEY would ask TODAY, not generic questions about their industry.
-- Their CURRENT role and situation matters most. If they're an advisor now (not a CEO), don't suggest questions about scaling their own company. Think about what someone in their actual current position needs.
-- Each must be a FULL, NATURAL QUESTION — NOT keyword labels
-- Good: "I'm thinking about how to structure equity for early employees — who in my network has been through this?"
+RULES:
+- Each starter must be a FULL, NATURAL QUESTION grounded in their actual role/situation
+- Their CURRENT role matters most — if they're an advisor now, don't ask about scaling their own company
+- Good: "Who in my network has experience navigating M&A integrations from the operator side?"
 - Bad: "EdTech Product Leaders" (label, not a question)
-- Bad: Generic questions that could apply to anyone in their industry
-- 3-4 starters, separated by | in the [[STARTERS:...]] tag`
+- Bad: Generic questions that could apply to anyone
+- 3-4 starters, separated by | in the [[STARTERS:...]] tag
 
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'X-Accel-Buffering': 'no',
-        })
-
-        const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 800,
-            stream: true,
-            system: confirmPrompt,
-            messages: [{ role: 'user', content: 'Confirm gives and suggest starter questions.' }],
-          }),
-        })
-
-        if (!claudeRes.ok) {
-          const err = await claudeRes.text()
-          console.error('[OnboardingV2] ConfirmGives Claude error:', err)
-          res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI service error' })}\n\n`)
-          res.end()
-          return
-        }
-
-        let fullText = ''
-        const reader = claudeRes.body.getReader()
-        const decoder = new TextDecoder()
-        let sseBuffer = ''
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          sseBuffer += decoder.decode(value, { stream: true })
-          const lines = sseBuffer.split('\n')
-          sseBuffer = lines.pop()
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            const payload = line.slice(6).trim()
-            if (payload === '[DONE]') continue
-            try {
-              const event = JSON.parse(payload)
-              if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta?.text) {
-                fullText += event.delta.text
-                res.write(`data: ${JSON.stringify({ type: 'token', text: event.delta.text })}\n\n`)
-              }
-            } catch {}
-          }
-        }
-
-        // Extract starters from [[STARTERS:...]] tag
-        const startersMatch = fullText.match(/\[\[STARTERS:(.*?)\]\]/)
-        const starters = startersMatch
-          ? startersMatch[1].split('|').map(s => ({ prompt: s.trim() })).filter(s => s.prompt)
-          : [{ prompt: 'Who in my network has been through a similar career transition?' }, { prompt: 'Who should I be talking to that I might not know about yet?' }]
-        const cleanText = fullText.replace(/\s*\[\[STARTERS:.*?\]\]\s*$/, '').trim()
-
-        console.log(`[OnboardingV2] ConfirmGives for person ${userId} in ${Date.now() - start}ms (${finalGives.length} gives saved, ${starters.length} starters)`)
-        res.write(`data: ${JSON.stringify({ type: 'done', step: 3, starters, full_text: cleanText })}\n\n`)
-        res.end()
-        return
-      }
-
-      // ── Orientation conversation (Steps 1-2) — SSE streamed ──
-      const orientationPrompt = `You are helping a new VouchFour member articulate what they uniquely bring to their professional network. Your tone is warm, curious, and specific — like a thoughtful colleague who has read their background and wants to go deeper.
-
-ABOUT THIS PERSON:
-${profileContext}
-
-CAREER HISTORY:
-${careerTimeline}
-
-AI SUMMARY:
-${aiSummary || 'None available.'}
-
-CONVERSATION SO FAR: ${exchangeCount} of ~3 exchanges
-
-CRITICAL RULES:
-1. Start with their CURRENT role/situation — never walk chronologically through their career
-2. NEVER ask for information already in the data above (title, company, location, headline)
-3. Ask questions that draw out: motivations, hard-won expertise, current priorities, what they'd help others with
-4. Reference SPECIFIC details from their career data — no generic "tell me about yourself" questions
-5. EXACTLY ONE question per response. Never ask two questions. Never ask compound questions with "and" joining two separate topics. ONE focused question only.
-6. Do NOT start your first message with the person's name — the greeting message right before yours already used it. Jump straight into the question.
-7. Keep your preamble to 1-2 sentences max, then ask your single question
-8. After 2-3 productive exchanges (when you have enough insight into their motivations and expertise), this is the final exchange — write a brief warm acknowledgment and end with the EXACT text [[COMPLETE]] on its own line at the very end.
-9. If this is exchange 3 or later, lean toward completing unless the conversation is still opening up
-10. When wrapping up, your reply should be a brief warm acknowledgment of what they just shared (1-2 sentences). Do NOT ask another question.
-
-EXCHANGE GUIDELINES:
-- Exchange 1: Ground in current role + recent career transition. E.g., "You moved from [X] to [Y] — what's driving that shift?"
-- Exchange 2: Follow their answer, probe for hard-won knowledge. E.g., "Having been through [specific experience], what do you know now that you wish you'd known then?"
-- Exchange 3 (if needed): Bridge toward what they bring to others
-
-If career data is minimal (no employment history), adapt: ask about their current work and what they're known for among colleagues. Still be specific about whatever data IS available.
-
-RESPONSE FORMAT: Write your conversational message as plain text (NOT JSON). If this is the final exchange, end with [[COMPLETE]] on its own line.`
-
-      // Build messages for Claude
-      const claudeMessages = history.map(t => ({
-        role: t.role === 'user' ? 'user' : 'assistant',
-        content: t.content,
-      }))
-      if (message === '[start]') {
-        claudeMessages.push({ role: 'user', content: 'Please start the guided orientation — ask your first question.' })
-      } else {
-        claudeMessages.push({ role: 'user', content: message })
-      }
-
-      // SSE streaming response
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      })
+Output ONLY the tag, nothing else:
+[[STARTERS:question1|question2|question3]]`
 
       const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 300,
-          stream: true,
-          system: orientationPrompt,
-          messages: claudeMessages,
-        }),
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 400, system: starterPrompt, messages: [{ role: 'user', content: 'Generate starters.' }] }),
       })
 
-      if (!claudeRes.ok) {
-        const err = await claudeRes.text()
-        console.error('[OnboardingV2] Orientation Claude error:', err)
-        res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI service error' })}\n\n`)
-        res.end()
-        return
-      }
+      let starters = [
+        { prompt: 'Who in my network has been through a similar career transition?' },
+        { prompt: 'Who should I be talking to that I might not know about yet?' },
+        { prompt: 'What expertise is most represented in my network?' },
+      ]
 
-      // Stream tokens to client
-      let fullText = ''
-      const reader = claudeRes.body.getReader()
-      const decoder = new TextDecoder()
-      let sseBuffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        sseBuffer += decoder.decode(value, { stream: true })
-        const lines = sseBuffer.split('\n')
-        sseBuffer = lines.pop()
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const payload = line.slice(6).trim()
-          if (payload === '[DONE]') continue
-          try {
-            const event = JSON.parse(payload)
-            if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta?.text) {
-              fullText += event.delta.text
-              // Don't forward the [[COMPLETE]] marker as visible text
-              const visibleText = fullText.replace(/\[\[COMPLETE\]\]\s*$/, '').trimEnd()
-              res.write(`data: ${JSON.stringify({ type: 'token', text: event.delta.text })}\n\n`)
-            }
-          } catch {}
+      if (claudeRes.ok) {
+        const data = await claudeRes.json()
+        const text = data.content?.[0]?.text || ''
+        const match = text.match(/\[\[STARTERS:(.*?)\]\]/)
+        if (match) {
+          const parsed = match[1].split('|').map(s => ({ prompt: s.trim() })).filter(s => s.prompt)
+          if (parsed.length >= 2) starters = parsed
         }
       }
 
-      // Check for completion marker
-      const orientationComplete = fullText.includes('[[COMPLETE]]')
-      const cleanText = fullText.replace(/\s*\[\[COMPLETE\]\]\s*$/, '').trim()
+      // Mark onboarding complete
+      await query('UPDATE people SET onboarding_v2_at = NOW() WHERE id = $1', [userId])
 
-      console.log(`[OnboardingV2] Orientation exchange ${exchangeCount + 1} for person ${userId} in ${Date.now() - start}ms (complete: ${orientationComplete})`)
-      res.write(`data: ${JSON.stringify({ type: 'done', step: 1, orientation_complete: orientationComplete, full_text: cleanText })}\n\n`)
-      res.end()
+      console.log(`[OnboardingStarters] Generated ${starters.length} starters for person ${userId} in ${Date.now() - start}ms`)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ starters }))
     } catch (err) {
-      console.error('[OnboardingV2] error:', err)
+      console.error('[OnboardingStarters] error:', err)
       res.writeHead(500); res.end(JSON.stringify({ error: 'Internal error' }))
     }
     return
   }
+
+  // NOTE: Onboarding v2 (orientation + mirror + confirm-gives) removed 2026-03-18.
+  // Gives logic preserved in server/lib/gives-reference.js for future reuse.
 
   // ─── Network Brain: Compare two people ──────────────────────────
   if (req.method === 'POST' && req.url === '/api/network-brain/compare') {
