@@ -5742,7 +5742,7 @@ RULES:
 - Good: "Who in my network has experience navigating M&A integrations from the operator side?"
 - Bad: "EdTech Product Leaders" (label, not a question)
 - Bad: Generic questions that could apply to anyone
-- 3-4 starters, separated by | in the [[STARTERS:...]] tag
+- Exactly 3 starters, separated by | in the [[STARTERS:...]] tag
 
 Output ONLY the tag, nothing else:
 [[STARTERS:question1|question2|question3]]`
