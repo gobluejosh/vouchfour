@@ -8474,47 +8474,55 @@ What ${senderFirst} wants to discuss: "${question}"` }],
       return
     }
 
+    // Pre-load all VouchFour people LinkedIn URLs for batch matching
+    const peopleUrlRes = await query('SELECT id, linkedin_url FROM people WHERE linkedin_url IS NOT NULL')
+    const urlToPersonId = new Map()
+    for (const row of peopleUrlRes.rows) urlToPersonId.set(row.linkedin_url, row.id)
+
+    // Build batch values
+    const BATCH_SIZE = 50
     let imported = 0, matched = 0
     const newConnectionIds = []
+    const prepared = []
 
     for (const c of connections) {
       if (!c.firstName || !c.lastName) continue
       const linkedinUrl = c.linkedinUrl ? normalizeLinkedInUrl(c.linkedinUrl) : null
-      const connectedOn = c.connectedOn ? c.connectedOn : null
+      const connectedOn = c.connectedOn || null
+      const matchedPersonId = linkedinUrl ? (urlToPersonId.get(linkedinUrl) || null) : null
+      prepared.push({ firstName: c.firstName.trim(), lastName: c.lastName.trim(), email: c.email || null, company: c.company || null, title: c.title || null, linkedinUrl, connectedOn, matchedPersonId })
+    }
 
-      // Match against VouchFour people by LinkedIn URL
-      let matchedPersonId = null
-      if (linkedinUrl) {
-        const matchRes = await query('SELECT id FROM people WHERE linkedin_url = $1', [linkedinUrl])
-        if (matchRes.rows[0]) matchedPersonId = matchRes.rows[0].id
+    // Process in batches to avoid huge single queries but minimize round-trips
+    for (let i = 0; i < prepared.length; i += BATCH_SIZE) {
+      const batch = prepared.slice(i, i + BATCH_SIZE)
+      const values = []
+      const params = []
+      for (let j = 0; j < batch.length; j++) {
+        const b = batch[j]
+        const off = j * 9
+        values.push(`($${off+1}, $${off+2}, $${off+3}, $${off+4}, $${off+5}, $${off+6}, $${off+7}, $${off+8}, $${off+9})`)
+        params.push(userId, b.firstName, b.lastName, b.email, b.company, b.title, b.linkedinUrl, b.connectedOn, b.matchedPersonId)
       }
-
-      // Upsert — by (owner_id, linkedin_url) if URL exists, otherwise insert
-      let result
-      if (linkedinUrl) {
-        result = await query(`
-          INSERT INTO linkedin_connections (owner_id, first_name, last_name, email, company, title, linkedin_url, connected_on, matched_person_id)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          ON CONFLICT (owner_id, linkedin_url) WHERE linkedin_url IS NOT NULL
-          DO UPDATE SET first_name = $2, last_name = $3, email = COALESCE($4, linkedin_connections.email),
-            company = COALESCE($5, linkedin_connections.company), title = COALESCE($6, linkedin_connections.title),
-            connected_on = COALESCE($8, linkedin_connections.connected_on), matched_person_id = COALESCE($9, linkedin_connections.matched_person_id)
-          RETURNING id, (xmax = 0) AS is_new
-        `, [userId, c.firstName.trim(), c.lastName.trim(), c.email || null, c.company || null, c.title || null, linkedinUrl, connectedOn, matchedPersonId])
-      } else {
-        result = await query(`
-          INSERT INTO linkedin_connections (owner_id, first_name, last_name, email, company, title, connected_on)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
-          RETURNING id, true AS is_new
-        `, [userId, c.firstName.trim(), c.lastName.trim(), c.email || null, c.company || null, c.title || null, connectedOn])
-      }
-
-      if (result.rows[0]) {
+      const result = await query(`
+        INSERT INTO linkedin_connections (owner_id, first_name, last_name, email, company, title, linkedin_url, connected_on, matched_person_id)
+        VALUES ${values.join(', ')}
+        ON CONFLICT (owner_id, linkedin_url) WHERE linkedin_url IS NOT NULL
+        DO UPDATE SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name,
+          email = COALESCE(EXCLUDED.email, linkedin_connections.email),
+          company = COALESCE(EXCLUDED.company, linkedin_connections.company),
+          title = COALESCE(EXCLUDED.title, linkedin_connections.title),
+          connected_on = COALESCE(EXCLUDED.connected_on, linkedin_connections.connected_on),
+          matched_person_id = COALESCE(EXCLUDED.matched_person_id, linkedin_connections.matched_person_id)
+        RETURNING id, (xmax = 0) AS is_new
+      `, params)
+      for (const row of result.rows) {
         imported++
-        newConnectionIds.push(result.rows[0].id)
-        if (matchedPersonId) matched++
+        newConnectionIds.push(row.id)
       }
     }
+    // Count matches
+    matched = prepared.filter(p => p.matchedPersonId).length
 
     // Generate embeddings for new/updated connections (fire and forget)
     if (newConnectionIds.length > 0) {
