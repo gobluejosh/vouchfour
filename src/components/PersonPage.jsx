@@ -1594,8 +1594,12 @@ function LinkedInConnectionsCard() {
     const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
     if (lines.length < 2) return [];
 
+    // Find the header row — LinkedIn CSVs have a notes preamble before headers
+    let headerLineIdx = lines.findIndex(l => /first\s*name/i.test(l) && /last\s*name/i.test(l));
+    if (headerLineIdx === -1) return [];
+
     // Parse header
-    const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+    const headers = lines[headerLineIdx].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
     const fnIdx = headers.findIndex(h => /first\s*name/i.test(h));
     const lnIdx = headers.findIndex(h => /last\s*name/i.test(h));
     const urlIdx = headers.findIndex(h => /url/i.test(h));
@@ -1607,7 +1611,7 @@ function LinkedInConnectionsCard() {
     if (fnIdx === -1 || lnIdx === -1) return [];
 
     const connections = [];
-    for (let i = 1; i < lines.length; i++) {
+    for (let i = headerLineIdx + 1; i < lines.length; i++) {
       // Simple CSV field split (handles quoted fields)
       const fields = [];
       let field = "", inQuotes = false;
