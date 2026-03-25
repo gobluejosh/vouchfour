@@ -819,3 +819,137 @@ export async function enrichBatch(personIds, { delayMs = 5000 } = {}) {
 
   return results
 }
+
+// ── LinkedIn Connection Enrichment (lightweight: Brave + Claude only) ──
+
+/**
+ * Enrich a single LinkedIn connection with Brave search + Claude summary.
+ * Skips Apollo. Updates ai_summary + enriched_at on linkedin_connections.
+ * Re-embeds with richer text after enrichment.
+ * @param {number} connectionId - linkedin_connections.id
+ */
+export async function enrichLinkedInConnection(connectionId) {
+  const connRes = await query(
+    'SELECT id, first_name, last_name, display_name, title, company, linkedin_url, enriched_at FROM linkedin_connections WHERE id = $1',
+    [connectionId]
+  )
+  const conn = connRes.rows[0]
+  if (!conn) return { connectionId, status: 'not_found' }
+  if (conn.enriched_at) return { connectionId, status: 'already_enriched' }
+
+  const name = conn.display_name
+  const company = conn.company || ''
+  const title = conn.title || ''
+  const start = Date.now()
+
+  // ── Brave Search (1 query, professional presence) ──
+  let braveSnippets = []
+  try {
+    if (!BRAVE_API_KEY) throw new Error('BRAVE_API_KEY not set')
+    const disambig = company ? `"${company}"` : ''
+    const braveQuery = disambig ? `"${name}" ${disambig}` : `"${name}" ${title}`
+
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(braveQuery)}&count=10`
+    const r = await fetch(url, {
+      headers: { 'Accept': 'application/json', 'Accept-Encoding': 'gzip', 'X-Subscription-Token': BRAVE_API_KEY },
+    })
+    const data = await r.json()
+    const results = data.web?.results || []
+
+    // Filter noise domains; use company as simple fingerprint
+    const fingerprint = { companies: company ? [company] : [], industry: null }
+    const filtered = filterBraveResults(results, fingerprint, name)
+
+    const seen = new Set()
+    for (const r of filtered) {
+      if (seen.has(r.url)) continue
+      seen.add(r.url)
+      braveSnippets.push({ title: r.title || '', description: r.description || '', url: r.url || '' })
+    }
+    console.log(`[Enrich-LC] Brave ${Date.now() - start}ms | ${name} | ${results.length} raw → ${filtered.length} filtered`)
+  } catch (err) {
+    console.error(`[Enrich-LC] Brave error | ${name}:`, err.message)
+  }
+
+  // ── Claude Summary (2-3 sentences) ──
+  let aiSummary = null
+  try {
+    if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set')
+
+    let userPrompt = `Person: ${name}\n`
+    if (title) userPrompt += `Current title: ${title}\n`
+    if (company) userPrompt += `Current company: ${company}\n`
+    if (conn.linkedin_url) userPrompt += `LinkedIn: ${conn.linkedin_url}\n`
+    if (braveSnippets.length > 0) {
+      userPrompt += `\nWeb mentions:\n`
+      for (const s of braveSnippets.slice(0, 8)) {
+        userPrompt += `- ${s.title}: ${s.description}\n`
+      }
+    }
+
+    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 256,
+        system: `Write a 2-3 sentence professional summary about this person.
+Include if available: current role, career highlights, areas of expertise.
+RULES:
+- Output ONLY the summary. No preamble or commentary.
+- Never start with the person's name.
+- Only include web mentions that clearly match this person's role/company.
+- If data is limited, write a shorter summary with what you have. Do not pad with hedging language.
+- Be factual and direct.`,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    })
+    const claudeData = await claudeRes.json()
+    if (claudeData.content?.[0]?.text) {
+      aiSummary = claudeData.content[0].text.trim()
+    }
+    console.log(`[Enrich-LC] Claude ${Date.now() - start}ms | ${name} | ${aiSummary ? aiSummary.length + ' chars' : 'no summary'}`)
+  } catch (err) {
+    console.error(`[Enrich-LC] Claude error | ${name}:`, err.message)
+  }
+
+  if (!aiSummary) return { connectionId, status: 'no_summary' }
+
+  // ── Save summary + re-embed ──
+  await query(
+    'UPDATE linkedin_connections SET ai_summary = $1, enriched_at = NOW() WHERE id = $2',
+    [aiSummary, connectionId]
+  )
+
+  // Re-embed with richer text
+  try {
+    // Delete old embedding
+    await query('DELETE FROM linkedin_connection_embeddings WHERE connection_id = $1', [connectionId])
+
+    // Build richer embedding text
+    const parts = []
+    if (title && company) parts.push(`${title} at ${company}`)
+    else if (title) parts.push(title)
+    else if (company) parts.push(company)
+    parts.push(aiSummary)
+    const embeddingText = parts.join('. ')
+
+    // Import getEmbeddings dynamically to avoid circular deps
+    const { getEmbeddings, toVectorLiteral } = await import('./embeddings.js')
+    const [embedding] = await getEmbeddings([embeddingText])
+    await query(`
+      INSERT INTO linkedin_connection_embeddings (connection_id, source_text, embedding)
+      VALUES ($1, $2, $3::vector)
+    `, [connectionId, embeddingText.slice(0, 1000), toVectorLiteral(embedding)])
+    console.log(`[Enrich-LC] Re-embedded | ${name} | ${embeddingText.length} chars`)
+  } catch (err) {
+    console.error(`[Enrich-LC] Re-embed error | ${name}:`, err.message)
+  }
+
+  console.log(`[Enrich-LC] Complete | ${name} | ${Date.now() - start}ms`)
+  return { connectionId, status: 'enriched', summary: aiSummary }
+}

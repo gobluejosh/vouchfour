@@ -10,7 +10,7 @@ import { normalizeLinkedInUrl } from './lib/linkedin.js'
 import { getTalentRecommendations, getVouchPaths } from './lib/graph.js'
 import { sendVouchInviteEmail, sendLoginLinkEmail, sendEmail, loadTemplate, applyVariables, emailLayout, isUnsubscribed, getRecipient } from './lib/email.js'
 import { trackEvent, identifyPerson, shutdown as posthogShutdown } from './lib/posthog.js'
-import { enrichPerson, enrichBatch, saveApolloData, generateSummary } from './lib/enrich.js'
+import { enrichPerson, enrichBatch, saveApolloData, generateSummary, enrichLinkedInConnection } from './lib/enrich.js'
 import { normalizeOrgName } from './lib/orgNormalize.js'
 import { extractExpertise, extractExpertiseBatch } from './lib/expertise.js'
 import { extractContent, extractContentBatch } from './lib/contentExtract.js'
@@ -8816,6 +8816,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               name: r.name,
               title: r.title || null,
               company: r.company || null,
+              summary: r.aiSummary || null,
               relevance_score: Math.round(r.similarity * 100),
               linkedin_url: r.linkedinUrl || null,
             }))
@@ -8839,6 +8840,21 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               },
               id,
             }))
+
+            // Lazy enrichment: fire-and-forget for un-enriched LinkedIn connections (max 3 per query)
+            const unenriched = linkedinResults.filter(r => !r.enrichedAt).slice(0, 3)
+            if (unenriched.length > 0) {
+              ;(async () => {
+                for (const r of unenriched) {
+                  try {
+                    await enrichLinkedInConnection(r.connectionId)
+                  } catch (err) {
+                    console.error(`[MCP] Lazy enrich error for connection ${r.connectionId}:`, err.message)
+                  }
+                }
+              })().catch(() => {})
+            }
+
             return
           }
 
@@ -8926,7 +8942,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
             // Search LinkedIn connections with same filters
             let linkedinPeople = []
             try {
-              let lcSql = 'SELECT id, display_name, title, company, linkedin_url, matched_person_id FROM linkedin_connections WHERE owner_id = $1'
+              let lcSql = 'SELECT id, display_name, title, company, linkedin_url, matched_person_id, ai_summary, enriched_at FROM linkedin_connections WHERE owner_id = $1'
               const lcParams = [userId]
               if (nameQuery) {
                 lcSql += ` AND LOWER(display_name) LIKE LOWER($${lcParams.length + 1})`
@@ -8948,8 +8964,20 @@ What ${senderFirst} wants to discuss: "${question}"` }],
                 name: r.display_name,
                 title: r.title || null,
                 company: r.company || null,
+                summary: r.ai_summary || null,
                 linkedin_url: r.linkedin_url || null,
               }))
+              // Lazy enrichment for un-enriched lookup results (max 3, fire-and-forget)
+              const unenrichedLookup = lcRes.rows.filter(r => !r.enriched_at).slice(0, 3)
+              if (unenrichedLookup.length > 0) {
+                ;(async () => {
+                  for (const r of unenrichedLookup) {
+                    try { await enrichLinkedInConnection(r.id) } catch (err) {
+                      console.error(`[MCP] Lazy enrich error for connection ${r.id}:`, err.message)
+                    }
+                  }
+                })().catch(() => {})
+              }
             } catch (err) {
               console.error(`[MCP] LinkedIn lookup error:`, err.message)
             }

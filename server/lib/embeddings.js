@@ -11,7 +11,7 @@ const EMBEDDING_DIMENSIONS = 1536
 /**
  * Convert a JS number array to pgvector string format: [0.1,0.2,...]
  */
-function toVectorLiteral(arr) {
+export function toVectorLiteral(arr) {
   return '[' + arr.join(',') + ']'
 }
 
@@ -24,7 +24,7 @@ function toVectorLiteral(arr) {
  * @param {string[]} texts
  * @returns {number[][]} Array of embedding vectors
  */
-async function getEmbeddings(texts) {
+export async function getEmbeddings(texts) {
   if (texts.length === 0) return []
 
   const apiKey = getOpenAIKey()
@@ -427,6 +427,8 @@ export async function searchLinkedInConnections(queryText, ownerId, {
       lc.company,
       lc.linkedin_url,
       lc.matched_person_id,
+      lc.ai_summary,
+      lc.enriched_at,
       lce.source_text,
       1 - (lce.embedding <=> $1::vector) AS similarity
     FROM linkedin_connection_embeddings lce
@@ -452,6 +454,8 @@ export async function searchLinkedInConnections(queryText, ownerId, {
     title: r.title,
     company: r.company,
     linkedinUrl: r.linkedin_url,
+    aiSummary: r.ai_summary || null,
+    enrichedAt: r.enriched_at || null,
     similarity: parseFloat(r.similarity),
     matchedText: r.source_text,
   }))
