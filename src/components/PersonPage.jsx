@@ -1718,7 +1718,7 @@ function LinkedInConnectionsCard() {
         </div>
       ) : (
         <div style={{ fontSize: 13, color: C.sub, marginBottom: 10 }}>
-          Import your LinkedIn connections — will not be added to your VouchFour network, but will enhance search results
+          Import your LinkedIn connections to enhance search results. To export: LinkedIn → Settings → Data Privacy → Get a copy of your data → select "Connections" → download the CSV.
         </div>
       )}
 
