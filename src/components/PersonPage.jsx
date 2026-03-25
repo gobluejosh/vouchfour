@@ -1647,11 +1647,14 @@ function LinkedInConnectionsCard() {
     return connections;
   };
 
+  const [uploadCount, setUploadCount] = useState(null);
+
   const handleUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     setResult(null);
+    setUploadCount(null);
 
     const reader = new FileReader();
     reader.onload = async (ev) => {
@@ -1662,6 +1665,7 @@ function LinkedInConnectionsCard() {
           setUploading(false);
           return;
         }
+        setUploadCount(connections.length);
 
         const res = await fetch("/api/linkedin-connections/upload", {
           method: "POST",
@@ -1729,7 +1733,7 @@ function LinkedInConnectionsCard() {
           cursor: uploading ? "wait" : "pointer", fontFamily: FONT,
         }}
       >
-        {uploading ? "Uploading..." : hasConnections ? "Update" : "Upload CSV"}
+        {uploading ? `Uploading${uploadCount ? ` ${uploadCount.toLocaleString()} connections` : ""}...` : hasConnections ? "Update" : "Upload CSV"}
       </button>
 
       {result?.success && (
