@@ -1677,6 +1677,11 @@ function LinkedInConnectionsCard() {
         if (res.ok) {
           setResult({ success: true, imported: data.imported, matched: data.matched });
           capture("linkedin_connections_uploaded", { count: data.imported, matched: data.matched });
+          // Refresh stats so count and button label update
+          try {
+            const sr = await fetch("/api/linkedin-connections/stats", { credentials: "include" });
+            if (sr.ok) setStats(await sr.json());
+          } catch (_) {}
         } else {
           setResult({ error: data.error || "Upload failed" });
         }
@@ -1735,6 +1740,12 @@ function LinkedInConnectionsCard() {
       >
         {uploading ? `Uploading${uploadCount ? ` ${uploadCount.toLocaleString()} connections` : ""}...` : hasConnections ? "Update" : "Upload CSV"}
       </button>
+
+      {uploading && (
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 8, fontStyle: "italic" }}>
+          This may take a few minutes — please don't navigate away.
+        </div>
+      )}
 
       {result?.success && (
         <div style={{ fontSize: 12, color: C.success, marginTop: 8 }}>
