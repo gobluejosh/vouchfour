@@ -14,7 +14,7 @@ import { enrichPerson, enrichBatch, saveApolloData, generateSummary } from './li
 import { normalizeOrgName } from './lib/orgNormalize.js'
 import { extractExpertise, extractExpertiseBatch } from './lib/expertise.js'
 import { extractContent, extractContentBatch } from './lib/contentExtract.js'
-import { semanticSearch, embedPerson, embedBatch, getEmbeddingStats } from './lib/embeddings.js'
+import { semanticSearch, embedPerson, embedBatch, getEmbeddingStats, embedLinkedInConnections, searchLinkedInConnections } from './lib/embeddings.js'
 
 
 const PORT = process.env.PORT || 3001
@@ -805,7 +805,13 @@ const server = http.createServer(async (req, res) => {
         shareToken,
       }))
 
-      // Fire-and-forget: enrich new person
+      // Fire-and-forget: link any LinkedIn connections to this person + enrich
+      if (normalizedUrl) {
+        query(
+          'UPDATE linkedin_connections SET matched_person_id = $1 WHERE linkedin_url = $2 AND matched_person_id IS NULL',
+          [talentId, normalizedUrl]
+        ).catch(() => {})
+      }
       if (isNew) {
         ;(async () => {
           await new Promise(r => setTimeout(r, 2000))
@@ -1601,6 +1607,12 @@ Rules:
             ON CONFLICT (voucher_id, vouchee_id, job_function_id)
             DO UPDATE SET submission_id = EXCLUDED.submission_id, created_at = NOW()
           `, [voucherId, talentId, jobFunctionId, submissionId])
+
+          // Link any LinkedIn connections to this person
+          client.query(
+            'UPDATE linkedin_connections SET matched_person_id = $1 WHERE linkedin_url = $2 AND matched_person_id IS NULL',
+            [talentId, talentUrl]
+          ).catch(() => {})
 
           vouchedPeople.push({
             id: talentId, display_name: r.name,
@@ -8446,6 +8458,96 @@ What ${senderFirst} wants to discuss: "${question}"` }],
     return
   }
 
+  // ─── LinkedIn Connections ─────────────────────────────────────────────
+
+  // Upload LinkedIn connections
+  const linkedinUploadMatch = req.method === 'POST' && req.url === '/api/linkedin-connections/upload'
+  if (linkedinUploadMatch) {
+    const session = await validateSession(req)
+    if (!session?.id) { res.writeHead(401); res.end('Unauthorized'); return }
+    const userId = session.id
+    const body = await readBody(req)
+    const connections = body.connections
+    if (!Array.isArray(connections) || connections.length === 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'connections array required' }))
+      return
+    }
+
+    let imported = 0, matched = 0
+    const newConnectionIds = []
+
+    for (const c of connections) {
+      if (!c.firstName || !c.lastName) continue
+      const linkedinUrl = c.linkedinUrl ? normalizeLinkedInUrl(c.linkedinUrl) : null
+      const connectedOn = c.connectedOn ? c.connectedOn : null
+
+      // Match against VouchFour people by LinkedIn URL
+      let matchedPersonId = null
+      if (linkedinUrl) {
+        const matchRes = await query('SELECT id FROM people WHERE linkedin_url = $1', [linkedinUrl])
+        if (matchRes.rows[0]) matchedPersonId = matchRes.rows[0].id
+      }
+
+      // Upsert — by (owner_id, linkedin_url) if URL exists, otherwise insert
+      let result
+      if (linkedinUrl) {
+        result = await query(`
+          INSERT INTO linkedin_connections (owner_id, first_name, last_name, email, company, title, linkedin_url, connected_on, matched_person_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (owner_id, linkedin_url) WHERE linkedin_url IS NOT NULL
+          DO UPDATE SET first_name = $2, last_name = $3, email = COALESCE($4, linkedin_connections.email),
+            company = COALESCE($5, linkedin_connections.company), title = COALESCE($6, linkedin_connections.title),
+            connected_on = COALESCE($8, linkedin_connections.connected_on), matched_person_id = COALESCE($9, linkedin_connections.matched_person_id)
+          RETURNING id, (xmax = 0) AS is_new
+        `, [userId, c.firstName.trim(), c.lastName.trim(), c.email || null, c.company || null, c.title || null, linkedinUrl, connectedOn, matchedPersonId])
+      } else {
+        result = await query(`
+          INSERT INTO linkedin_connections (owner_id, first_name, last_name, email, company, title, connected_on)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          RETURNING id, true AS is_new
+        `, [userId, c.firstName.trim(), c.lastName.trim(), c.email || null, c.company || null, c.title || null, connectedOn])
+      }
+
+      if (result.rows[0]) {
+        imported++
+        newConnectionIds.push(result.rows[0].id)
+        if (matchedPersonId) matched++
+      }
+    }
+
+    // Generate embeddings for new/updated connections (fire and forget)
+    if (newConnectionIds.length > 0) {
+      embedLinkedInConnections(userId, newConnectionIds).catch(err =>
+        console.error(`[LinkedIn] Embedding error for owner ${userId}:`, err.message)
+      )
+    }
+
+    console.log(`[LinkedIn] Upload for person ${userId}: ${imported} imported, ${matched} matched to VouchFour people`)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ imported, matched }))
+    return
+  }
+
+  // LinkedIn connections stats
+  const linkedinStatsMatch = req.method === 'GET' && req.url === '/api/linkedin-connections/stats'
+  if (linkedinStatsMatch) {
+    const session = await validateSession(req)
+    if (!session?.id) { res.writeHead(401); res.end('Unauthorized'); return }
+    const userId = session.id
+    const result = await query(`
+      SELECT COUNT(*) AS count, MAX(created_at) AS last_imported_at
+      FROM linkedin_connections WHERE owner_id = $1
+    `, [userId])
+    const row = result.rows[0]
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      count: parseInt(row.count),
+      lastImportedAt: row.last_imported_at,
+    }))
+    return
+  }
+
   // ─── MCP: Career overlap helper ──────────────────────────────────────
   // Given a userId and array of personIds, returns Map<personId, [{org, your_role, their_role, your_years, their_years}]>
   async function mcpCareerOverlaps(userId, personIds) {
@@ -8693,7 +8795,30 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               }
             })
 
-            console.log(`[MCP] ask_my_network for person ${userId} "${question.slice(0, 50)}" → ${people.length} results in ${Date.now() - start}ms`)
+            // Search LinkedIn connections (if user has imported any)
+            const excludeIds = results.map(r => r.personId)
+            let linkedinResults = []
+            try {
+              linkedinResults = await searchLinkedInConnections(question, userId, { topK: 5, excludePersonIds: excludeIds })
+            } catch (err) {
+              console.error(`[MCP] LinkedIn search error:`, err.message)
+            }
+
+            const linkedinPeople = linkedinResults.map(r => ({
+              name: r.name,
+              title: r.title || null,
+              company: r.company || null,
+              relevance_score: Math.round(r.similarity * 100),
+              linkedin_url: r.linkedinUrl || null,
+            }))
+
+            console.log(`[MCP] ask_my_network for person ${userId} "${question.slice(0, 50)}" → ${people.length} network + ${linkedinPeople.length} linkedin in ${Date.now() - start}ms`)
+
+            const responseData = { question, network_size: personIds.length, results: people, tip: 'IMPORTANT: (1) This is a VOUCH/RECOMMENDATION network, not a social network. Use the "relationship" field as-is (e.g. "recommended through Chandler Koglmeier"). NEVER say "1st/2nd/3rd degree connection" or "connected through" — use recommendation language only. (2) To reach out to someone, the user can use the Ask feature on their VouchFour profile page (click their vouchfour_url). Ask drafts a personalized intro routed through the recommendation chain. Do not offer to draft messages yourself — point the user to Ask on VouchFour instead.' }
+            if (linkedinPeople.length > 0) {
+              responseData.linkedin_connections = linkedinPeople
+              responseData.linkedin_tip = 'These are from the user\'s imported LinkedIn connections (not their vouched VouchFour network). They have less detail — present them separately as "From your LinkedIn connections" after the main network results.'
+            }
 
             res.writeHead(200, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({
@@ -8701,7 +8826,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               result: {
                 content: [{
                   type: 'text',
-                  text: JSON.stringify({ question, network_size: personIds.length, results: people, tip: 'IMPORTANT: (1) This is a VOUCH/RECOMMENDATION network, not a social network. Use the "relationship" field as-is (e.g. "recommended through Chandler Koglmeier"). NEVER say "1st/2nd/3rd degree connection" or "connected through" — use recommendation language only. (2) To reach out to someone, the user can use the Ask feature on their VouchFour profile page (click their vouchfour_url). Ask drafts a personalized intro routed through the recommendation chain. Do not offer to draft messages yourself — point the user to Ask on VouchFour instead.' }, null, 2),
+                  text: JSON.stringify(responseData, null, 2),
                 }],
               },
               id,
@@ -8790,7 +8915,44 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               }).filter(p => p.name)
             }
 
-            console.log(`[MCP] lookup_network for person ${userId} (name=${nameQuery}, company=${companyQuery}, func=${funcQuery}) → ${people.length} results in ${Date.now() - start}ms`)
+            // Search LinkedIn connections with same filters
+            let linkedinPeople = []
+            try {
+              let lcSql = 'SELECT id, display_name, title, company, linkedin_url, matched_person_id FROM linkedin_connections WHERE owner_id = $1'
+              const lcParams = [userId]
+              if (nameQuery) {
+                lcSql += ` AND LOWER(display_name) LIKE LOWER($${lcParams.length + 1})`
+                lcParams.push(`%${nameQuery}%`)
+              }
+              if (companyQuery) {
+                lcSql += ` AND LOWER(company) LIKE LOWER($${lcParams.length + 1})`
+                lcParams.push(`%${companyQuery}%`)
+              }
+              // Exclude connections already matched to VouchFour network results
+              const vfResultIds = matchIds.filter(id => people.some(p => p.name))
+              if (vfResultIds.length > 0) {
+                lcSql += ` AND (matched_person_id IS NULL OR matched_person_id != ALL($${lcParams.length + 1}))`
+                lcParams.push(vfResultIds)
+              }
+              lcSql += ' LIMIT 5'
+              const lcRes = await query(lcSql, lcParams)
+              linkedinPeople = lcRes.rows.map(r => ({
+                name: r.display_name,
+                title: r.title || null,
+                company: r.company || null,
+                linkedin_url: r.linkedin_url || null,
+              }))
+            } catch (err) {
+              console.error(`[MCP] LinkedIn lookup error:`, err.message)
+            }
+
+            console.log(`[MCP] lookup_network for person ${userId} (name=${nameQuery}, company=${companyQuery}, func=${funcQuery}) → ${people.length} network + ${linkedinPeople.length} linkedin in ${Date.now() - start}ms`)
+
+            const responseData = { filters: { name: nameQuery || null, company: companyQuery || null, function: funcQuery || null }, total_matches: matches.length, results: people, tip: 'IMPORTANT: (1) This is a VOUCH/RECOMMENDATION network, not a social network. Use the "relationship" field as-is (e.g. "recommended through Chandler Koglmeier"). NEVER say "1st/2nd/3rd degree connection" or "connected through" — use recommendation language only. (2) To reach out to someone, the user can use the Ask feature on their VouchFour profile page (click their vouchfour_url). Ask drafts a personalized intro routed through the recommendation chain. Do not offer to draft messages yourself — point the user to Ask on VouchFour instead.' }
+            if (linkedinPeople.length > 0) {
+              responseData.linkedin_connections = linkedinPeople
+              responseData.linkedin_tip = 'These are from the user\'s imported LinkedIn connections (not their vouched VouchFour network). They have less detail — present them separately as "From your LinkedIn connections" after the main network results.'
+            }
 
             res.writeHead(200, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({
@@ -8798,7 +8960,7 @@ What ${senderFirst} wants to discuss: "${question}"` }],
               result: {
                 content: [{
                   type: 'text',
-                  text: JSON.stringify({ filters: { name: nameQuery || null, company: companyQuery || null, function: funcQuery || null }, total_matches: matches.length, results: people, tip: 'IMPORTANT: (1) This is a VOUCH/RECOMMENDATION network, not a social network. Use the "relationship" field as-is (e.g. "recommended through Chandler Koglmeier"). NEVER say "1st/2nd/3rd degree connection" or "connected through" — use recommendation language only. (2) To reach out to someone, the user can use the Ask feature on their VouchFour profile page (click their vouchfour_url). Ask drafts a personalized intro routed through the recommendation chain. Do not offer to draft messages yourself — point the user to Ask on VouchFour instead.' }, null, 2),
+                  text: JSON.stringify(responseData, null, 2),
                 }],
               },
               id,

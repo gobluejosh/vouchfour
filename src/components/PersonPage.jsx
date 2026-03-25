@@ -1575,6 +1575,171 @@ function formatRolePeriod(role) {
   return `${start}–${end}`;
 }
 
+function LinkedInConnectionsCard() {
+  const [stats, setStats] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState(null);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    fetch("/api/linkedin-connections/stats", { credentials: "include" })
+      .then(r => r.json())
+      .then(setStats)
+      .catch(() => {});
+  }, [result]);
+
+  const parseCSV = (text) => {
+    // Handle BOM
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) return [];
+
+    // Parse header
+    const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+    const fnIdx = headers.findIndex(h => /first\s*name/i.test(h));
+    const lnIdx = headers.findIndex(h => /last\s*name/i.test(h));
+    const urlIdx = headers.findIndex(h => /url/i.test(h));
+    const emailIdx = headers.findIndex(h => /email/i.test(h));
+    const compIdx = headers.findIndex(h => /company/i.test(h));
+    const posIdx = headers.findIndex(h => /position/i.test(h));
+    const dateIdx = headers.findIndex(h => /connected\s*on/i.test(h));
+
+    if (fnIdx === -1 || lnIdx === -1) return [];
+
+    const connections = [];
+    for (let i = 1; i < lines.length; i++) {
+      // Simple CSV field split (handles quoted fields)
+      const fields = [];
+      let field = "", inQuotes = false;
+      for (const ch of lines[i]) {
+        if (ch === '"') { inQuotes = !inQuotes; continue; }
+        if (ch === "," && !inQuotes) { fields.push(field.trim()); field = ""; continue; }
+        field += ch;
+      }
+      fields.push(field.trim());
+
+      const fn = fields[fnIdx] || "";
+      const ln = fields[lnIdx] || "";
+      if (!fn || !ln) continue;
+
+      const connectedOnRaw = dateIdx >= 0 ? fields[dateIdx] : null;
+      let connectedOn = null;
+      if (connectedOnRaw) {
+        // LinkedIn format: "01 Jan 2025" or "2025-01-01"
+        const d = new Date(connectedOnRaw);
+        if (!isNaN(d.getTime())) connectedOn = d.toISOString().split("T")[0];
+      }
+
+      connections.push({
+        firstName: fn,
+        lastName: ln,
+        linkedinUrl: urlIdx >= 0 ? fields[urlIdx] : null,
+        email: emailIdx >= 0 ? fields[emailIdx] : null,
+        company: compIdx >= 0 ? fields[compIdx] : null,
+        title: posIdx >= 0 ? fields[posIdx] : null,
+        connectedOn,
+      });
+    }
+    return connections;
+  };
+
+  const handleUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setResult(null);
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const connections = parseCSV(ev.target.result);
+        if (connections.length === 0) {
+          setResult({ error: "No valid connections found in CSV. Expected columns: First Name, Last Name." });
+          setUploading(false);
+          return;
+        }
+
+        const res = await fetch("/api/linkedin-connections/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ connections }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setResult({ success: true, imported: data.imported, matched: data.matched });
+          capture("linkedin_connections_uploaded", { count: data.imported, matched: data.matched });
+        } else {
+          setResult({ error: data.error || "Upload failed" });
+        }
+      } catch (err) {
+        setResult({ error: err.message });
+      }
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    };
+    reader.readAsText(file);
+  };
+
+  const hasConnections = stats && stats.count > 0;
+
+  return (
+    <div style={{
+      background: "#FAFAF9", borderRadius: 14,
+      border: `1.5px solid ${C.border}`, padding: "14px 16px",
+      marginBottom: 16,
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, color: C.sub,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+      }}>
+        LinkedIn Connections
+      </div>
+
+      {hasConnections ? (
+        <div style={{ fontSize: 13, color: C.sub, marginBottom: 10 }}>
+          {stats.count.toLocaleString()} connections imported
+          {stats.lastImportedAt && (
+            <span> · Updated {new Date(stats.lastImportedAt).toLocaleDateString()}</span>
+          )}
+        </div>
+      ) : (
+        <div style={{ fontSize: 13, color: C.sub, marginBottom: 10 }}>
+          Import your LinkedIn connections — will not be added to your VouchFour network, but will enhance search results
+        </div>
+      )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".csv"
+        style={{ display: "none" }}
+        onChange={handleUpload}
+      />
+      <button
+        onClick={() => fileRef.current?.click()}
+        disabled={uploading}
+        style={{
+          background: "white", color: C.ink, border: `1px solid ${C.border}`,
+          borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 500,
+          cursor: uploading ? "wait" : "pointer", fontFamily: FONT,
+        }}
+      >
+        {uploading ? "Uploading..." : hasConnections ? "Update" : "Upload CSV"}
+      </button>
+
+      {result?.success && (
+        <div style={{ fontSize: 12, color: C.success, marginTop: 8 }}>
+          Imported {result.imported} connections{result.matched > 0 ? ` (${result.matched} matched to your VouchFour network)` : ""}
+        </div>
+      )}
+      {result?.error && (
+        <div style={{ fontSize: 12, color: "#DC2626", marginTop: 8 }}>{result.error}</div>
+      )}
+    </div>
+  );
+}
+
 function GivesCard({ gives, givesFreeText, personFirstName, canAsk, askOpen, onAskClick, isSelf, onEditPrefs, conversation, myConversations }) {
   return (
     <div style={{
@@ -2625,6 +2790,9 @@ export default function PersonPage() {
                     <GivesCard gives={person.gives} givesFreeText={person.gives_free_text} personFirstName={personFirstName} canAsk={canAsk} askOpen={askOpen} onAskClick={() => setAskOpen(true)} isSelf={data.is_self} onEditPrefs={() => { setEditingPreferences(true); capture("preferences_opened"); }} conversation={data.conversation} myConversations={data.my_conversations} />
                   )}
 
+                  {/* LinkedIn Connections (own profile only) */}
+                  {data.is_self && <LinkedInConnectionsCard />}
+
                   {/* Left column content */}
 
                   {/* Quick Ask inline form */}
@@ -3624,6 +3792,9 @@ export default function PersonPage() {
                     {(data.is_self || canAsk || (person.gives && person.gives.length > 0) || person.gives_free_text || data.conversation) && (
                       <GivesCard gives={person.gives} givesFreeText={person.gives_free_text} personFirstName={personFirstName} canAsk={canAsk} askOpen={askOpen} onAskClick={() => setAskOpen(true)} isSelf={data.is_self} onEditPrefs={() => { setEditingPreferences(true); capture("preferences_opened"); }} conversation={data.conversation} myConversations={data.my_conversations} />
                     )}
+
+                    {/* LinkedIn Connections (own profile only) */}
+                    {data.is_self && <LinkedInConnectionsCard />}
 
                     {/* Network Overlap card */}
                     {overlapData?.network_overlap?.length > 0 && (

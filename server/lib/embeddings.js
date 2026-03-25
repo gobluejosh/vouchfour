@@ -341,6 +341,122 @@ export async function semanticSearch(queryText, {
 }
 
 
+// ── LinkedIn Connection Embeddings ──────────────────────────────────
+
+/**
+ * Embed LinkedIn connections for a user.
+ * Each connection gets one embedding from "{title} at {company}".
+ * @param {number} ownerId - The owner's person ID
+ * @param {number[]} connectionIds - Connection IDs to embed (or all if empty)
+ */
+export async function embedLinkedInConnections(ownerId, connectionIds = []) {
+  const start = Date.now()
+
+  let sql = `
+    SELECT lc.id, lc.first_name, lc.last_name, lc.title, lc.company
+    FROM linkedin_connections lc
+    LEFT JOIN linkedin_connection_embeddings lce ON lce.connection_id = lc.id
+    WHERE lc.owner_id = $1 AND lce.id IS NULL
+  `
+  const params = [ownerId]
+  if (connectionIds.length > 0) {
+    sql += ` AND lc.id = ANY($2)`
+    params.push(connectionIds)
+  }
+
+  const res = await query(sql, params)
+  if (res.rows.length === 0) {
+    console.log(`[Embed] LinkedIn connections for owner ${ownerId}: nothing to embed`)
+    return { embedded: 0 }
+  }
+
+  // Build embedding texts
+  const items = []
+  for (const row of res.rows) {
+    const parts = []
+    if (row.title && row.company) parts.push(`${row.title} at ${row.company}`)
+    else if (row.title) parts.push(row.title)
+    else if (row.company) parts.push(row.company)
+    else parts.push(`${row.first_name} ${row.last_name}`)
+    items.push({ connectionId: row.id, text: parts[0] })
+  }
+
+  const embeddings = await getEmbeddings(items.map(i => i.text))
+
+  let saved = 0
+  for (let i = 0; i < items.length; i++) {
+    try {
+      await query(`
+        INSERT INTO linkedin_connection_embeddings (connection_id, source_text, embedding)
+        VALUES ($1, $2, $3::vector)
+        ON CONFLICT DO NOTHING
+      `, [items[i].connectionId, items[i].text.slice(0, 1000), toVectorLiteral(embeddings[i])])
+      saved++
+    } catch (err) {
+      console.error(`[Embed] LinkedIn connection ${items[i].connectionId} error: ${err.message}`)
+    }
+  }
+
+  console.log(`[Embed] LinkedIn connections for owner ${ownerId}: ${saved}/${items.length} embedded | ${Date.now() - start}ms`)
+  return { embedded: saved }
+}
+
+/**
+ * Semantic search across a user's LinkedIn connections.
+ * @param {string} queryText - The search query
+ * @param {number} ownerId - The owner's person ID
+ * @param {object} options
+ * @returns {Array<{connectionId, name, title, company, similarity, matchedText}>}
+ */
+export async function searchLinkedInConnections(queryText, ownerId, {
+  topK = 5,
+  minSimilarity = 0.2,
+  excludePersonIds = [],
+} = {}) {
+  const [queryEmbedding] = await getEmbeddings([queryText])
+  const queryVec = toVectorLiteral(queryEmbedding)
+  const maxDistance = 1 - minSimilarity
+
+  let sql = `
+    SELECT
+      lc.id AS connection_id,
+      lc.first_name,
+      lc.last_name,
+      lc.display_name,
+      lc.title,
+      lc.company,
+      lc.linkedin_url,
+      lc.matched_person_id,
+      lce.source_text,
+      1 - (lce.embedding <=> $1::vector) AS similarity
+    FROM linkedin_connection_embeddings lce
+    JOIN linkedin_connections lc ON lc.id = lce.connection_id
+    WHERE lc.owner_id = $2
+      AND (lce.embedding <=> $1::vector) <= $3
+  `
+  const params = [queryVec, ownerId, maxDistance]
+
+  if (excludePersonIds.length > 0) {
+    sql += ` AND (lc.matched_person_id IS NULL OR lc.matched_person_id != ALL($4))`
+    params.push(excludePersonIds)
+  }
+
+  sql += ` ORDER BY lce.embedding <=> $1::vector LIMIT $${params.length + 1}`
+  params.push(topK)
+
+  const res = await query(sql, params)
+
+  return res.rows.map(r => ({
+    connectionId: r.connection_id,
+    name: r.display_name,
+    title: r.title,
+    company: r.company,
+    linkedinUrl: r.linkedin_url,
+    similarity: parseFloat(r.similarity),
+    matchedText: r.source_text,
+  }))
+}
+
 // ── Stats ───────────────────────────────────────────────────────────
 
 /**
